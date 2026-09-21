@@ -1,0 +1,58 @@
+{
+  "realm": "cbs-dev",
+  "displayName": "CBS Development",
+  "enabled": true,
+  "sslRequired": "none",
+  "registrationAllowed": false,
+  "resetPasswordAllowed": false,
+  "rememberMe": false,
+  "bruteForceProtected": true,
+  "failureFactor": 5,
+  "accessTokenLifespan": 900,
+  "ssoSessionIdleTimeout": 900,
+  "ssoSessionMaxLifespan": 28800,
+  "passwordPolicy": "length(12) and digits(1) and upperCase(1) and lowerCase(1)",
+  "otpPolicyType": "totp",
+  "otpPolicyAlgorithm": "HmacSHA1",
+  "otpPolicyDigits": 6,
+  "otpPolicyPeriod": 30,
+  "otpPolicyLookAheadWindow": 1,
+  "roles": { "realm": [{"name": "PLATFORM_ADMIN", "description": "CBS platform administration"}] },
+  "browserFlow": "cbs-password-and-otp",
+  "authenticatorConfig": [
+    {"alias": "cbs-password-reference", "config": {"default.reference.value": "pwd", "default.reference.maxAge": "1800"}},
+    {"alias": "cbs-mfa-reference", "config": {"default.reference.value": "mfa", "default.reference.maxAge": "1800"}}
+  ],
+  "authenticationFlows": [{
+    "alias": "cbs-password-and-otp",
+    "description": "Always require password and OTP; no cookie-only alternative",
+    "providerId": "basic-flow",
+    "topLevel": true,
+    "builtIn": false,
+    "authenticationExecutions": [
+      {"authenticator": "auth-username-password-form", "authenticatorConfig": "cbs-password-reference", "requirement": "REQUIRED", "priority": 10, "authenticatorFlow": false, "userSetupAllowed": false},
+      {"authenticator": "auth-otp-form", "authenticatorConfig": "cbs-mfa-reference", "requirement": "REQUIRED", "priority": 20, "authenticatorFlow": false, "userSetupAllowed": true}
+    ]
+  }],
+  "clients": [{
+    "clientId": "cbs-administration",
+    "name": "CBS Administration Portal",
+    "enabled": true,
+    "protocol": "openid-connect",
+    "publicClient": true,
+    "standardFlowEnabled": true,
+    "directAccessGrantsEnabled": false,
+    "implicitFlowEnabled": false,
+    "serviceAccountsEnabled": false,
+    "fullScopeAllowed": true,
+    "redirectUris": ["http://127.0.0.1:8080/admin/index.html"],
+    "webOrigins": ["http://127.0.0.1:8080"],
+    "attributes": {"pkce.code.challenge.method": "S256"},
+    "defaultClientScopes": ["basic", "profile", "email"],
+    "protocolMappers": [
+      {"name": "CBS API audience", "protocol": "openid-connect", "protocolMapper": "oidc-audience-mapper", "config": {"included.custom.audience": "cbs-api", "access.token.claim": "true", "id.token.claim": "false"}},
+      {"name": "CBS roles", "protocol": "openid-connect", "protocolMapper": "oidc-usermodel-realm-role-mapper", "config": {"claim.name": "roles", "jsonType.label": "String", "multivalued": "true", "access.token.claim": "true", "id.token.claim": "false"}},
+      {"name": "Verified authentication methods", "protocol": "openid-connect", "protocolMapper": "oidc-amr-mapper", "config": {"access.token.claim": "true", "id.token.claim": "true"}}
+    ]
+  }]
+}

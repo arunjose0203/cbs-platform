@@ -1,0 +1,68 @@
+spring:
+  application:
+    name: cbs-platform
+  datasource:
+    url: ${CBS_DB_URL:jdbc:postgresql://localhost:5433/cbs_control}
+    username: ${CBS_DB_USER:cbs_control}
+    password: ${CBS_DB_PASSWORD}
+    hikari:
+      maximum-pool-size: 5
+      connection-timeout: 5000
+  flyway:
+    enabled: true
+    clean-disabled: true
+    validate-on-migrate: true
+    locations: classpath:db/migration
+  mvc:
+    problemdetails:
+      enabled: true
+  jackson:
+    deserialization:
+      fail-on-unknown-properties: true
+
+cbs:
+  security:
+    enabled: ${CBS_SECURITY_ENABLED:false}
+    issuer: ${CBS_JWT_ISSUER:}
+    jwk-set-uri: ${CBS_JWT_JWKS_URI:}
+    audience: ${CBS_JWT_AUDIENCE:}
+    allow-local-http: ${CBS_ALLOW_LOCAL_IDENTITY_HTTP:false}
+  access:
+    bootstrap-admin-subject: ${CBS_BOOTSTRAP_ADMIN_SUBJECT:}
+    idle-timeout: PT15M
+    maximum-session-age: PT8H
+    maximum-token-age: PT30M
+    administrator-mfa-age: PT30M
+  portal:
+    client-id: ${CBS_PORTAL_CLIENT_ID:}
+    redirect-uri: ${CBS_PORTAL_REDIRECT_URI:}
+    scope: ${CBS_PORTAL_SCOPE:openid profile email}
+
+server:
+  address: ${CBS_BIND_ADDRESS:127.0.0.1}
+  port: ${CBS_PORT:8080}
+  shutdown: graceful
+  error:
+    include-message: never
+    include-stacktrace: never
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+  endpoint:
+    health:
+      show-details: never
+      show-components: never
+      probes:
+        enabled: true
+      group:
+        liveness:
+          include: livenessState
+        readiness:
+          include: readinessState,db
+
+logging:
+  pattern:
+    level: "%5p [correlationId=%X{correlationId:-}]"

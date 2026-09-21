@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>CBS · Administration</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Crect width='40' height='40' rx='8' fill='%23132c3b'/%3E%3Ctext x='10' y='29' font-size='28' fill='%2393d6ce'%3EC%3C/text%3E%3C/svg%3E">
+  <link rel="stylesheet" href="/admin/styles.css">
+  <script type="module" src="/admin/app.js"></script>
+</head>
+<body>
+  <a class="skip" href="#content">Skip to content</a>
+  <aside class="sidebar">
+    <a class="brand" href="/admin/index.html"><span class="brand-symbol">C</span><span>CBS<span class="brand-sub">BANKING PLATFORM</span></span></a>
+    <div class="workspace-label">PLATFORM WORKSPACE</div>
+    <nav aria-label="Administration">
+      <button data-view="banks" class="nav active"><span class="nav-icon">▦</span>Bank directory</button>
+      <button data-view="staff" class="nav"><span class="nav-icon">◎</span>Staff &amp; access</button>
+      <button data-view="sessions" class="nav"><span class="nav-icon">◷</span>My sessions</button>
+      <button data-view="audit" class="nav"><span class="nav-icon">≡</span>Audit trail</button>
+    </nav>
+    <div class="sidebar-note"><span class="small-dot"></span> Built around trust<p>One platform. Independent banks.<br>Accountable access.</p></div>
+    <div class="sidebar-footer">CORE BANKING SYSTEM<span>Administration portal</span></div>
+  </aside>
+  <div class="shell">
+    <header class="topbar"><span>Platform <span class="crumb">/</span> <strong id="breadcrumb">Bank directory</strong></span><div class="top-actions"><span id="connection" class="connection">Checking connection</span><button id="auth-button" class="button small" disabled>Sign in</button></div></header>
+    <main id="content" tabindex="-1"><div class="loading">Opening your workspace…</div></main>
+    <footer class="page-footer">CBS Administration<span>Access is verified on every request.</span></footer>
+  </div>
+  <div id="notice" class="notice" role="status" aria-live="polite" hidden></div>
+  <dialog id="dialog" aria-labelledby="dialog-title"><form id="editor"><div class="dialog-heading"><h2 id="dialog-title"></h2><button type="button" data-action="close-dialog" class="icon-button" aria-label="Close dialog">×</button></div><div id="fields" class="fields"></div><p id="form-error" role="alert" class="form-error"></p><div class="dialog-actions"><button type="button" data-action="close-dialog" class="button secondary">Cancel</button><button type="submit" class="button" id="save">Save changes</button></div></form></dialog>
+</body>
+</html>

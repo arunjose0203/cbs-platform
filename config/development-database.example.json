@@ -1,0 +1,6 @@
+{
+  "url": "jdbc:postgresql://YOUR-ENDPOINT-pooler.YOUR-REGION.aws.neon.tech/neondb?sslmode=require&channelBinding=require",
+  "migrationUrl": "jdbc:postgresql://YOUR-ENDPOINT.YOUR-REGION.aws.neon.tech/neondb?sslmode=require&channelBinding=require",
+  "username": "YOUR_DATABASE_USER",
+  "password": "REPLACE_LOCALLY"
+}

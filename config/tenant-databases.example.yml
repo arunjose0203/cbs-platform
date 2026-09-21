@@ -1,0 +1,13 @@
+# Copy to an operator-managed path and load via SPRING_CONFIG_ADDITIONAL_LOCATION.
+# This file contains references to environment-injected secrets, not credentials.
+cbs:
+  banking:
+    databases:
+      bank-alpha:
+        url: ${CBS_BANK_ALPHA_DB_URL}
+        username: ${CBS_BANK_ALPHA_DB_USER}
+        password: ${CBS_BANK_ALPHA_DB_PASSWORD}
+      bank-beta:
+        url: ${CBS_BANK_BETA_DB_URL}
+        username: ${CBS_BANK_BETA_DB_USER}
+        password: ${CBS_BANK_BETA_DB_PASSWORD}

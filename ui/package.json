@@ -1,0 +1,12 @@
+{
+  "name": "cbs-administration-portal",
+  "private": true,
+  "version": "0.2.0",
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs",
+    "test": "node --test test/*.test.mjs"
+  },
+  "dependencies": { "oidc-client-ts": "3.5.0" },
+  "devDependencies": { "esbuild": "0.28.2" }
+}

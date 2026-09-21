@@ -1,0 +1,43 @@
+name: Verify CBS modules
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18.3
+        env:
+          POSTGRES_DB: cbs_control
+          POSTGRES_USER: cbs_control
+          POSTGRES_PASSWORD: ci-ephemeral-only
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U cbs_control -d cbs_control"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 12
+    env:
+      CBS_DB_URL: jdbc:postgresql://localhost:5432/cbs_control
+      CBS_DB_USER: cbs_control
+      CBS_DB_PASSWORD: ci-ephemeral-only
+      CBS_INTEGRATION_TESTS: 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+      - run: npm ci --prefix ui --ignore-scripts
+      - run: npm test --prefix ui
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+      - run: mvn --batch-mode --no-transfer-progress verify
