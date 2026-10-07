@@ -31,7 +31,7 @@ public class OperationService {
  public Dashboard dashboard(Actor actor,UUID bankId,UUID accountId,int limit,int offset){
   AccessService.admin(actor);AccessService.page(limit,offset);return tx.execute(t->{
    jdbc.query("SELECT id FROM platform.tenant WHERE id=? FOR SHARE",r->{},bankId);var bank=tenants.get(bankId,false);var account=accounts.detail(actor,bankId,accountId).definition();
-   boolean ready=store.ready(bank);var items=jdbc.query("SELECT payload,completed,failure_code FROM platform.account_operation WHERE tenant_id=? AND (account_id=? OR destination_id=?) ORDER BY created_at DESC,request_id LIMIT ? OFFSET ?",(r,n)->new Item(JSON.readValue(r.getString(1),Entry.class),r.getBoolean(2)?"POSTED":"AWAITING_POSTING",r.getString(3)),bankId,accountId,accountId,limit,offset);
+   boolean ready=store.ready(bank);var items=jdbc.query("SELECT payload,completed,failure_code,EXISTS(SELECT 1 FROM platform.cash_delivery c WHERE c.request_id=platform.account_operation.request_id) AS cash_managed FROM platform.account_operation WHERE tenant_id=? AND (account_id=? OR destination_id=?) ORDER BY created_at DESC,request_id LIMIT ? OFFSET ?",(r,n)->new Item(JSON.readValue(r.getString(1),Entry.class),r.getBoolean(2)?"POSTED":"AWAITING_POSTING",r.getString(3),r.getBoolean(4)),bankId,accountId,accountId,limit,offset);
    boolean funded=jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM platform.account_ledger WHERE account_id=?)",Boolean.class,accountId);
    return new Dashboard(bank.version(),ready,ready&&funded?store.position(bank,account):null,items,jdbc.queryForObject("SELECT count(*) FROM platform.account_operation WHERE tenant_id=? AND (account_id=? OR destination_id=?)",Long.class,bankId,accountId,accountId),limit,offset);
   });
@@ -50,10 +50,23 @@ public class OperationService {
   if(input.kind()==null||input.amount()==null||!input.amount().matches("[0-9]{1,18}(\\.[0-9]{1,6})?"))throw error("JOURNAL_AMOUNT_INVALID");
   var a=account(bank,input.accountId(),input.kind()==Kind.RELEASE);var amount=new BigDecimal(input.amount());
   if(amount.signum()<=0||amount.stripTrailingZeros().scale()>Currency.getInstance(a.terms().currency()).getDefaultFractionDigits())throw error("JOURNAL_AMOUNT_INVALID");
-  if((input.kind()==Kind.TRANSFER)!=(input.destinationId()!=null)||(input.kind()==Kind.WITHDRAWAL)!=(input.assetLedgerId()!=null)||(input.kind()==Kind.RELEASE||input.kind()==Kind.FUNDING_REVERSAL)!=(input.originalId()!=null))throw error("OPERATION_FIELDS_INVALID");
+  boolean reverseOperation=input.kind()==Kind.WITHDRAWAL_REVERSAL||input.kind()==Kind.TRANSFER_REVERSAL;
+  if((input.kind()==Kind.TRANSFER||input.kind()==Kind.TRANSFER_REVERSAL)!=(input.destinationId()!=null)||(input.kind()==Kind.WITHDRAWAL)!=(input.assetLedgerId()!=null)||(input.kind()==Kind.RELEASE||input.kind()==Kind.FUNDING_REVERSAL||reverseOperation)!=(input.originalId()!=null))throw error("OPERATION_FIELDS_INVALID");
   com.cbs.access.TransactionLimits.check(jdbc,bank.id(),a.terms().currency(),input.kind().name(),input.businessDate(),amount);
   AccountModels.Definition target=null;UUID credit=null,reversal=null;
   var source=store.position(bank,a);
+  if(reverseOperation){
+   var originals=jdbc.query("SELECT payload FROM platform.account_operation WHERE request_id=? AND tenant_id=? AND completed",(r,n)->JSON.readValue(r.getString(1),Entry.class),input.originalId(),bank.id());
+   if(originals.size()!=1)throw error("OPERATION_REVERSAL_INVALID");var original=originals.getFirst();var old=original.change();
+   if(!cash&&jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM platform.cash_delivery WHERE request_id=?)",Boolean.class,input.originalId()))throw error("CASH_MANAGED");
+   if(amount.compareTo(new BigDecimal(old.amount()))!=0||original.journal()==null||original.journal().reversalOf()!=null)throw error("OPERATION_REVERSAL_INVALID");
+   if(input.kind()==Kind.WITHDRAWAL_REVERSAL){if(old.kind()!=Kind.WITHDRAWAL||!a.id().equals(old.accountId()))throw error("OPERATION_REVERSAL_INVALID");}
+   else{if(old.kind()!=Kind.TRANSFER||!a.id().equals(old.destinationId())||!input.destinationId().equals(old.accountId()))throw error("OPERATION_REVERSAL_INVALID");target=account(bank,input.destinationId(),false);}
+   var lines=original.journal().lines().stream().map(l->new JournalModels.Line(l.ledgerId(),l.side()==JournalModels.Side.DEBIT?JournalModels.Side.CREDIT:JournalModels.Side.DEBIT,l.amount())).toList();
+   var j=new JournalModels.Change(input.expectedVersion(),input.reference(),input.reason(),input.businessDate(),a.legalEntityId(),a.terms().currency(),lines,input.originalId(),input.reason());
+   if(cash)journals.validateCashFunding(bank,j);else journals.validateFunding(bank,j);
+   var entry=new Entry(id,bank.id(),input,a,target,new JournalModels.Entry(id,bank.id(),input.reference().trim(),input.reason().trim(),input.businessDate(),a.legalEntityId(),a.terms().currency(),lines,input.originalId()));store.validate(bank,entry);return entry;
+  }
   if(input.kind()==Kind.TRANSFER){
    if(input.accountId().equals(input.destinationId()))throw error("OPERATION_FIELDS_INVALID");target=account(bank,input.destinationId(),false);
    if(!a.terms().currency().equals(target.terms().currency())||!a.legalEntityId().equals(target.legalEntityId()))throw error("TRANSFER_SCOPE_MISMATCH");credit=store.position(bank,target).ledgerId();

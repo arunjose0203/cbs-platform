@@ -10,7 +10,7 @@ class CashModelsTest {
   var mapper=tools.jackson.databind.json.JsonMapper.builder().build();
   var change=new Change(0,Kind.COUNT,java.util.UUID.randomUUID(),java.util.UUID.randomUUID(),null,null,null,null,null,null,null,java.time.LocalDate.of(2026,10,7),"legacy",List.of(),"Evidence");
   String payload=mapper.writeValueAsString(change);
-  assertThat(payload).doesNotContain("exceptionId");
+  assertThat(payload).doesNotContain("exceptionId","originalId","transit");
   assertThat(mapper.readValue(payload,Change.class)).isEqualTo(change);
  }
  @Test void countsAreExactAndRespectCurrencyPrecision(){

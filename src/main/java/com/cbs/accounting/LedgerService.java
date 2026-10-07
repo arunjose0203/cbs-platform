@@ -77,7 +77,7 @@ public class LedgerService {
         if(input.ledgerId()==null){
             if(jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM platform.ledger_registry WHERE tenant_id=? AND code=?)",Boolean.class,bank.id(),input.code()))throw error(409,"LEDGER_CODE_IN_USE");
         }else{
-            if(jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM platform.cash_location WHERE ledger_id=?)",Boolean.class,input.ledgerId()))throw error(409,"CASH_MANAGED");
+            if(jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM platform.cash_location WHERE ledger_id=?) OR EXISTS(SELECT 1 FROM platform.cash_transit WHERE ledger_id=?)",Boolean.class,input.ledgerId(),input.ledgerId()))throw error(409,"CASH_MANAGED");
             if(jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM platform.account_ledger WHERE ledger_id=?)",Boolean.class,input.ledgerId()))throw error(409,"FUNDING_MANAGED");
             if(jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM platform.journal_ledger l JOIN platform.journal_delivery d ON d.request_id=l.request_id WHERE l.ledger_id=? AND NOT d.completed)",Boolean.class,input.ledgerId()))throw error(409,"LEDGER_JOURNAL_PENDING");
             if(!input.active()&&journals.hasBalance(bank,input.ledgerId()))throw error(409,"LEDGER_BALANCE_NOT_ZERO");

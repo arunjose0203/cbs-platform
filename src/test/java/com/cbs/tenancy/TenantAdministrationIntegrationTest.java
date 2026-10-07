@@ -215,7 +215,7 @@ class TenantAdministrationIntegrationTest {
         b = provision(b);
         assertThat(a.status()).isEqualTo(Status.ACTIVE);
         assertThat(b.status()).isEqualTo(Status.ACTIVE);
-        assertThat(a.databaseBinding().schemaVersion()).isEqualTo("10");
+        assertThat(a.databaseBinding().schemaVersion()).isEqualTo("12");
         bankGet(a.id(), "operator-a", true).andExpect(status().isOk())
                 .andExpect(jsonPath("$.tenantId").value(a.id().toString())).andExpect(jsonPath("$.databaseBinding").doesNotExist());
         mvc.perform(get("/api/v1/banks/" + b.id() + "/operational-context")
@@ -884,7 +884,7 @@ class TenantAdministrationIntegrationTest {
         ledger.initialize(ADMIN,bank.id(),new ChangeRequest(0L,"Prepare ledgers"));
         assertThat(ledger.list(ADMIN,bank.id(),"",null,null,25,0).storageReady()).isTrue();
         ledger.initialize(ADMIN,bank.id(),new ChangeRequest(service.get(ADMIN,bank.id()).version(),"Recheck upgrade"));
-        assertThat(service.get(ADMIN,bank.id()).databaseBinding().schemaVersion()).isEqualTo("10");
+        assertThat(service.get(ADMIN,bank.id()).databaseBinding().schemaVersion()).isEqualTo("12");
     }
 
     private List<com.cbs.accounting.LedgerModels.Definition> journalLedgers(Tenant bank) throws Exception {
@@ -1541,6 +1541,19 @@ class TenantAdministrationIntegrationTest {
         assertCode(()->approvals.operation(ADMIN,UUID.randomUUID(),bank.id(),operationChange(f,com.cbs.accounts.OperationModels.Kind.FUNDING_REVERSAL,"200",null,reversible)),"JOURNAL_ALREADY_REVERSED");
         assertCode(()->approvals.operation(ADMIN,UUID.randomUUID(),bank.id(),operationChange(f,com.cbs.accounts.OperationModels.Kind.TRANSFER,"1",f.account(),null)),"OPERATION_FIELDS_INVALID");
         assertThat(days.dashboard(ADMIN,bank.id(),25,0).blockers()).doesNotContain("DAY_CLOSE_UNRECONCILED");
+        for(String op:List.of("WITHDRAWAL_REVERSAL","TRANSFER_REVERSAL"))approveHttp(approvals.limits(ADMIN,UUID.randomUUID(),bank.id(),new com.cbs.access.TransactionLimits.Change(service.get(ADMIN,bank.id()).version(),"INR",op,"1000","5000","Fictional reversal cap")).id());
+        var held=postOperation(second,operationChange(second,com.cbs.accounts.OperationModels.Kind.HOLD,"200",null,null));
+        assertCode(()->approvals.operation(ADMIN,UUID.randomUUID(),bank.id(),operationChange(second,com.cbs.accounts.OperationModels.Kind.TRANSFER_REVERSAL,"300.11",f.account(),r.id())),"INSUFFICIENT_AVAILABLE_BALANCE");
+        postOperation(second,operationChange(second,com.cbs.accounts.OperationModels.Kind.RELEASE,"200",null,held));
+        var undo=approvals.operation(ADMIN,UUID.randomUUID(),bank.id(),operationChange(second,com.cbs.accounts.OperationModels.Kind.TRANSFER_REVERSAL,"300.11",f.account(),r.id()));approveHttp(undo.id());
+        new TransactionTemplate(transactionManager).executeWithoutResult(t->{operations.deliver(undo.id());t.setRollbackOnly();});operations.deliver(undo.id());operations.deliver(undo.id());
+        assertThat(operations.dashboard(ADMIN,bank.id(),f.account(),25,0).position().posted()).isEqualTo("1000");
+        assertThat(operations.dashboard(ADMIN,bank.id(),target,25,0).position().posted()).isEqualTo("100");
+        assertCode(()->approvals.operation(ADMIN,UUID.randomUUID(),bank.id(),operationChange(second,com.cbs.accounts.OperationModels.Kind.TRANSFER_REVERSAL,"300.11",f.account(),r.id())),"JOURNAL_ALREADY_REVERSED");
+        var payout=postOperation(f,operationChange(f,com.cbs.accounts.OperationModels.Kind.WITHDRAWAL,"100",null,null));
+        assertCode(()->approvals.operation(ADMIN,UUID.randomUUID(),bank.id(),operationChange(f,com.cbs.accounts.OperationModels.Kind.WITHDRAWAL_REVERSAL,"99",null,payout)),"OPERATION_REVERSAL_INVALID");
+        postOperation(f,operationChange(f,com.cbs.accounts.OperationModels.Kind.WITHDRAWAL_REVERSAL,"100",null,payout));
+        assertThat(operations.dashboard(ADMIN,bank.id(),f.account(),25,0).position().posted()).isEqualTo("1000");
     }
 
     private Tenant chartBank(String binding) {
@@ -1720,6 +1733,67 @@ class TenantAdministrationIntegrationTest {
         }
         verifyCashAdjustments(bank,branch.id(),vault,f.source().id(),owner,maker,reviewer);
         assertThat(funding.dashboard(ADMIN,bank.id(),f.account(),25,0).balance().postedBalance()).isEqualTo("100");
+        verifyCashReversals(f,branch.id(),vault,till,owner,maker,reviewer);
+        verifyInterbranchCash(f,branch.id(),vault,maker,reviewer);
+    }
+    private com.cbs.cash.CashModels.Change transitChange(Tenant bank,UUID branch,UUID vault,UUID ledger,String amount,UUID dispatch,UUID destination,boolean returned){
+        var date=reference.get(ADMIN,bank.id()).businessDate();
+        return new com.cbs.cash.CashModels.Change(service.get(ADMIN,bank.id()).version(),dispatch==null?com.cbs.cash.CashModels.Kind.DISPATCH:com.cbs.cash.CashModels.Kind.RECEIVE,branch,vault,null,ledger,null,null,null,null,amount,date,"TRANSIT-"+UUID.randomUUID(),dispatch==null?null:List.of(new com.cbs.cash.CashModels.Count(amount,1)),"Fictional shipment evidence",null,null,null,null,new com.cbs.cash.CashModels.Transit(dispatch,destination,dispatch==null?date:null,returned));
+    }
+    private void verifyInterbranchCash(FundingFixture f,UUID sourceBranch,UUID vault,Actor sender,Actor sourceChecker)throws Exception{
+        var bank=f.f().bank();
+        var destination=branchService.create(ADMIN,bank.id(),new com.cbs.access.AccessModels.BranchInput(bank.legalEntities().getFirst().id(),"DEST","Destination branch","Fictional transfer route"));
+        var staff=branchStaff(bank.id(),destination.id(),"transit-receiver",com.cbs.access.AccessModels.BranchRole.BRANCH_MANAGER);
+        var checkStaff=branchStaff(bank.id(),destination.id(),"transit-checker",com.cbs.access.AccessModels.BranchRole.BRANCH_MANAGER);
+        var receiver=new Actor(TestIdentity.ISSUER,staff.subject(),false,UUID.randomUUID());var checker=new Actor(TestIdentity.ISSUER,checkStaff.subject(),false,UUID.randomUUID());
+        var target=cashLocation(bank,destination.id(),f.source(),"DEST_VAULT",com.cbs.cash.CashModels.Type.VAULT);
+        var ledgerRequest=approvals.ledger(ADMIN,UUID.randomUUID(),bank.id(),ledgerChange(bank,null,"TRANSIT",f.source().chartAccountId(),"Cash in transit",true));approveHttp(ledgerRequest.id());ledger.deliver(ledgerRequest.id());
+        var transitLedger=ledger.list(ADMIN,bank.id(),"TRANSIT",null,null,25,0).items().getFirst().definition().id();
+        for(UUID scope:java.util.Arrays.asList(null,staff.id())){var limit=approvals.branchLimit(ADMIN,UUID.randomUUID(),bank.id(),new com.cbs.access.BranchOperations.Limit(service.get(ADMIN,bank.id()).version(),destination.id(),scope,"INR","CASH_RECEIVE","2000","5000","Fictional receipt limit"));approveHttp(limit.id());}
+        assertThat(cash.transitDestinations(sender,bank.id(),sourceBranch)).anyMatch(x->target.equals(x.get("id")));
+        assertCode(()->cash.transit(receiver,bank.id(),sourceBranch),"BRANCH_ACCESS_DENIED");
+        assertCode(()->approvals.cash(sender,UUID.randomUUID(),bank.id(),transitChange(bank,sourceBranch,vault,transitLedger,"100",null,vault,false)),"CASH_SCOPE_MISMATCH");
+        assertCode(()->approvals.cash(sender,UUID.randomUUID(),bank.id(),transitChange(bank,sourceBranch,vault,f.source().id(),"100",null,target,false)),"CASH_LEDGER_USED");
+        var cancelled=approvals.cash(sender,UUID.randomUUID(),bank.id(),transitChange(bank,sourceBranch,vault,transitLedger,"100",null,target,false));
+        approvals.decide(sender,cancelled.id(),com.cbs.approvals.ApprovalModels.Decision.CANCEL,"Shipment not sent");
+        assertThat(cash.transit(sender,bank.id(),sourceBranch)).isEmpty();
+        var request=approvals.cash(sender,UUID.randomUUID(),bank.id(),transitChange(bank,sourceBranch,vault,transitLedger,"100",null,target,false));
+        assertCode(()->approvals.decide(receiver,request.id(),com.cbs.approvals.ApprovalModels.Decision.APPROVE,"Wrong branch"),"BRANCH_ACCESS_DENIED");
+        approvals.decide(sourceChecker,request.id(),com.cbs.approvals.ApprovalModels.Decision.APPROVE,"Verified sealed shipment");
+        new TransactionTemplate(transactionManager).executeWithoutResult(tx->{cash.deliver(request.id());tx.setRollbackOnly();});
+        cash.deliver(request.id());cash.deliver(request.id());
+        assertThat(jdbc.queryForObject("SELECT failure_code FROM platform.cash_delivery WHERE request_id=?",String.class,request.id())).isNull();
+        assertThat(bankCash.position(bank,cash.location(bank.id(),target)).balance()).isEqualTo("0");
+        assertThat(days.dashboard(ADMIN,bank.id(),25,0).blockers()).contains("CASH_IN_TRANSIT_OUTSTANDING");
+        var bypass=new com.cbs.accounting.JournalModels.Entry(UUID.randomUUID(),bank.id(),"TRANSIT-BYPASS", "Attempt bypass",reference.get(ADMIN,bank.id()).businessDate(),bank.legalEntities().getFirst().id(),"INR",List.of(new com.cbs.accounting.JournalModels.Line(transitLedger,com.cbs.accounting.JournalModels.Side.CREDIT,"1"),new com.cbs.accounting.JournalModels.Line(f.source().id(),com.cbs.accounting.JournalModels.Side.DEBIT,"1")),null);
+        assertCode(()->bankJournals.post(bank,new com.cbs.accounting.JournalModels.Dispatch(bypass,ADMIN.subject(),CHECKER.issuer(),CHECKER.subject(),UUID.randomUUID())),"JOURNAL_DATABASE_UNAVAILABLE");
+        assertThat(cash.transit(receiver,bank.id(),destination.id()).getFirst().get("outstanding").toString()).isEqualTo("100");
+        assertCode(()->approvals.cash(sender,UUID.randomUUID(),bank.id(),cashReverse(bank,sourceBranch,request.id())),"CASH_REVERSAL_INVALID");
+        assertCode(()->approvals.cash(sender,UUID.randomUUID(),bank.id(),cashChange(bank,sourceBranch,com.cbs.cash.CashModels.Kind.RECEIVE,vault,null,transitLedger,"1",null)),"CASH_TRANSIT_MANAGED");
+        assertCode(()->approvals.cash(receiver,UUID.randomUUID(),bank.id(),transitChange(bank,destination.id(),target,transitLedger,"101",request.id(),null,false)),"CASH_TRANSIT_AMOUNT_EXCEEDED");
+        assertCode(()->approvals.cash(sender,UUID.randomUUID(),bank.id(),transitChange(bank,sourceBranch,vault,transitLedger,"20",request.id(),null,false)),"CASH_SCOPE_MISMATCH");
+        var receipt=approvals.cash(receiver,UUID.randomUUID(),bank.id(),transitChange(bank,destination.id(),target,transitLedger,"20",request.id(),null,false));
+        assertCode(()->approvals.decide(receiver,receipt.id(),com.cbs.approvals.ApprovalModels.Decision.APPROVE,"Own receipt"),"SELF_APPROVAL_FORBIDDEN");
+        approvals.decide(checker,receipt.id(),com.cbs.approvals.ApprovalModels.Decision.APPROVE,"Physical cash counted");
+        try(var c=TestDatabases.bank("cash");var st=c.createStatement()){st.execute("CREATE TRIGGER fail_transit BEFORE INSERT ON bank.cash_entry FOR EACH ROW EXECUTE FUNCTION bank.reject_ledger_event_change()");}
+        cash.deliver(receipt.id());assertThat(jdbc.queryForObject("SELECT failure_code FROM platform.cash_delivery WHERE request_id=?",String.class,receipt.id())).isEqualTo("CASH_DATABASE_UNAVAILABLE");
+        assertThat(bankCash.position(bank,cash.location(bank.id(),target)).balance()).isEqualTo("0");
+        try(var c=TestDatabases.bank("cash");var st=c.createStatement()){st.execute("DROP TRIGGER fail_transit ON bank.cash_entry");}
+        new TransactionTemplate(transactionManager).executeWithoutResult(tx->{cash.deliver(receipt.id());tx.setRollbackOnly();});cash.deliver(receipt.id());cash.deliver(receipt.id());
+        assertThat(new java.math.BigDecimal(bankCash.position(bank,cash.location(bank.id(),target)).balance())).isEqualByComparingTo("20");
+        postCash(sender,sourceChecker,bank,transitChange(bank,sourceBranch,vault,transitLedger,"30",request.id(),null,true));
+        postCash(receiver,checker,bank,transitChange(bank,destination.id(),target,transitLedger,"50",request.id(),null,false));
+        var shipment=cash.transit(receiver,bank.id(),destination.id()).getFirst();
+        assertThat(new java.math.BigDecimal(shipment.get("outstanding").toString())).isZero();
+        assertThat(new java.math.BigDecimal(shipment.get("received").toString())).isEqualByComparingTo("70");
+        assertThat(new java.math.BigDecimal(shipment.get("returned").toString())).isEqualByComparingTo("30");
+        assertThat(days.dashboard(ADMIN,bank.id(),25,0).blockers()).doesNotContain("CASH_IN_TRANSIT_OUTSTANDING");
+        assertCode(()->approvals.cash(receiver,UUID.randomUUID(),bank.id(),transitChange(bank,destination.id(),target,transitLedger,"1",request.id(),null,false)),"CASH_TRANSIT_AMOUNT_EXCEEDED");
+        try(var c=TestDatabases.bank("cash");var st=c.createStatement()){
+            try(var rs=st.executeQuery("SELECT count(*),sum(amount) FROM bank.cash_transit_receipt")){rs.next();assertThat(rs.getInt(1)).isEqualTo(3);assertThat(rs.getBigDecimal(2)).isEqualByComparingTo("100");}
+            assertThatThrownBy(()->st.executeUpdate("DELETE FROM bank.cash_transit_receipt")).isInstanceOf(SQLException.class);
+        }
+        mvc.perform(get("/api/v1/banks/"+bank.id()+"/branches/"+destination.id()+"/operations/cash/transit").header("Authorization","Bearer "+TestIdentity.token(staff.subject(),false))).andExpect(status().isOk()).andExpect(jsonPath("$[0].dispatch_id").value(request.id().toString()));
     }
     private UUID adjustmentLedger(Tenant bank,String code,com.cbs.accounting.ChartModels.Category category)throws Exception{
         var chartInput=new com.cbs.accounting.ChartModels.Change(service.get(ADMIN,bank.id()).version(),null,code,code,"Fictional adjustment mapping",category,category==com.cbs.accounting.ChartModels.Category.EXPENSE?com.cbs.accounting.ChartModels.Balance.DEBIT:com.cbs.accounting.ChartModels.Balance.CREDIT,com.cbs.accounting.ChartModels.Kind.POSTING,null,true,"Test adjustment ledger");
@@ -1775,6 +1849,63 @@ class TenantAdministrationIntegrationTest {
         assertThat(new java.math.BigDecimal(bankCash.position(bank,cash.location(bank.id(),vault)).balance())).isEqualByComparingTo("775");
         assertThat(bankCash.position(bank,cash.location(bank.id(),vault)).reconciled()).isTrue();
         assertThat(jdbc.queryForObject("SELECT completed FROM platform.cash_delivery WHERE request_id=?",Boolean.class,gain.id())).isTrue();
+    }
+    private com.cbs.cash.CashModels.Change cashReverse(Tenant bank,UUID branch,UUID original){
+        var old=json.readValue(jdbc.queryForObject("SELECT payload::text FROM platform.cash_delivery WHERE request_id=?",String.class,original),com.cbs.cash.CashModels.Entry.class);
+        return new com.cbs.cash.CashModels.Change(service.get(ADMIN,bank.id()).version(),com.cbs.cash.CashModels.Kind.REVERSAL,branch,old.location().id(),old.destination()==null?null:old.destination().id(),null,null,null,null,null,old.change().amount(),reference.get(ADMIN,bank.id()).businessDate(),"REV-"+UUID.randomUUID(),null,"Reverse verified fictional transaction",null,null,null,original);
+    }
+    private void verifyCashReversals(FundingFixture f,UUID branch,UUID vault,UUID till,Actor owner,Actor manager,Actor reviewer)throws Exception{
+        var bank=f.f().bank();var originals=new java.util.HashMap<String,UUID>();
+        for(String kind:List.of("RECEIVE","DISPATCH","TRANSFER","DEPOSIT","WITHDRAWAL"))originals.put(kind,jdbc.queryForObject("SELECT request_id FROM platform.cash_delivery WHERE tenant_id=? AND payload->'change'->>'kind'=? AND completed",UUID.class,bank.id(),kind));
+        for(String operation:List.of("CASH_REVERSAL","WITHDRAWAL_REVERSAL","FUNDING_REVERSAL")){
+            approveHttp(approvals.limits(ADMIN,UUID.randomUUID(),bank.id(),new com.cbs.access.TransactionLimits.Change(service.get(ADMIN,bank.id()).version(),"INR",operation,"2000","5000","Fictional reversal limits")).id());
+            for(String subject:java.util.Arrays.asList(null,owner.subject(),manager.subject())){
+                UUID staff=subject==null?null:jdbc.queryForObject("SELECT id FROM platform.staff_identity WHERE issuer=? AND subject=?",UUID.class,owner.issuer(),subject);
+                approveHttp(approvals.branchLimit(ADMIN,UUID.randomUUID(),bank.id(),new com.cbs.access.BranchOperations.Limit(service.get(ADMIN,bank.id()).version(),branch,staff,"INR",operation,"2000","5000","Fictional scoped reversal limit")).id());
+            }
+        }
+        assertCode(()->approvals.cash(manager,UUID.randomUUID(),bank.id(),cashReverse(bank,branch,originals.get("RECEIVE"))),"CASH_INSUFFICIENT");
+        assertCode(()->approvals.cash(owner,UUID.randomUUID(),bank.id(),cashReverse(bank,branch,originals.get("DISPATCH"))),"BRANCH_PERMISSION_DENIED");
+        var dispatchReverse=approvals.cash(manager,UUID.randomUUID(),bank.id(),cashReverse(bank,branch,originals.get("DISPATCH")));
+        assertCode(()->approvals.decide(manager,dispatchReverse.id(),com.cbs.approvals.ApprovalModels.Decision.APPROVE,"Self"),"SELF_APPROVAL_FORBIDDEN");
+        approvals.decide(reviewer,dispatchReverse.id(),com.cbs.approvals.ApprovalModels.Decision.APPROVE,"Independent dispatch reversal");cash.deliver(dispatchReverse.id());
+        assertCode(()->approvals.cash(owner,UUID.randomUUID(),bank.id(),cashReverse(bank,branch,originals.get("WITHDRAWAL"))),"CASH_SESSION_REQUIRED");
+        postCash(owner,reviewer,bank,cashChange(bank,branch,com.cbs.cash.CashModels.Kind.OPEN,till,null,null,null,List.of(new com.cbs.cash.CashModels.Count("50",4))));
+        postCash(owner,reviewer,bank,cashReverse(bank,branch,originals.get("TRANSFER")));
+        assertThat(new java.math.BigDecimal(bankCash.position(bank,cash.location(bank.id(),till)).balance())).isEqualByComparingTo("100");
+        assertCode(()->approvals.cash(owner,UUID.randomUUID(),bank.id(),cashReverse(bank,branch,originals.get("DEPOSIT"))),"INSUFFICIENT_AVAILABLE_BALANCE");
+        var direct=new com.cbs.accounts.OperationModels.Change(service.get(ADMIN,bank.id()).version(),com.cbs.accounts.OperationModels.Kind.WITHDRAWAL_REVERSAL,f.account(),null,null,originals.get("WITHDRAWAL"),"100",reference.get(ADMIN,bank.id()).businessDate(),"BYPASS-CASH","Must use cash route");
+        assertCode(()->approvals.operation(owner,UUID.randomUUID(),bank.id(),direct),"CASH_MANAGED");
+        var reversedWithdrawal=postCash(owner,reviewer,bank,cashReverse(bank,branch,originals.get("WITHDRAWAL")));
+        assertThat(funding.dashboard(ADMIN,bank.id(),f.account(),25,0).balance().postedBalance()).isEqualTo("200");
+        assertCode(()->approvals.cash(owner,UUID.randomUUID(),bank.id(),cashReverse(bank,branch,reversedWithdrawal)),"CASH_REVERSAL_INVALID");
+        assertCode(()->approvals.cash(owner,UUID.randomUUID(),bank.id(),cashReverse(bank,branch,originals.get("WITHDRAWAL"))),"JOURNAL_ALREADY_REVERSED");
+        // Preserve the customer's contractual minimum balance when reversing a deposit.
+        fund(f,"10");
+        assertThat(new java.math.BigDecimal(bankCash.position(bank,cash.location(bank.id(),till)).balance())).isEqualByComparingTo("200");
+        postCash(owner,reviewer,bank,cashChange(bank,branch,com.cbs.cash.CashModels.Kind.TRANSFER,till,vault,null,"200",null));
+        assertCode(()->approvals.cash(owner,UUID.randomUUID(),bank.id(),cashReverse(bank,branch,originals.get("DEPOSIT"))),"CASH_INSUFFICIENT");
+        postCash(owner,reviewer,bank,cashChange(bank,branch,com.cbs.cash.CashModels.Kind.TRANSFER,vault,till,null,"200",null));
+        String path="/api/v1/banks/"+bank.id()+"/branches/"+branch+"/operations/cash";
+        mvc.perform(get(path+"/reversible").header("Authorization","Bearer "+TestIdentity.token("operator",false))).andExpect(status().isForbidden());
+        mvc.perform(get(path+"/reversible").header("Authorization","Bearer "+TestIdentity.token(owner.subject(),false))).andExpect(status().isOk());
+        var input=cashReverse(bank,branch,originals.get("DEPOSIT"));var key=UUID.randomUUID();
+        var response=mvc.perform(post(path).header("Authorization","Bearer "+TestIdentity.token(owner.subject(),false)).header("Idempotency-Key",key).contentType("application/json").content(json.writeValueAsString(input))).andExpect(status().isAccepted()).andReturn().getResponse().getContentAsString();
+        var request=json.readValue(response,com.cbs.approvals.ApprovalModels.Request.class);
+        assertThat(request.proposedValues().get("cashDelta")).isEqualTo("-200");
+        assertThat(request.proposedValues().get("customerOperation")).isEqualTo("FUNDING_REVERSAL");
+        assertCode(()->approvals.decide(owner,request.id(),com.cbs.approvals.ApprovalModels.Decision.APPROVE,"Self"),"BRANCH_PERMISSION_DENIED");
+        approvals.decide(reviewer,request.id(),com.cbs.approvals.ApprovalModels.Decision.APPROVE,"Verify original cash receipt");
+        try(var c=TestDatabases.bank("cash");var st=c.createStatement()){st.execute("CREATE TRIGGER fail_reversal BEFORE INSERT ON bank.cash_entry FOR EACH ROW EXECUTE FUNCTION bank.reject_ledger_event_change()");}
+        cash.deliver(request.id());assertThat(jdbc.queryForObject("SELECT failure_code FROM platform.cash_delivery WHERE request_id=?",String.class,request.id())).isEqualTo("CASH_DATABASE_UNAVAILABLE");
+        assertThat(funding.dashboard(ADMIN,bank.id(),f.account(),25,0).balance().postedBalance()).isEqualTo("210");
+        try(var c=TestDatabases.bank("cash");var st=c.createStatement()){st.execute("DROP TRIGGER fail_reversal ON bank.cash_entry");}
+        new TransactionTemplate(transactionManager).executeWithoutResult(t->{cash.deliver(request.id());t.setRollbackOnly();});cash.deliver(request.id());cash.deliver(request.id());
+        assertThat(approvals.cash(owner,key,bank.id(),input).id()).isEqualTo(request.id());
+        assertThat(funding.dashboard(ADMIN,bank.id(),f.account(),25,0).balance().postedBalance()).isEqualTo("10");
+        assertThat(new java.math.BigDecimal(bankCash.position(bank,cash.location(bank.id(),till)).balance())).isZero();
+        assertThat(bankCash.position(bank,cash.location(bank.id(),till)).reconciled()).isTrue();
+        assertCode(()->operations.deliver(request.id()),"CASH_MANAGED");
     }
     private com.cbs.cash.CashModels.Change customerCashChange(Tenant bank,UUID branch,UUID till,com.cbs.cash.CashModels.Kind kind,UUID account,UUID liability,String amount){
         return new com.cbs.cash.CashModels.Change(service.get(ADMIN,bank.id()).version(),kind,branch,till,null,null,null,null,null,null,amount,reference.get(ADMIN,bank.id()).businessDate(),"CUSTOMER-CASH-"+UUID.randomUUID(),null,"Fictional customer cash receipt",account,liability);

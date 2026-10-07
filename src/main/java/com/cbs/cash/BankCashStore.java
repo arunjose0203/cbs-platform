@@ -17,7 +17,7 @@ public class BankCashStore {
  private final BankDatabaseProvisioner databases;private final BankJournalStore journals;
  public BankCashStore(BankDatabaseProvisioner databases,BankJournalStore journals,com.cbs.accounts.BankFundingStore funding,com.cbs.accounts.BankOperationStore operations){this.funding=funding;this.operations=operations;this.databases=databases;this.journals=journals;}
  private Connection connection(Tenant bank){return databases.openOwned(bank.id(),bank.databaseBinding().databaseReference());}
- public boolean ready(Tenant bank){try(var c=connection(bank);var s=c.createStatement();var r=s.executeQuery("SELECT EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema='bank' AND table_name='cash_receipt' AND column_name='exception_id')")){r.next();return r.getBoolean(1);}catch(SQLException e){throw error("CASH_DATABASE_UNAVAILABLE");}}
+ public boolean ready(Tenant bank){try(var c=connection(bank);var s=c.createStatement();var r=s.executeQuery("SELECT to_regclass('bank.cash_transit') IS NOT NULL")){r.next();return r.getBoolean(1);}catch(SQLException e){throw error("CASH_DATABASE_UNAVAILABLE");}}
  public boolean posted(Tenant bank,UUID id){try(var c=connection(bank);var s=c.prepareStatement("SELECT EXISTS(SELECT 1 FROM bank.cash_receipt WHERE request_id=?)")){s.setObject(1,id);try(var r=s.executeQuery()){r.next();return r.getBoolean(1);}}catch(SQLException e){throw error("CASH_DATABASE_UNAVAILABLE");}}
  public Position position(Tenant bank,Location location){try(var c=connection(bank)){return position(c,location);}catch(SQLException e){throw error("CASH_DATABASE_UNAVAILABLE");}}
  private Position position(Connection c,Location location)throws SQLException{
@@ -37,10 +37,11 @@ public class BankCashStore {
  }
  public void validate(Tenant bank,Entry entry,String maker){
   if(entry.change().kind()==Kind.REGISTER){unused(bank,entry.location().ledgerId());return;}
-  validatePosition(position(bank,entry.location()),entry.change(),maker,false);
-  if(entry.destination()!=null)validatePosition(position(bank,entry.destination()),entry.change(),maker,true);
+  validatePosition(position(bank,entry.location()),entry,maker,false);
+  if(entry.destination()!=null)validatePosition(position(bank,entry.destination()),entry,maker,true);
  }
- private void validatePosition(Position p,Change change,String maker,boolean destination){
+ private void validatePosition(Position p,Entry entry,String maker,boolean destination){
+  var change=entry.change();
   if(!p.reconciled())throw error("CASH_UNRECONCILED");
   if(adjustment(change.kind())){
    var delta=new BigDecimal(change.amount()).multiply(change.kind()==Kind.OVERAGE?BigDecimal.ONE:BigDecimal.ONE.negate());
@@ -52,6 +53,9 @@ public class BankCashStore {
   else if(p.location().type()==Type.TILL){
    if(!p.sessionOpen()||!change.businessDate().equals(p.sessionDate()))throw error("CASH_SESSION_REQUIRED");
    if(!maker.equals(p.custodian()))throw error("CASH_CUSTODIAN_REQUIRED");
+  }
+  if(change.kind()==Kind.REVERSAL){
+   if(new BigDecimal(p.balance()).add(delta(entry,p.location().ledgerId())).signum()<0)throw error("CASH_INSUFFICIENT");return;
   }
   if(change.kind()==Kind.OPEN||change.kind()==Kind.CLOSE||change.kind()==Kind.COUNT){
    if(counted(p.location().currency(),change.counts()).compareTo(new BigDecimal(p.balance()))!=0)throw error("CASH_COUNT_MISMATCH");
@@ -73,18 +77,18 @@ public class BankCashStore {
      s.setObject(1,l.id());s.setObject(2,bank.id());s.setObject(3,l.branchId());s.setObject(4,l.ledgerId());s.setString(5,l.code());s.setString(6,l.name());s.setString(7,l.currency());s.setString(8,l.type().name());s.setObject(9,l.legalEntityId());s.setString(10,JSON.writeValueAsString(l));s.executeUpdate();
     }
    }else{
-    validatePosition(position(c,l),input,job.maker(),false);
-    if(e.destination()!=null)validatePosition(position(c,e.destination()),input,job.maker(),true);
+    validatePosition(position(c,l),e,job.maker(),false);
+    if(e.destination()!=null)validatePosition(position(c,e.destination()),e,job.maker(),true);
    }
    if(e.funding()!=null)funding.post(c,bank,new com.cbs.accounts.FundingModels.Dispatch(e.funding(),job.maker(),job.issuer(),job.checker(),job.correlationId()));
    else if(e.operation()!=null)operations.post(c,bank,new com.cbs.accounts.OperationModels.Dispatch(e.operation(),job.maker(),job.issuer(),job.checker(),job.correlationId()));
    else if(e.journal()!=null)journals.post(c,bank,new JournalModels.Dispatch(e.journal(),job.maker(),job.issuer(),job.checker(),job.correlationId()));
-   try(var s=c.prepareStatement("INSERT INTO bank.cash_receipt(request_id,kind,location_id,destination_id,journal_id,amount,payload,maker_subject,reviewer_subject,exception_id) VALUES (?,?,?,?,?,?,?::jsonb,?,?,?)")){
-    s.setObject(1,e.id());s.setString(2,input.kind().name());s.setObject(3,l.id());s.setObject(4,e.destination()==null?null:e.destination().id());s.setObject(5,e.journal()==null?null:e.id());s.setBigDecimal(6,input.amount()==null?null:new BigDecimal(input.amount()));s.setString(7,payload);s.setString(8,job.maker());s.setString(9,job.checker());s.setObject(10,input.exceptionId());s.executeUpdate();
+   try(var s=c.prepareStatement("INSERT INTO bank.cash_receipt(request_id,kind,location_id,destination_id,journal_id,amount,payload,maker_subject,reviewer_subject,exception_id,original_id) VALUES (?,?,?,?,?,?,?::jsonb,?,?,?,?)")){
+    s.setObject(1,e.id());s.setString(2,input.kind().name());s.setObject(3,l.id());s.setObject(4,e.destination()==null?null:e.destination().id());s.setObject(5,e.journal()==null?null:e.id());s.setBigDecimal(6,input.amount()==null?null:new BigDecimal(input.amount()));s.setString(7,payload);s.setString(8,job.maker());s.setString(9,job.checker());s.setObject(10,input.exceptionId());s.setObject(11,input.originalId());s.executeUpdate();
    }
    if(monetary(input.kind())){
-    BigDecimal amount=new BigDecimal(input.amount());entry(c,e.id(),l.id(),(input.kind()==Kind.RECEIVE||input.kind()==Kind.DEPOSIT||input.kind()==Kind.OVERAGE)?amount:amount.negate());
-    if(e.destination()!=null)entry(c,e.id(),e.destination().id(),amount);
+    entry(c,e.id(),l.id(),delta(e,l.ledgerId()));
+    if(e.destination()!=null)entry(c,e.id(),e.destination().id(),delta(e,e.destination().ledgerId()));
    }else if(input.kind()==Kind.OPEN||input.kind()==Kind.CLOSE){
     try(var s=c.prepareStatement("UPDATE bank.cash_location SET session_open=?,custodian=?,session_date=? WHERE id=?")){s.setBoolean(1,input.kind()==Kind.OPEN);s.setString(2,job.maker());s.setObject(3,input.businessDate());s.setObject(4,l.id());s.executeUpdate();}
    }
@@ -97,5 +101,6 @@ public class BankCashStore {
   }catch(Exception exception){c.rollback();throw exception;}}
   catch(TenantException e1){throw e1;}catch(Exception exception){throw error("CASH_DATABASE_UNAVAILABLE");}
  }
+ private BigDecimal delta(Entry e,UUID ledger){return e.journal().lines().stream().filter(l->l.ledgerId().equals(ledger)).map(l->new BigDecimal(l.amount()).multiply(l.side()==JournalModels.Side.DEBIT?BigDecimal.ONE:BigDecimal.ONE.negate())).reduce(BigDecimal.ZERO,BigDecimal::add);}
  private void entry(Connection c,UUID request,UUID location,BigDecimal amount)throws SQLException{try(var s=c.prepareStatement("INSERT INTO bank.cash_entry(request_id,location_id,amount) VALUES (?,?,?)")){s.setObject(1,request);s.setObject(2,location);s.setBigDecimal(3,amount);s.executeUpdate();}}
 }

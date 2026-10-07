@@ -150,3 +150,15 @@ This increment does not finish Teller & Cash Management. Actual shortage/overage
 Added exact case-linked shortage/overage requests, approved expense/income ledger selection, bank/branch/staff caps, independent manager review excluding the case reporter, atomic cash/GL posting, unique case receipts and post-confirmation case resolution. Failed postings keep the location frozen; retry and lost-acknowledgement recovery are covered. Customer balances remain unchanged. Control schema V19 and bank schema V10 are required; existing banks need ownership-checked cash storage preparation. No live financial limits, chart mappings or adjustment transactions are seeded.
 
 Next: cash/customer reversal workflows. Broader teller operations and production acceptance remain incomplete.
+
+### 7 October 2026 — cash and customer transaction reversals
+
+Added original-linked full cash reversals, withdrawal reversals and internal transfer reversals. Cash/customer/GL effects post atomically, duplicate and reversal-of-reversal requests are rejected, debit availability/holds/minimum balances and teller custody remain enforced, and branch/account screens expose scoped original selections. Control V20 and bank V11 add approved reversal limits and database receipt checks. No external recall or live transaction is initiated.
+
+Remaining teller work includes inter-branch cash/in-transit, denomination inventory, receipt printing, emergency custody reassignment and adjustment case reopening. Production acceptance and later roadmap modules remain incomplete.
+
+### 7 October 2026 — inter-branch cash in transit
+
+Added same-bank/entity/currency vault dispatch, independently approved destination receipts and physical returns, denomination evidence, partial settlement, immutable shipment links, outstanding/overdue tracking and day-close blocking. Dedicated transit ledgers reject generic postings; atomic bank transactions and acknowledgement retries preserve cash and GL consistency. Control V21 / bank V12 are required.
+
+Remaining teller work includes shipment-specific investigation/write-off workflows, carrier custody, denomination inventory, printable receipts, emergency custody reassignment and bank acceptance. Configurable overnight carry is not implemented; unresolved shipments block day close. Later roadmap modules and production gates remain outstanding. See [operator guide](interbranch-cash.md).

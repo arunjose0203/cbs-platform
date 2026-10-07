@@ -83,7 +83,7 @@ public class JournalService {
         if(ids.size()<2)throw error(400,"JOURNAL_LINES_INVALID");
         var actual=ledgers.read(bank,ids);
         for(UUID id:ids){
-            if(!cash&&jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM platform.cash_location WHERE ledger_id=?)",Boolean.class,id))throw error(409,"CASH_MANAGED");
+            if(!cash&&jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM platform.cash_location WHERE ledger_id=?) OR EXISTS(SELECT 1 FROM platform.cash_transit WHERE ledger_id=?)",Boolean.class,id,id))throw error(409,"CASH_MANAGED");
             if(!funding&&jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM platform.account_ledger WHERE ledger_id=?)",Boolean.class,id))throw error(409,"FUNDING_MANAGED");
             var rows=jdbc.query("SELECT d.payload::text FROM platform.ledger_registry r JOIN platform.ledger_delivery d ON d.request_id=r.request_id JOIN platform.chart_account c ON c.id=r.chart_account_id WHERE r.id=? AND r.tenant_id=? AND r.active AND r.delivery='APPLIED' AND c.active AND c.kind='POSTING' AND r.currency=? AND r.legal_entity_id=?",
                     (r,n)->JSON.readValue(r.getString(1),LedgerModels.Definition.class),id,bank.id(),input.currency(),input.legalEntityId());

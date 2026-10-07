@@ -17,7 +17,7 @@ public class BranchOperations {
  public record Assignment(@PositiveOrZero long expectedVersion,@NotNull UUID accountId,@NotNull UUID branchId,@NotBlank @Size(max=500) String reason) {}
  public record Limit(@PositiveOrZero long expectedVersion,@NotNull UUID branchId,UUID staffId,
   @NotNull @Pattern(regexp="[A-Z]{3}") String currency,
-  @NotNull @Pattern(regexp="TRANSFER|WITHDRAWAL|FUNDING_REVERSAL|HOLD|CASH_RECEIVE|CASH_DISPATCH|CASH_TRANSFER|CASH_DEPOSIT|CASH_WITHDRAWAL|CASH_SHORTAGE|CASH_OVERAGE") String operation,
+  @NotNull @Pattern(regexp="TRANSFER|WITHDRAWAL|FUNDING_REVERSAL|HOLD|CASH_RECEIVE|CASH_DISPATCH|CASH_TRANSFER|CASH_DEPOSIT|CASH_WITHDRAWAL|CASH_SHORTAGE|CASH_OVERAGE|CASH_REVERSAL|WITHDRAWAL_REVERSAL|TRANSFER_REVERSAL") String operation,
   @NotNull @Pattern(regexp="[0-9]{1,18}(\\.[0-9]{1,6})?") String perTransaction,
   @NotNull @Pattern(regexp="[0-9]{1,18}(\\.[0-9]{1,6})?") String dailyTotal,@NotBlank @Size(max=500) String reason) {}
  public record Scope(UUID bankId,UUID branchId,UUID staffId) {}

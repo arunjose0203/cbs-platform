@@ -108,6 +108,9 @@ public class CashService {
   if(jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM platform.cash_delivery WHERE tenant_id=? AND NOT completed)",Boolean.class,bank.id()))throw error("CASH_DELIVERY_PENDING");
   var entities=jdbc.queryForList("SELECT legal_entity_id FROM platform.branch WHERE tenant_id=? AND id=? AND active",UUID.class,bank.id(),input.branchId());if(entities.size()!=1)throw error("BRANCH_NOT_OPERATIONAL");
   Location location,target=null;JournalModels.Entry journal=null;com.cbs.accounts.FundingModels.Entry deposit=null;com.cbs.accounts.OperationModels.Entry withdrawal=null;
+  boolean reverse=input.kind()==Kind.REVERSAL;
+  if(input.transit()!=null&&input.kind()!=Kind.RECEIVE&&input.kind()!=Kind.DISPATCH)throw error("CASH_TRANSIT_INVALID");
+  if(reverse!=(input.originalId()!=null))throw error("CASH_FIELDS_INVALID");
   boolean adjust=adjustment(input.kind());
   if(!adjust&&input.exceptionId()!=null)throw error("CASH_FIELDS_INVALID");
   boolean customer=input.kind()==Kind.DEPOSIT||input.kind()==Kind.WITHDRAWAL;
@@ -115,6 +118,7 @@ public class CashService {
   if(input.kind()==Kind.REGISTER){
    if(input.locationId()!=null||input.destinationId()!=null||input.amount()!=null||input.counts()!=null||input.ledgerId()==null||input.type()==null||input.code()==null||input.name()==null||input.name().isBlank()||input.currency()==null)throw error("CASH_FIELDS_INVALID");
    if(jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM platform.cash_location WHERE tenant_id=? AND code=?) OR EXISTS(SELECT 1 FROM platform.cash_location WHERE ledger_id=?)",Boolean.class,bank.id(),input.code(),input.ledgerId()))throw error("CASH_LEDGER_USED");
+   if(transitLedger(input.ledgerId()))throw error("CASH_TRANSIT_MANAGED");
    asset(bank,input.ledgerId(),entities.getFirst(),input.currency());
    if(jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM platform.journal_ledger WHERE ledger_id=?) OR EXISTS(SELECT 1 FROM platform.account_ledger WHERE ledger_id=?)",Boolean.class,input.ledgerId(),input.ledgerId()))throw error("CASH_LEDGER_USED");
    location=new Location(id,bank.id(),input.branchId(),input.ledgerId(),input.code(),input.name().trim(),input.currency(),input.type(),entities.getFirst());
@@ -122,8 +126,20 @@ public class CashService {
    if(input.locationId()==null||input.code()!=null||input.name()!=null||input.currency()!=null||input.type()!=null)throw error("CASH_FIELDS_INVALID");
    location=location(bank.id(),input.locationId());if(!adjust)requireNoException(bank.id(),location.id());if(!location.branchId().equals(input.branchId()))throw error("BRANCH_ACCESS_DENIED");
    if(monetary(input.kind())){
-    if((!adjust&&input.counts()!=null)||input.amount()==null||!input.amount().matches("[0-9]{1,18}(\\.[0-9]{1,6})?")||new BigDecimal(input.amount()).signum()<=0)throw error("CASH_FIELDS_INVALID");
-    if(adjust){
+    if((!adjust&&!(input.transit()!=null&&input.kind()==Kind.RECEIVE)&&input.counts()!=null)||input.amount()==null||!input.amount().matches("[0-9]{1,18}(\\.[0-9]{1,6})?")||new BigDecimal(input.amount()).signum()<=0)throw error("CASH_FIELDS_INVALID");
+    if(reverse){
+     var original=original(bank.id(),input.originalId(),maker.issuer());
+     if(!original.location().equals(location)||!Objects.equals(input.destinationId(),original.destination()==null?null:original.destination().id())||input.ledgerId()!=null||new BigDecimal(input.amount()).compareTo(new BigDecimal(original.change().amount()))!=0)throw error("CASH_REVERSAL_INVALID");
+     target=original.destination();if(target!=null)requireNoException(bank.id(),target.id());
+     if(original.change().kind()==Kind.RECEIVE||original.change().kind()==Kind.DISPATCH)branches.check(maker,bank.id(),input.branchId(),APPROVE_BRANCH);
+     var operation=cashReversalOperation(bank,input,original);
+     if(operation!=null){withdrawal=operations.validateCash(bank,operation,id);journal=withdrawal.journal();}
+     else{
+      var old=original.journal();var lines=old.lines().stream().map(l->new JournalModels.Line(l.ledgerId(),l.side()==JournalModels.Side.DEBIT?JournalModels.Side.CREDIT:JournalModels.Side.DEBIT,l.amount())).toList();
+      journals.validateCash(bank,new JournalModels.Change(input.expectedVersion(),input.reference(),input.reason(),input.businessDate(),old.legalEntityId(),old.currency(),lines,input.originalId(),input.reason()));
+      journal=new JournalModels.Entry(id,bank.id(),input.reference().trim(),input.reason().trim(),input.businessDate(),old.legalEntityId(),old.currency(),lines,input.originalId());
+     }
+    }else if(adjust){
      validateAdjustment(maker,bank,input,location);
      UUID debit=input.kind()==Kind.OVERAGE?location.ledgerId():input.ledgerId();
      UUID credit=input.kind()==Kind.OVERAGE?input.ledgerId():location.ledgerId();
@@ -152,6 +168,7 @@ public class CashService {
     journals.validateCash(bank,new JournalModels.Change(input.expectedVersion(),input.reference(),input.reason(),input.businessDate(),location.legalEntityId(),location.currency(),lines,null,input.reason()));
     journal=new JournalModels.Entry(id,bank.id(),input.reference().trim(),input.reason().trim(),input.businessDate(),location.legalEntityId(),location.currency(),lines,null);
     }
+    validateTransit(maker,bank,input,location);
     limits(maker,bank.id(),input,location.currency());
    }else if(input.kind()==Kind.OPEN||input.kind()==Kind.CLOSE||input.kind()==Kind.COUNT){
     if((input.kind()!=Kind.COUNT&&location.type()!=Type.TILL)||input.destinationId()!=null||input.ledgerId()!=null||input.amount()!=null)throw error("CASH_FIELDS_INVALID");counted(location.currency(),input.counts());
@@ -159,6 +176,52 @@ public class CashService {
   }
   if(reference.read(bank).currencies().stream().noneMatch(c->c.code().equals(location.currency())&&c.enabled()))throw error("CURRENCY_NOT_ENABLED");
   var e=new Entry(id,bank.id(),input,location,target,journal,deposit,withdrawal);store.validate(bank,e,maker.subject());return e;
+ }
+ private boolean transitLedger(UUID ledger){return jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM platform.cash_transit WHERE ledger_id=?)",Boolean.class,ledger);}
+ private void validateTransit(Actor actor,Tenant bank,Change input,Location source){
+  var transit=input.transit();
+  if(transit==null){if(input.ledgerId()!=null&&transitLedger(input.ledgerId()))throw error("CASH_TRANSIT_MANAGED");return;}
+  if(source.type()!=Type.VAULT||input.destinationId()!=null||input.ledgerId()==null)throw error("CASH_TRANSIT_INVALID");
+  if(input.kind()==Kind.DISPATCH){
+   if(transit.dispatchId()!=null||transit.destinationId()==null||transit.expectedDate()==null||transit.expectedDate().isBefore(input.businessDate())||transit.returned())throw error("CASH_TRANSIT_INVALID");
+   var target=location(bank.id(),transit.destinationId());requireNoException(bank.id(),target.id());
+   if(target.type()!=Type.VAULT||source.branchId().equals(target.branchId())||!source.currency().equals(target.currency())||!source.legalEntityId().equals(target.legalEntityId())||!jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM platform.branch WHERE tenant_id=? AND id=? AND active)",Boolean.class,bank.id(),target.branchId()))throw error("CASH_SCOPE_MISMATCH");
+   if(!transitLedger(input.ledgerId())){
+    if(jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM platform.journal_ledger WHERE ledger_id=?)",Boolean.class,input.ledgerId()))throw error("CASH_LEDGER_USED");
+    store.unused(bank,input.ledgerId());
+   }
+  }else{
+   if(transit.dispatchId()==null||transit.destinationId()!=null||transit.expectedDate()!=null)throw error("CASH_TRANSIT_INVALID");
+   var rows=jdbc.queryForList("SELECT t.*,c.payload->'change'->>'amount' AS amount FROM platform.cash_transit t JOIN platform.cash_delivery c ON c.request_id=t.dispatch_id WHERE t.dispatch_id=? AND t.tenant_id=? AND c.completed AND c.reviewer_issuer=?",transit.dispatchId(),bank.id(),actor.issuer());
+   if(rows.size()!=1)throw error("CASH_TRANSIT_NOT_READY");var row=rows.getFirst();
+   if(!input.locationId().equals(row.get(transit.returned()?"source_id":"destination_id"))||!input.ledgerId().equals(row.get("ledger_id")))throw error("CASH_SCOPE_MISMATCH");
+   BigDecimal used=jdbc.queryForObject("SELECT coalesce(sum((payload->'change'->>'amount')::numeric),0) FROM platform.cash_delivery WHERE tenant_id=? AND payload->'change'->'transit'->>'dispatchId'=?",BigDecimal.class,bank.id(),transit.dispatchId().toString());
+   if(new BigDecimal((String)row.get("amount")).subtract(used).compareTo(new BigDecimal(input.amount()))<0)throw error("CASH_TRANSIT_AMOUNT_EXCEEDED");
+   if(counted(source.currency(),input.counts()).compareTo(new BigDecimal(input.amount()))!=0)throw error("CASH_COUNT_MISMATCH");
+  }
+ }
+ public List<Map<String,Object>> transitDestinations(Actor actor,UUID bank,UUID branch){
+  branches.check(actor,bank,branch,APPROVE_BRANCH);
+  return jdbc.queryForList("SELECT l.id,l.code,l.currency,l.legal_entity_id,b.display_name AS branch_name FROM platform.cash_location l JOIN platform.branch b ON b.id=l.branch_id AND b.tenant_id=l.tenant_id WHERE l.tenant_id=? AND l.branch_id<>? AND l.applied AND l.kind='VAULT' AND b.active ORDER BY b.display_name,l.code LIMIT 100",bank,branch);
+ }
+ public List<Map<String,Object>> transit(Actor actor,UUID bank,UUID branch){
+  branches.check(actor,bank,branch,READ_BRANCH);
+  return jdbc.queryForList("SELECT t.dispatch_id,t.source_id,t.destination_id,t.ledger_id,t.expected_date,s.branch_id AS source_branch,d.branch_id AS destination_branch,s.code AS source_code,d.code AS destination_code,s.currency,c.completed AS dispatched,c.payload->'change'->>'reference' AS reference,c.payload->'change'->>'amount' AS amount,((c.payload->'change'->>'amount')::numeric-coalesce(r.posted,0))::text AS outstanding,((c.payload->'change'->>'amount')::numeric-coalesce(r.reserved,0))::text AS receivable,coalesce(r.returned,0)::text AS returned,coalesce(r.received,0)::text AS received,(t.expected_date<greatest(bs.business_date,(CURRENT_TIMESTAMP AT TIME ZONE bs.business_timezone)::date)) AS overdue FROM platform.cash_transit t JOIN platform.cash_location s ON s.id=t.source_id JOIN platform.cash_location d ON d.id=t.destination_id JOIN platform.cash_delivery c ON c.request_id=t.dispatch_id JOIN platform.bank_settings bs ON bs.tenant_id=t.tenant_id LEFT JOIN LATERAL (SELECT sum((x.payload->'change'->>'amount')::numeric) AS reserved,sum((x.payload->'change'->>'amount')::numeric) FILTER(WHERE x.completed) AS posted,sum((x.payload->'change'->>'amount')::numeric) FILTER(WHERE x.completed AND (x.payload->'change'->'transit'->>'returned')::boolean) AS returned,sum((x.payload->'change'->>'amount')::numeric) FILTER(WHERE x.completed AND NOT (x.payload->'change'->'transit'->>'returned')::boolean) AS received FROM platform.cash_delivery x WHERE x.tenant_id=t.tenant_id AND x.payload->'change'->'transit'->>'dispatchId'=t.dispatch_id::text) r ON true WHERE t.tenant_id=? AND c.reviewer_issuer=? AND (s.branch_id=? OR d.branch_id=?) ORDER BY (coalesce(r.posted,0)<(c.payload->'change'->>'amount')::numeric) DESC,c.created_at DESC LIMIT 100",bank,actor.issuer(),branch,branch);
+ }
+ private Entry original(UUID bank,UUID id,String issuer){
+  var rows=jdbc.query("SELECT payload FROM platform.cash_delivery WHERE request_id=? AND tenant_id=? AND reviewer_issuer=? AND completed",(r,n)->JSON.readValue(r.getString(1),Entry.class),id,bank,issuer);
+  if(rows.size()!=1||rows.getFirst().change().transit()!=null||!Set.of(Kind.RECEIVE,Kind.DISPATCH,Kind.TRANSFER,Kind.DEPOSIT,Kind.WITHDRAWAL).contains(rows.getFirst().change().kind()))throw error("CASH_REVERSAL_INVALID");return rows.getFirst();
+ }
+ private com.cbs.accounts.OperationModels.Change cashReversalOperation(Tenant bank,Change input,Entry original){
+  if(original.funding()==null&&original.operation()==null)return null;
+  UUID account=original.funding()!=null?original.funding().accountId():original.operation().account().id();
+  if(!input.branchId().equals(accountBranches.branch(bank.id(),account)))throw error("CASH_SCOPE_MISMATCH");
+  var kind=original.funding()!=null?com.cbs.accounts.OperationModels.Kind.FUNDING_REVERSAL:com.cbs.accounts.OperationModels.Kind.WITHDRAWAL_REVERSAL;
+  return new com.cbs.accounts.OperationModels.Change(input.expectedVersion(),kind,account,null,null,input.originalId(),input.amount(),input.businessDate(),input.reference(),input.reason());
+ }
+ public List<Map<String,Object>> reversible(Actor actor,UUID bank,UUID branch){
+  branches.check(actor,bank,branch,READ_BRANCH);
+  return jdbc.queryForList("SELECT c.request_id,c.payload->'change'->>'reference' AS reference,c.payload->'change'->>'kind' AS kind,c.payload->'change'->>'amount' AS amount,c.payload->'location'->>'currency' AS currency,c.payload->'location'->>'id' AS location_id,c.payload->'destination'->>'id' AS destination_id FROM platform.cash_delivery c WHERE c.tenant_id=? AND c.branch_id=? AND c.reviewer_issuer=? AND c.completed AND c.payload->'change'->'transit' IS NULL AND c.payload->'change'->>'kind' IN ('RECEIVE','DISPATCH','TRANSFER','DEPOSIT','WITHDRAWAL') AND NOT EXISTS(SELECT 1 FROM platform.journal_delivery j WHERE j.reversal_of=c.request_id) ORDER BY c.completed_at DESC,c.request_id LIMIT 100",bank,branch,actor.issuer());
  }
  public List<Map<String,Object>> adjustmentLedgers(Actor actor,UUID bank,UUID branch,UUID locationId){
   branches.check(actor,bank,branch,READ_BRANCH);var l=location(bank,locationId);
@@ -177,7 +240,10 @@ public class CashService {
  }
  private com.cbs.accounts.FundingModels.Change fundingChange(Change input,Location l){return new com.cbs.accounts.FundingModels.Change(input.expectedVersion(),input.accountId(),l.ledgerId(),input.liabilityLedgerId(),input.amount(),input.businessDate(),input.reference(),input.reason());}
  private com.cbs.accounts.OperationModels.Change withdrawalChange(Change input,Location l){return new com.cbs.accounts.OperationModels.Change(input.expectedVersion(),com.cbs.accounts.OperationModels.Kind.WITHDRAWAL,input.accountId(),null,l.ledgerId(),null,input.amount(),input.businessDate(),input.reference(),input.reason());}
- public void record(Actor maker,UUID bank,Change input,UUID id){if(input.kind()==Kind.WITHDRAWAL)accountBranches.record(maker,bank,withdrawalChange(input,location(bank,input.locationId())),id);}
+ public void record(Actor maker,UUID bank,Change input,UUID id){
+  if(input.kind()==Kind.WITHDRAWAL)accountBranches.record(maker,bank,withdrawalChange(input,location(bank,input.locationId())),id);
+  if(input.kind()==Kind.REVERSAL){var operation=cashReversalOperation(tenants.get(bank,false),input,original(bank,input.originalId(),maker.issuer()));if(operation!=null)accountBranches.record(maker,bank,operation,id);}
+ }
  private void asset(Tenant bank,UUID id,UUID entity,String currency){
   if(!jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM platform.ledger_registry l JOIN platform.chart_account c ON c.id=l.chart_account_id WHERE l.id=? AND l.tenant_id=? AND l.legal_entity_id=? AND l.currency=? AND l.active AND l.delivery='APPLIED' AND c.active AND c.kind='POSTING' AND c.category='ASSET' AND c.normal_balance='DEBIT')",Boolean.class,id,bank.id(),entity,currency))throw error("FUNDING_SOURCE_INVALID");
  }
@@ -192,7 +258,8 @@ public class CashService {
    TransactionLimits.enforce(policies.getFirst()[0],policies.getFirst()[1],used,amount);
   }
  }
- public Map<String,Object> values(Entry e){var m=new LinkedHashMap<String,Object>();m.put("operation",e.change().kind());m.put("branchId",e.location().branchId());m.put("location",e.location().code());m.put("locationId",e.location().id());m.put("locationName",e.location().name());m.put("locationType",e.location().type());m.put("cashLedgerId",e.location().ledgerId());m.put("legalEntityId",e.location().legalEntityId());if(e.change().exceptionId()!=null)m.put("exceptionId",e.change().exceptionId());if(e.change().ledgerId()!=null)m.put("selectedLedgerId",e.change().ledgerId());m.put("currency",e.location().currency());m.put("businessDate",e.change().businessDate());m.put("reference",e.change().reference());if(e.funding()!=null)m.put("customerAccount",e.funding().account().accountNumber());if(e.operation()!=null)m.put("customerAccount",e.operation().account().accountNumber());if(e.change().amount()!=null)m.put("amount",e.change().amount());if(e.destination()!=null)m.put("destination",e.destination().code());if(e.change().counts()!=null){m.put("counts",e.change().counts());m.put("countedTotal",counted(e.location().currency(),e.change().counts()).toPlainString());}return m;}
+ public Map<String,Object> values(Entry e){var m=new LinkedHashMap<String,Object>();m.put("operation",e.change().kind());if(e.change().transit()!=null)m.put("transit",e.change().transit());m.put("branchId",e.location().branchId());m.put("location",e.location().code());m.put("locationId",e.location().id());m.put("locationName",e.location().name());m.put("locationType",e.location().type());m.put("cashLedgerId",e.location().ledgerId());m.put("legalEntityId",e.location().legalEntityId());if(e.change().originalId()!=null){m.put("originalId",e.change().originalId());m.put("cashDelta",cashDelta(e,e.location()));if(e.destination()!=null)m.put("destinationCashDelta",cashDelta(e,e.destination()));if(e.operation()!=null)m.put("customerOperation",e.operation().change().kind());}if(e.change().exceptionId()!=null)m.put("exceptionId",e.change().exceptionId());if(e.change().ledgerId()!=null)m.put("selectedLedgerId",e.change().ledgerId());m.put("currency",e.location().currency());m.put("businessDate",e.change().businessDate());m.put("reference",e.change().reference());if(e.funding()!=null)m.put("customerAccount",e.funding().account().accountNumber());if(e.operation()!=null)m.put("customerAccount",e.operation().account().accountNumber());if(e.change().amount()!=null)m.put("amount",e.change().amount());if(e.destination()!=null)m.put("destination",e.destination().code());if(e.change().counts()!=null){m.put("counts",e.change().counts());m.put("countedTotal",counted(e.location().currency(),e.change().counts()).toPlainString());}return m;}
+ private String cashDelta(Entry e,Location l){return e.journal().lines().stream().filter(x->x.ledgerId().equals(l.ledgerId())).map(x->new BigDecimal(x.amount()).multiply(x.side()==JournalModels.Side.DEBIT?BigDecimal.ONE:BigDecimal.ONE.negate())).reduce(BigDecimal.ZERO,BigDecimal::add).stripTrailingZeros().toPlainString();}
  public Map<String,Object> before(Tenant bank,Entry e){if(e.change().kind()==Kind.REGISTER)return Map.of();var p=store.position(bank,e.location());return Map.of("cashBalance",p.balance(),"ledgerBalance",p.ledgerBalance(),"sessionOpen",p.sessionOpen(),"custodian",p.custodian()==null?"":p.custodian());}
  public void enqueue(Actor reviewer,UUID bankId,Change input,UUID id,String maker){
   var bank=tenants.get(bankId,true);authorize(reviewer,bankId,input,true);
@@ -203,9 +270,10 @@ public class CashService {
   }
   if(input.kind()==Kind.REGISTER){var l=e.location();jdbc.update("INSERT INTO platform.cash_location(id,tenant_id,branch_id,ledger_id,code,name,currency,kind,legal_entity_id,request_id) VALUES (?,?,?,?,?,?,?,?,?,?)",l.id(),bankId,l.branchId(),l.ledgerId(),l.code(),l.name(),l.currency(),l.type().name(),l.legalEntityId(),id);}
   if(e.funding()!=null)funding.enqueueCash(reviewer,bankId,fundingChange(input,e.location()),id,maker);
-  if(e.operation()!=null)operations.enqueueCash(reviewer,bankId,withdrawalChange(input,e.location()),id,maker);
-  if(e.journal()!=null&&e.funding()==null&&e.operation()==null){var j=e.journal();jdbc.update("INSERT INTO platform.journal_delivery(request_id,tenant_id,reference,payload,maker_subject,reviewer_issuer,reviewer_subject,correlation_id) VALUES (?,?,?,?::jsonb,?,?,?,?)",id,bankId,j.reference(),JSON.writeValueAsString(j),maker,reviewer.issuer(),reviewer.subject(),reviewer.correlationId());for(var line:j.lines())jdbc.update("INSERT INTO platform.journal_ledger(request_id,ledger_id) VALUES (?,?)",id,line.ledgerId());}
+  if(e.operation()!=null)operations.enqueueCash(reviewer,bankId,e.operation().change(),id,maker);
+  if(e.journal()!=null&&e.funding()==null&&e.operation()==null){var j=e.journal();jdbc.update("INSERT INTO platform.journal_delivery(request_id,tenant_id,reference,reversal_of,payload,maker_subject,reviewer_issuer,reviewer_subject,correlation_id) VALUES (?,?,?,?,?::jsonb,?,?,?,?)",id,bankId,j.reference(),j.reversalOf(),JSON.writeValueAsString(j),maker,reviewer.issuer(),reviewer.subject(),reviewer.correlationId());for(var line:j.lines())jdbc.update("INSERT INTO platform.journal_ledger(request_id,ledger_id) VALUES (?,?)",id,line.ledgerId());}
   jdbc.update("INSERT INTO platform.cash_delivery(request_id,tenant_id,branch_id,staff_id,payload,maker_subject,reviewer_issuer,reviewer_subject,correlation_id) VALUES (?,?,?,?,?::jsonb,?,?,?,?)",id,bankId,input.branchId(),access.requireAssignable(reviewer.issuer(),maker).id(),JSON.writeValueAsString(e),maker,reviewer.issuer(),reviewer.subject(),reviewer.correlationId());
+  if(input.transit()!=null&&input.kind()==Kind.DISPATCH)jdbc.update("INSERT INTO platform.cash_transit(dispatch_id,tenant_id,source_id,destination_id,ledger_id,expected_date) VALUES (?,?,?,?,?,?)",id,bankId,input.locationId(),input.transit().destinationId(),input.ledgerId(),input.transit().expectedDate());
   if(e.funding()==null&&e.operation()==null)tenants.change(bank,bank.status(),bank.displayName(),bank.defaultLanguage());tenants.audit(reviewer,bankId,"CASH_APPROVED",bank.version()+1,bank.status(),bank.status(),"Approved request "+id,null,null,values(e));
  }
  public List<UUID> pending(){return jdbc.query("SELECT request_id FROM platform.cash_delivery WHERE NOT completed ORDER BY last_attempt_at NULLS FIRST,created_at LIMIT 20",(r,n)->r.getObject(1,UUID.class));}

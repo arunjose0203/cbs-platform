@@ -39,6 +39,10 @@ public class BranchOperationController {
   if(!branchId.equals(scope.branch(bankId,input.accountId())))throw denied();
   return approvals.branchOperation(actor(jwt),key,bankId,branchId,input);
  }
+ @GetMapping("/banks/{bankId}/branches/{branchId}/operations/reversible") List<Map<String,Object>> reversible(JwtAuthenticationToken jwt,@PathVariable UUID bankId,@PathVariable UUID branchId){
+  branches.check(actor(jwt),bankId,branchId,AccessModels.Permission.READ_BRANCH);
+  return jdbc.queryForList("SELECT o.request_id,o.account_id,o.destination_id,o.payload->'change'->>'kind' AS kind,o.payload->'change'->>'amount' AS amount,o.payload->'change'->>'reference' AS reference FROM platform.account_operation o JOIN platform.operation_scope s ON s.request_id=o.request_id WHERE s.tenant_id=? AND s.branch_id=? AND o.reviewer_issuer=? AND o.completed AND o.payload->'change'->>'kind' IN ('TRANSFER','WITHDRAWAL') AND NOT EXISTS(SELECT 1 FROM platform.cash_delivery c WHERE c.request_id=o.request_id) AND NOT EXISTS(SELECT 1 FROM platform.journal_delivery j WHERE j.reversal_of=o.request_id) ORDER BY o.completed_at DESC,o.request_id LIMIT 100",bankId,branchId,actor(jwt).issuer());
+ }
  @GetMapping("/banks/{bankId}/branches/{branchId}/operations/requests") Map<String,Object> requests(JwtAuthenticationToken jwt,@PathVariable UUID bankId,@PathVariable UUID branchId,@RequestParam(defaultValue="25") int limit,@RequestParam(defaultValue="0") int offset){
   branches.check(actor(jwt),bankId,branchId,AccessModels.Permission.READ_BRANCH);AccessService.page(limit,offset);
   return Map.of("items",jdbc.queryForList("SELECT r.id,r.status,r.target_label,r.maker_subject,r.created_at FROM platform.approval_request r JOIN platform.operation_scope s ON s.request_id=r.id WHERE s.tenant_id=? AND s.branch_id=? AND r.issuer=? ORDER BY r.created_at DESC,r.id LIMIT ? OFFSET ?",bankId,branchId,actor(jwt).issuer(),limit,offset),"limit",limit,"offset",offset);

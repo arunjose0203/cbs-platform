@@ -35,6 +35,12 @@ public class CashController {
   scoped(jwt,bankId,branchId,id);var action=switch(decision){case "approve"->ApprovalModels.Decision.APPROVE;case "reject"->ApprovalModels.Decision.REJECT;case "cancel"->ApprovalModels.Decision.CANCEL;default->throw CashModels.error("INVALID_REQUEST");};
   return approvals.decide(actor(jwt),id,action,input.reason());
  }
+ @GetMapping("/banks/{bankId}/branches/{branchId}/operations/cash/transit")
+ List<Map<String,Object>> transit(JwtAuthenticationToken jwt,@PathVariable UUID bankId,@PathVariable UUID branchId){return cash.transit(actor(jwt),bankId,branchId);}
+ @GetMapping("/banks/{bankId}/branches/{branchId}/operations/cash/transit-destinations")
+ List<Map<String,Object>> transitDestinations(JwtAuthenticationToken jwt,@PathVariable UUID bankId,@PathVariable UUID branchId){return cash.transitDestinations(actor(jwt),bankId,branchId);}
+ @GetMapping("/banks/{bankId}/branches/{branchId}/operations/cash/reversible")
+ List<Map<String,Object>> reversible(JwtAuthenticationToken jwt,@PathVariable UUID bankId,@PathVariable UUID branchId){return cash.reversible(actor(jwt),bankId,branchId);}
  @GetMapping("/banks/{bankId}/branches/{branchId}/operations/cash/adjustment-ledgers")
  List<Map<String,Object>> adjustmentLedgers(JwtAuthenticationToken jwt,@PathVariable UUID bankId,@PathVariable UUID branchId,@RequestParam UUID locationId){return cash.adjustmentLedgers(actor(jwt),bankId,branchId,locationId);}
  @GetMapping("/banks/{bankId}/branches/{branchId}/operations/cash/exceptions")

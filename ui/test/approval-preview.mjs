@@ -13,6 +13,7 @@ const settings={bankId,version:1,currencies:[{code:'KES',roundingMode:'HALF_EVEN
 const catalogue={currencies:[{code:'KES',name:'Kenyan Shilling',decimalPlaces:2},{code:'USD',name:'US Dollar',decimalPlaces:2},{code:'JPY',name:'Japanese Yen',decimalPlaces:0}],languages:[{code:'en',name:'English'},{code:'fr',name:'French'},{code:'sw',name:'Swahili'}],timezones:['Africa/Nairobi','Africa/Lagos','Africa/Johannesburg'],roundingModes:['HALF_EVEN','HALF_UP','DOWN']};
 let preference='en';
 const adjustmentPreview=process.argv.includes('--adjustment');
+const transitPreview=process.argv.includes('--transit');
 const entityId='60000000-0000-0000-0000-000000000001';
 let ledgerReady=!process.argv.includes('--unprepared');
 const ledgerRows=[{definition:{id:'70000000-0000-0000-0000-000000000001',bankId,code:'CASH_KES',name:'Cash in Kenyan shillings',chartAccountId:'40000000-0000-0000-0000-000000000002',legalEntityId:entityId,currency:'KES',active:true,version:0},chartCode:'1100',legalEntityName:'Demo Bank Kenya Limited',delivery:'APPLIED',requestId:'80000000-0000-0000-0000-000000000001',failureCode:null},
@@ -44,13 +45,17 @@ createServer(async(req,res)=>{
     if(url.pathname==='/admin/styles.css')return send(await readFile(root+'src/main/resources/static/admin/styles.css','utf8'),'text/css');
     if(url.pathname==='/admin/chart.css')return send(await readFile(root+'src/main/resources/static/admin/chart.css','utf8'),'text/css');
     if(url.pathname==='/'||url.pathname==='/admin/index.html')return send(await readFile(root+'src/main/resources/static/admin/index.html','utf8'),'text/html');
-    if(url.pathname==='/api/v1/banks/operations/branches')return send([{bank_id:bankId,branch_id:'b0000000-0000-0000-0000-000000000001',bank_name:'Demo Bank Kenya',branch_name:'Nairobi Main',role:adjustmentPreview?'BRANCH_MANAGER':'TELLER'}]);
+    if(url.pathname==='/api/v1/banks/operations/branches')return send([{bank_id:bankId,branch_id:'b0000000-0000-0000-0000-000000000001',bank_name:'Demo Bank Kenya',branch_name:'Nairobi Main',role:adjustmentPreview||transitPreview?'BRANCH_MANAGER':'TELLER'}]);
+    if(url.pathname.endsWith('/operations/cash/transit-destinations'))return send([{id:'c0000000-0000-0000-0000-000000000003',code:'MOMBASA_VAULT',branch_name:'Mombasa',currency:'KES',legal_entity_id:entityId}]);
+    if(url.pathname.endsWith('/operations/cash/transit'))return send(transitPreview?[{dispatch_id:'d0000000-0000-0000-0000-000000000001',source_branch:'b0000000-0000-0000-0000-000000000002',destination_branch:'b0000000-0000-0000-0000-000000000001',source_id:'c0000000-0000-0000-0000-000000000003',destination_id:'c0000000-0000-0000-0000-000000000001',ledger_id:'e0000000-0000-0000-0000-000000000001',source_code:'MOMBASA_VAULT',destination_code:'MAIN_VAULT',reference:'DEMO-SHIP-001',currency:'KES',amount:'50000',received:'20000',returned:'0',outstanding:'30000',receivable:'30000',expected_date:settings.businessDate,dispatched:true,overdue:false}]:[]);
+    if(url.pathname.endsWith('/operations/cash/reversible'))return send([{request_id:'f0000000-0000-0000-0000-000000000001',reference:'DEMO-CASH-DEPOSIT-001',kind:'DEPOSIT',amount:'250.50',currency:'KES',location_id:'c0000000-0000-0000-0000-000000000002',destination_id:null}]);
+    if(url.pathname.endsWith('/operations/reversible'))return send([]);
     if(url.pathname.endsWith('/operations/cash/adjustment-ledgers'))return send([{id:'e0000000-0000-0000-0000-000000000001',code:'CASH_LOSS_KES',name:'Cash shortage expense',category:'EXPENSE'}]);
     if(url.pathname.endsWith('/operations/cash/exceptions')){return send(adjustmentPreview?[{id:'c0000000-0000-0000-0000-000000000001',location_id:'c0000000-0000-0000-0000-000000000002',code:'TILL_01',currency:'KES',book_amount:'10000',counted_amount:'9500',difference:'-500',reporter:'teller.demo',resolved_at:null,pending_adjustment:null}]:[]);}
     if(url.pathname.startsWith('/api/v1/banks/')&&url.pathname.endsWith('/operations/cash')){
       if(req.method==='POST'){let body='';for await(const chunk of req)body+=chunk;res.statusCode=202;return send({id:crypto.randomUUID(),status:'PENDING',proposedValues:JSON.parse(body)});}
       return send({version:1,businessDate:settings.businessDate,storageReady:true,items:[
-       {location:{id:'c0000000-0000-0000-0000-000000000001',code:'MAIN_VAULT',name:'Nairobi main vault',type:'VAULT',currency:'KES'},balance:'90000',ledgerBalance:'90000',reconciled:true,sessionOpen:false},
+       {location:{id:'c0000000-0000-0000-0000-000000000001',code:'MAIN_VAULT',name:'Nairobi main vault',type:'VAULT',currency:'KES',legalEntityId:entityId},balance:'90000',ledgerBalance:'90000',reconciled:true,sessionOpen:false},
        {location:{id:'c0000000-0000-0000-0000-000000000002',code:'TILL_01',name:'Counter one',type:'TILL',currency:'KES'},balance:'10000',ledgerBalance:'10000',reconciled:true,sessionOpen:true,custodian:'checker.demo'}
       ],accounts:[{id:'94000000-0000-0000-0000-000000000001',account_number:'DEMO001',currency:'KES',state:'ACTIVE',liability_ledger_id:ledgerRows[1].definition.id}],requests:[],deliveries:[],limit:25,offset:0});
     }

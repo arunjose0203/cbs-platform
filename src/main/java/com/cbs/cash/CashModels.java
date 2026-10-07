@@ -10,10 +10,11 @@ import java.util.*;
 
 public final class CashModels {
  private CashModels() {}
- public enum Kind { REGISTER, RECEIVE, DISPATCH, TRANSFER, OPEN, CLOSE, COUNT, DEPOSIT, WITHDRAWAL, SHORTAGE, OVERAGE }
+ public enum Kind { REGISTER, RECEIVE, DISPATCH, TRANSFER, OPEN, CLOSE, COUNT, DEPOSIT, WITHDRAWAL, SHORTAGE, OVERAGE, REVERSAL }
  public enum Type { VAULT, TILL }
  public record Count(@NotNull @Pattern(regexp="[0-9]{1,18}(\\.[0-9]{1,6})?") String denomination,
                      @Min(0) @Max(1000000000) long quantity) {}
+ public record Transit(UUID dispatchId,UUID destinationId,java.time.LocalDate expectedDate,boolean returned) {}
  public record Change(@PositiveOrZero long expectedVersion,@NotNull Kind kind,@NotNull UUID branchId,
    UUID locationId,UUID destinationId,UUID ledgerId,
    @Pattern(regexp="[A-Z0-9][A-Z0-9_-]{0,31}") String code,
@@ -23,7 +24,9 @@ public final class CashModels {
    @NotNull LocalDate businessDate,
    @NotBlank @Size(max=80) @Pattern(regexp="[^\\p{Cntrl}]+") String reference,
    @Size(max=50) List<@NotNull @Valid Count> counts,
-   @NotBlank @Size(max=500) @Pattern(regexp="[^\\p{Cntrl}]+") String reason,UUID accountId,UUID liabilityLedgerId,@com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL) UUID exceptionId) {
+   @NotBlank @Size(max=500) @Pattern(regexp="[^\\p{Cntrl}]+") String reason,UUID accountId,UUID liabilityLedgerId,@com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL) UUID exceptionId,@com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL) UUID originalId,@Valid @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL) Transit transit) {
+  public Change(long expectedVersion,Kind kind,UUID branchId,UUID locationId,UUID destinationId,UUID ledgerId,String code,String name,String currency,Type type,String amount,LocalDate businessDate,String reference,List<Count> counts,String reason,UUID accountId,UUID liabilityLedgerId,UUID exceptionId,UUID originalId){this(expectedVersion,kind,branchId,locationId,destinationId,ledgerId,code,name,currency,type,amount,businessDate,reference,counts,reason,accountId,liabilityLedgerId,exceptionId,originalId,null); }
+  public Change(long expectedVersion,Kind kind,UUID branchId,UUID locationId,UUID destinationId,UUID ledgerId,String code,String name,String currency,Type type,String amount,LocalDate businessDate,String reference,List<Count> counts,String reason,UUID accountId,UUID liabilityLedgerId,UUID exceptionId){this(expectedVersion,kind,branchId,locationId,destinationId,ledgerId,code,name,currency,type,amount,businessDate,reference,counts,reason,accountId,liabilityLedgerId,exceptionId,null);}
   public Change(long expectedVersion,Kind kind,UUID branchId,UUID locationId,UUID destinationId,UUID ledgerId,String code,String name,String currency,Type type,String amount,LocalDate businessDate,String reference,List<Count> counts,String reason,UUID accountId,UUID liabilityLedgerId){this(expectedVersion,kind,branchId,locationId,destinationId,ledgerId,code,name,currency,type,amount,businessDate,reference,counts,reason,accountId,liabilityLedgerId,null); }
   public Change(long expectedVersion,Kind kind,UUID branchId,UUID locationId,UUID destinationId,UUID ledgerId,String code,String name,String currency,Type type,String amount,LocalDate businessDate,String reference,List<Count> counts,String reason){this(expectedVersion,kind,branchId,locationId,destinationId,ledgerId,code,name,currency,type,amount,businessDate,reference,counts,reason,null,null);}
  }
@@ -32,7 +35,7 @@ public final class CashModels {
  public record Entry(UUID id,UUID bankId,Change change,Location location,Location destination,JournalModels.Entry journal,com.cbs.accounts.FundingModels.Entry funding,com.cbs.accounts.OperationModels.Entry operation) {}
  public record Dispatch(Entry entry,String maker,String issuer,String checker,UUID correlationId) {}
  public static boolean adjustment(Kind kind){return kind==Kind.SHORTAGE||kind==Kind.OVERAGE;}
- public static boolean monetary(Kind kind){return adjustment(kind)|| kind==Kind.RECEIVE||kind==Kind.DISPATCH||kind==Kind.TRANSFER||kind==Kind.DEPOSIT||kind==Kind.WITHDRAWAL;}
+ public static boolean monetary(Kind kind){return kind==Kind.REVERSAL||adjustment(kind)|| kind==Kind.RECEIVE||kind==Kind.DISPATCH||kind==Kind.TRANSFER||kind==Kind.DEPOSIT||kind==Kind.WITHDRAWAL;}
  public static BigDecimal counted(String currency,List<Count> counts){
   if(counts==null||counts.size()>50)throw error("CASH_COUNT_INVALID");
   int scale=Currency.getInstance(currency).getDefaultFractionDigits();

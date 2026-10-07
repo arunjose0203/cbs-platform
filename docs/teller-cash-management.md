@@ -4,7 +4,7 @@ Implemented on 2026-10-07. This is a working cash custody and customer-cash incr
 
 ## Operator setup
 
-1. Prepare the bank database using Bank directory → Manage bank → Cash locations → Prepare cash storage (or the existing authenticated ledger-accounts/prepare API). Control schema is V19; bank schema is V10. The preparation service verifies database ownership before migration.
+1. Prepare the bank database using Bank directory → Manage bank → Cash locations → Prepare cash storage (or the existing authenticated ledger-accounts/prepare API). Control schema is V21; bank schema is V12. The preparation service verifies database ownership before migration.
 2. Create dedicated, unused, debit-normal asset ledgers for each currency's vault and tills. A cash location cannot adopt a ledger with historical or queued journal postings or a customer binding.
 3. In Bank directory → Manage bank → Cash locations, submit each vault/till registration. An independent platform administrator approves it in Approval Inbox. The delivery worker creates the bank-side location at zero. No opening cash is invented.
 4. Assign bank operator and branch TELLER/BRANCH_MANAGER roles. Assign customer accounts to the same branch and legal entity through approval.
@@ -51,7 +51,7 @@ Dashboard location pagination is 25 by default, at most 100. Recent requests/del
 
 Tests cover maker/checker separation, branch access, required limits, exact precision including RWF/UGX/KES, session custody, insufficient cash/customer balance, mismatch blocking, daily count invalidation, transaction rollback, lost acknowledgement and repeat delivery, immutable entries, and direct-journal bypass rejection. Tests run against isolated local PostgreSQL; browser preview uses fictional data without a database connection.
 
-Still pending in this stage: investigation assignment/escalation and suspense/recovery accounting policies; cash/customer reversal workflows; cash-in-transit and inter-branch custody; note/coin stock inventory and denomination catalogue approval; teller receipt printing; richer account/history searches; emergency custody reassignment; complete translations; and bank acceptance. An unresolved physical loss or gain blocks the location and day close until an independently approved exact adjustment posts; verified counting errors can be resolved by independent recount. Existing staff grants also still need the planned independent administration approval workflow.
+Still pending in this stage: investigation assignment/escalation and suspense/recovery accounting policies; adjustment reversal and case reopening; cash-in-transit and inter-branch custody; note/coin stock inventory and denomination catalogue approval; teller receipt printing; richer account/history searches; emergency custody reassignment; complete translations; and bank acceptance. An unresolved physical loss or gain blocks the location and day close until an independently approved exact adjustment posts; verified counting errors can be resolved by independent recount. Existing staff grants also still need the planned independent administration approval workflow.
 
 No payment provider, financial limit, tax rate, regulatory approval, MFA exception or live financial transaction was invented or enabled by this implementation.
 
@@ -85,4 +85,12 @@ Control migration V19 reserves each approved case to one immutable adjustment re
 
 These changes extend the existing CASH_OPERATION approval action with SHORTAGE and OVERAGE kinds and exceptionId. The existing cash POST endpoint accepts them. GET cash/adjustment-ledgers?locationId={id} supplies branch-scoped ledger choices; exception lists expose pending_adjustment and adjustment_request_id so the UI distinguishes an approved queued adjustment from a posted resolution. Null exceptionId is omitted from serialization to retain compatibility with existing cash request and receipt payloads.
 
-This version supports direct expense/income recognition only. Bank-approved suspense, employee recovery, insurance recovery and later reclassification policies are separate future work; the application does not decide those accounting policies. Cash and customer reversals are the next implementation increment.
+This version supports direct expense/income recognition only. Bank-approved suspense, employee recovery, insurance recovery and later reclassification policies are separate future work; the application does not decide those accounting policies. Cash/customer transaction reversals are documented in transaction-reversals.md. Adjustment reversals remain a separate case-reopening workflow.
+
+## Cash/customer transaction reversal increment
+
+See [Transaction reversals](transaction-reversals.md) for supported original transactions, approvals, limits, atomic posting, recovery and operator setup. Current bank storage is V11 and control storage V20.
+
+## Inter-branch shipments
+
+Vault dispatch, partial destination receipts and physical returns now use linked cash-in-transit accounting. See [Inter-branch cash](interbranch-cash.md) for configuration, approval, limits and remaining scope.

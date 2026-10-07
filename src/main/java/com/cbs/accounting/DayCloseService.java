@@ -40,6 +40,7 @@ public class DayCloseService {
         if(jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM platform.cash_location WHERE tenant_id=? AND session_open)",Boolean.class,bank.id()))result.add("CASH_SESSION_OPEN");
         if(jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM platform.cash_location l JOIN platform.bank_settings s ON s.tenant_id=l.tenant_id WHERE l.tenant_id=? AND l.counted_date IS DISTINCT FROM s.business_date)",Boolean.class,bank.id()))result.add("CASH_COUNT_REQUIRED");
         if(jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM platform.cash_exception e WHERE e.tenant_id=? AND NOT EXISTS(SELECT 1 FROM platform.cash_exception_resolution r WHERE r.case_id=e.id))",Boolean.class,bank.id()))result.add("CASH_EXCEPTION_OPEN");
+        if(jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM platform.cash_transit t JOIN platform.cash_delivery c ON c.request_id=t.dispatch_id WHERE t.tenant_id=? AND (c.payload->'change'->>'amount')::numeric>coalesce((SELECT sum((r.payload->'change'->>'amount')::numeric) FROM platform.cash_delivery r WHERE r.completed AND r.tenant_id=t.tenant_id AND r.payload->'change'->'transit'->>'dispatchId'=t.dispatch_id::text),0))",Boolean.class,bank.id()))result.add("CASH_IN_TRANSIT_OUTSTANDING");
         if(!store.balanced(bank))result.add("DAY_CLOSE_UNRECONCILED");
         return result;
     }

@@ -24,3 +24,10 @@ test('branch submission pins account, bank version and decimal strings',async()=
 test('no branch membership does not load accounts or approvals',async()=>{
  let calls=0;const content={innerHTML:''};const ui=createBranchUi({api:async()=>{calls++;return [];}});await ui.render(content,()=>true);assert.equal(calls,1);assert.match(content.innerHTML,/No active branch memberships/);
 });
+
+test('branch transfer reversal swaps original accounts and preserves exact amount',async()=>{
+ let submit,posted;const row={request_id:'original',kind:'TRANSFER',account_id:'source',destination_id:'target',amount:'9007199254740993.17',reference:'T1'};
+ const ui=createBranchUi({api:async(path,options)=>{if(options){posted={path,...options};return {};}return path.endsWith('/reversible')?[row]:fixture(path);},field:()=>'',form:(_t,_h,fn)=>submit=fn});
+ await ui.render({innerHTML:''},()=>true);await ui.action('reverse');await submit({originalId:'original',reference:'REV',reason:'Correction'});
+ assert.equal(posted.body.kind,'TRANSFER_REVERSAL');assert.equal(posted.body.accountId,'target');assert.equal(posted.body.destinationId,'source');assert.equal(posted.body.amount,row.amount);assert.equal(posted.body.originalId,'original');assert.equal(posted.body.expectedVersion,7);
+});

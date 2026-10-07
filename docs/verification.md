@@ -411,3 +411,27 @@ Final customer-cash HTTP integration passed (.local/cash-http-tests.log), includ
 - Existing banks require authenticated ownership-checked preparation to schema V10. This increment does not seed live financial limits or ledger mappings, renew MFA exceptions, or establish production acceptance.
 
 - Release verification: package succeeded (.local/cash-adjustment-package.log); the restarted application applied control migration V19 and returned readiness UP. Actual per-bank V10 migrations remain an authenticated Prepare cash storage operation; live-bank acceptance was not performed.
+
+### 2026-10-07: cash and customer transaction reversals
+
+Implemented cash REVERSAL, customer WITHDRAWAL_REVERSAL and TRANSFER_REVERSAL with immutable original references, current-day opposite journals and bank/branch/staff limits. Control schema V20 and bank schema V11 are additive; previous migrations are unchanged.
+
+Validation includes same-bank original receipt lookup, exact amount/account/location matching, insufficient till cash, customer funds/holds/minimum balances, teller session custody, teller approval denial, manager self-approval denial, duplicate and reversal-of-reversal rejection, generic-route cash bypass rejection, authenticated cash selector/submission, signed approval effects, atomic rollback and repeated/lost-acknowledgement delivery. The existing cash serialization compatibility test also checks omission of null originalId.
+
+- UI suite: 44 tests passed (.local/reversal-ui-tests.log), including exact money strings and reversed transfer account direction.
+- Final focused cash scenario passed (.local/reversal-cash-final-tests.log). Earlier runs corrected two test expectations: a withdrawal reversal restores cash, and a teller fails branch approval permission before self-approval checking. Both production controls were retained.
+- Browser fixture check: selected a fictional KES 250.50 deposit, entered reversal reference/evidence, and verified the independent-approval form. Screenshot .local/reversal-preview.png. No real transaction was submitted and the temporary fixture/tab were closed.
+- Existing banks need authenticated ownership-checked preparation to bank schema V11 and approved real reversal limits. No live financial policies were seeded, no MFA exception was renewed, and no external provider recall or production acceptance was performed.
+
+- Final release gate: all 102 backend tests passed with no failures/errors/skips (.local/reversal-release-tests.log). UI: all 44 tests passed. Package succeeded (.local/reversal-package.log). The restarted application applied control migration V20 and readiness returned UP; actual bank schema upgrades to V11 remain the authenticated storage preparation step.
+
+### 2026-10-07: inter-branch cash and transit
+
+Control V21 and bank V12 add linked dispatch/receipt storage and transit-ledger protections. Existing cash request, approval, limit, idempotency and delivery mechanisms are reused.
+
+- Full regression: 102 backend tests passed, zero failures/errors/skips (.local/transit-release-tests.log). The existing cash integration scenario now also covers source/destination permissions, cancelled unsent requests, dedicated unused ledger enforcement, no immediate destination credit, dispatch acknowledgement loss, partial receipt, physical return, excess receipt rejection, generic reversal rejection, direct bank journal bypass rejection, atomic rollback, receipt acknowledgement loss, immutable receipts, scoped HTTP listing and day-close gates.
+- UI: all 46 tests passed (.local/transit-ui-tests.log), including exact money, pinned shipment route, denomination evidence, destination filtering and physical return direction. Legacy cash JSON continues to omit absent metadata.
+- Browser: fictional shipment dashboard and partial receipt form verified using the isolated fixture server. Screenshot .local/transit-preview.png. No live transaction submitted; temporary tab and preview process closed.
+- Initial focused runs exposed and corrected a PL/pgSQL CASE parsing issue in the new migration and a JDBC JSON operator/placeholder collision. The final complete suite includes both fixes.
+- Packaging succeeded (.local/transit-package.log). The restarted workspace app returned readiness UP on port 8080. Existing bank databases still require the ownership-checked Prepare cash storage operation before using V12 cash workflows.
+- No live financial limits or mappings were invented, no MFA exception was renewed, and no production acceptance or external cash movement was performed. Overnight carry, carrier tracking and shipment write-off cases remain pending as documented in interbranch-cash.md.
