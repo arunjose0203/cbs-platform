@@ -56,6 +56,7 @@ public class CustomerService {
         if(!row.delivery().equals("APPLIED"))throw error(409,"ACCOUNT_CUSTOMER_NOT_READY");
         if(!row.definition().equals(store.read(bank,id)))throw error(503,"CUSTOMER_RECONCILIATION_REQUIRED");
         checkEligible(row.definition());
+        com.cbs.compliance.ComplianceService.requireClear(jdbc,bank.id(),id,row.definition().version());
     }
     public static void checkEligible(Definition customer){
         var p=customer.profile();

@@ -15,8 +15,14 @@ import org.springframework.web.bind.annotation.*;
 @RequestMapping("/api/v1")
 @ConditionalOnProperty(name="cbs.tenancy.enabled",havingValue="true",matchIfMissing=true)
 public class CashController {
- private final CashService cash;private final ApprovalService approvals;private final BranchService branches;
- public CashController(CashService cash,ApprovalService approvals,BranchService branches){this.cash=cash;this.approvals=approvals;this.branches=branches;}
+ private final DenominationService denominations;private final CashService cash;private final ApprovalService approvals;private final BranchService branches;
+ public CashController(DenominationService denominations,CashService cash,ApprovalService approvals,BranchService branches){this.denominations=denominations;this.cash=cash;this.approvals=approvals;this.branches=branches;}
+ @GetMapping("/admin/tenants/{bankId}/cash-denominations")
+ List<Map<String,Object>> denominations(JwtAuthenticationToken jwt,@PathVariable UUID bankId){com.cbs.access.AccessService.admin(actor(jwt));return denominations.list(bankId);}
+ @PostMapping("/admin/tenants/{bankId}/cash-denominations") @ResponseStatus(org.springframework.http.HttpStatus.ACCEPTED)
+ ApprovalModels.Request denominations(JwtAuthenticationToken jwt,@PathVariable UUID bankId,@RequestHeader("Idempotency-Key") UUID key,@Valid @RequestBody DenominationService.Change input){return approvals.denominations(actor(jwt),key,bankId,input);}
+ @PostMapping("/banks/{bankId}/branches/{branchId}/operations/cash/{id}/receipt")
+ Map<String,Object> receipt(JwtAuthenticationToken jwt,@PathVariable UUID bankId,@PathVariable UUID branchId,@PathVariable UUID id,@RequestHeader("Idempotency-Key") UUID key){return cash.receipt(actor(jwt),bankId,branchId,id,key);}
  @PostMapping("/admin/tenants/{bankId}/cash-locations") @ResponseStatus(org.springframework.http.HttpStatus.ACCEPTED)
  ApprovalModels.Request register(JwtAuthenticationToken jwt,@PathVariable UUID bankId,@RequestHeader("Idempotency-Key") UUID key,@Valid @RequestBody CashModels.Change input){
   if(input.kind()!=CashModels.Kind.REGISTER)throw CashModels.error("CASH_FIELDS_INVALID");return approvals.cash(actor(jwt),key,bankId,input);

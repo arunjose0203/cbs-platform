@@ -22,20 +22,21 @@ in each bank's dedicated database. Product definitions use the control database.
 | 03 Approval Inbox | Independent approval, rejection, cancellation, history, stale-request and retry protection | Broader role/limit-based approval policies |
 | 04 Reference data | Currency, language, rounding rules, business calendar and settings approval | Country-specific policy setup and acceptance |
 | 05.1 Chart of Accounts | Hierarchy, categories, posting definitions and approvals | Bank-specific accounting/regulatory chart setup |
-| 05.2 Ledger Accounts | Per-bank ledger storage, approval delivery and retry recovery | Customer subledgers and holds |
+| 05.2 Ledger Accounts | Per-bank ledger storage, approval delivery and retry recovery; customer subledgers and holds integrated | Bank accounting acceptance and lifecycle extensions |
 | 05.3 Journals | Balanced single-currency manual journals, full reversal, balances and immutable records | Customer transaction orchestration, FX transactions |
 | 05.4 Reports | Trial balance, ledger statements, turnover reconciliation and CSV | Consolidated FX, regulatory and customer reports |
 | 05.5 Business Day Close | Readiness checks, independent approval, date locks, next-working-day advancement, totals and recovery | Full end-of-day batches, period/year closing and controlled reopening |
 | 06.1 Product Factory | Savings/current definitions, currency, minimum rules, liability mapping, activation approval and revisions | Interest, fees, eligibility, overdrafts and effective-date policies |
+| 07.2 Compliance cases | Manual evidence, independent review, immediate restrictions, review expiry and current-profile checks | Mandatory verification, automated screening, scoped investigators and country acceptance |
 | 07 Customer onboarding | Individual profiles, document/manual-review references, duplicate checks, status approval and recoverable bank storage | Automated verification/screening, corporate customers, guardians, periodic review and privacy controls |
 | 08.1–08.2 Accounts and deposits | Approved opening/funding, unique numbering, pinned terms, exact customer balances, dedicated liability ledger, atomic journal integration and retry recovery | Holds/releases, recorded withdrawals and full funding reversals implemented; limits, funded-account closure and broader corrections remain |
-| 09 Internal transfers | Initial same-bank/entity/currency transfers, atomic posting and retry safety | Bank/branch permissions, amount limits and transfer reversals |
-| 10 Teller and cash | Not implemented | Teller tills, cash deposits/withdrawals, limits, balancing and shortages |
-| 11 Interest, fees, accruals | Not implemented | Calculation rules, schedules, accrual/posting, reversals and reconciliation |
-| 12 Business-day processing | Accounting close foundation only | Scheduled financial batches, restart checkpoints and dependency sequencing |
-| 13 Statements/notifications | Customer statement view with opening, closing and paginated running balances | Exports, delivery preferences, templates and delivery tracking |
-| 14 External payments | Not implemented | Payment providers/rails, outbound/inbound states, exceptions and returns |
-| 15 Settlement | Ledger reconciliation only | External statements, matching, breaks, settlement and exception queues |
+| 09 Internal transfers | Same-bank/entity/currency transfers, scoped branch permissions, mandatory limits, full reversals, atomic posting and retry safety | Broader approval policy and bank acceptance |
+| 10 Teller and cash | Vault/till custody, customer cash, limits, approvals, exceptions/adjustments, reversals, interbranch transit, denomination inventory and printable receipts | Carrier custody, stock exchange/reclassification, emergency reassignment, extended receipts and bank acceptance |
+| 11 Interest, fees, accruals | Approved effective-dated policies, daily capitalization, fixed business-day fees, explicit withholding/fee taxes and fractional carry | Tiered/value-date interest, deferred capitalization, exemptions, servicing corrections and country acceptance |
+| 12 Business-day processing | Preview/approval, atomic daily batch, idempotent recovery, statement integration and day sealing before close | Scalable chunked batches, schedules, period/year close and production load acceptance |
+| 13 Statements/notifications | Customer statement view with running balances and bounded backend CSV export | Complete portal export, PDF, delivery preferences, templates and delivery tracking |
+| 14 External payments | Safaricom M-Pesa Kenya B2C sandbox adapter, approved payouts, single dispatch, status query and callback observations | Actual sandbox acceptance, production certification, collections/other rails, beneficiary screening and richer exception handling |
+| 15 Settlement | Normalized full CSV imports, payout/GL matching, wallet balances, fee adjustments, duplicate controls, corrections, independent closure and exports | Provider-native format acceptance, timing differences, split/net settlement, larger automated imports and production controls |
 | 16 FX | Multiple currency definitions and separated balances only | Exchange rates, conversion, revaluation, FX gains/losses |
 | 17 Term deposits | Not implemented | Tenor, maturity, renewal, premature closure and interest |
 | 18 Lending | Not implemented | Loan products, assessment workflow, schedules, repayment and arrears |
@@ -162,3 +163,35 @@ Remaining teller work includes inter-branch cash/in-transit, denomination invent
 Added same-bank/entity/currency vault dispatch, independently approved destination receipts and physical returns, denomination evidence, partial settlement, immutable shipment links, outstanding/overdue tracking and day-close blocking. Dedicated transit ledgers reject generic postings; atomic bank transactions and acknowledgement retries preserve cash and GL consistency. Control V21 / bank V12 are required.
 
 Remaining teller work includes shipment-specific investigation/write-off workflows, carrier custody, denomination inventory, printable receipts, emergency custody reassignment and bank acceptance. Configurable overnight carry is not implemented; unresolved shipments block day close. Later roadmap modules and production gates remain outstanding. See [operator guide](interbranch-cash.md).
+
+## 7 October 2026 — inventory, receipts and daily servicing
+
+Added approved denomination catalogues, one-time physical opening inventory, movement-level quantity checks, reversal and shipment stock controls, printable numbered cash receipts and audited reprints. Added Deposit servicing with effective-dated approved policies, daily interest capitalization, explicit fees/taxes, fractional accrual carry, per-account previews, atomic bank posting, customer/GL and statement integration, retry recovery and a business-day seal. Control V22/V23 and bank V13/V14 are required.
+
+Validation: full backend suite 106 passed; UI suite 50 passed; subsequent focused 5-test run passed after final policy-correction and inventory safeguards. Fictional browser previews verified receipt and daily calculation layouts. No live rates, tax policies, catalogues or financial transactions were seeded.
+
+See [cash guide](cash-inventory-and-receipts.md) and [servicing guide](deposit-servicing.md) for setup and exact limits. This implements the first daily-capitalization path; tiered/backdated interest, deferred capitalization, tax exemptions, servicing correction, scheduled/scalable batches and production acceptance remain outstanding.
+
+## 7 October 2026 — compliance cases and enterprise review
+
+Added the manual compliance-case workflow, independent clearance in Approval Inbox, immutable evidence, customer restrictions and review expiry/profile-change checks. Queued account delivery and daily servicing now recheck eligibility before first posting while preserving receipt-based recovery. Cash denomination capacity is validated before approval.
+
+Verification: 108 backend tests, 53 UI tests and a final 2-scenario recovery run passed. Browser verification used fictional data. No live case or financial decision was created. See [compliance guide](compliance-cases.md) and [enterprise review](enterprise-readiness-review-2026-10-07.md). The review covers all implemented areas and concludes that production banking acceptance remains outstanding. Earlier dated sections are historical snapshots; the module matrix and latest review describe the current scope.
+
+## 7 October 2026 — M-Pesa sandbox payments and reconciliation
+
+Implemented the first provider increment for Safaricom M-Pesa Kenya: approved KES payouts, atomic customer/GL debit before dispatch, pinned sandbox provider binding, one network submission, uncertain-outcome protection, asynchronous status queries, non-authoritative callback observations, immutable per-payment statement evidence, independent matching/refund and daily-processing blockers. Mandatory current compliance clearance applies to this payment flow.
+
+This is a sandbox implementation, not an activated or certified provider integration. Credentials/HTTPS callback ingress and actual Daraja contract testing remain outstanding. Complete statement import, net/fee reconciliation, production access and beneficiary-screening controls remain pending. See [operator and setup guide](payments-mpesa-sandbox.md) and verification.md for exact scope and evidence.
+
+## 7 October 2026 — full normalized M-Pesa statements
+
+Added the M-Pesa statements page, strict CSV validation and column mapping, immutable import evidence, exact wallet balance and movement coverage, independent payout/journal matching, fee/unknown-movement accounting, correction/reversal, duplicate acknowledgement, conflict review, report exports and statement-period sealing. Open imports block daily processing. Control V26 / bank V14.
+
+This completes the bounded normalized-file workflow, not provider-native format certification or production acceptance. Actual export validation, timing/split/net settlements, scalable acquisition and bank accounting acceptance remain. See [statement operator guide](mpesa-statement-reconciliation.md).
+
+## Payment lifecycle increment — 7 October 2026
+
+Added **Payment exceptions**: bank-scoped reconciler/supervisor/auditor permissions, investigation ownership and evidence history, overdue indicators, approved dated settlement carry-forwards, and full provider-return credits tied to the original customer debit. Statement and payment review now use the scoped payment workspace. Returns require matching provider credit evidence and independent approval; replaying delivery cannot credit the customer twice. Day close checks investigation deadlines and return posting.
+
+See [operator workflow and acceptance limits](payment-lifecycle-exceptions.md). Local regression: 120 backend tests and 65 UI tests. Actual M-Pesa export validation and live provider sandbox acceptance remain unverified. Remote reversal initiation, partial returns, suspense handling and outbound overdue notifications remain pending. Next planned modules: FX & Exchange Rate Management, Term Deposits, Lending. No production-completion percentage is asserted.

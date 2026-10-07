@@ -11,3 +11,9 @@
 #dialog:has(.funding-heading){width:min(880px,calc(100% - 32px));max-width:880px} .funding-balances{padding:0!important;gap:16px;grid-template-columns:repeat(3,minmax(0,1fr))}.funding-pagination{display:flex!important;gap:8px}.funding-pagination .button{width:auto}@media(max-width:640px){.funding-balances{grid-template-columns:1fr}}
 
 #dialog:has(.operation-heading){width:min(960px,calc(100% - 32px));max-width:960px}#dialog:has(.operation-heading) .metadata{padding:0;gap:16px} .operation-actions{display:flex!important;flex-direction:row;flex-wrap:wrap;gap:8px}.operation-actions .button{width:auto}.deposit-account-table .actions{display:flex;flex-wrap:wrap;gap:6px}
+
+@media print { body:has(dialog[open] .cash-printable) > :not(dialog) { display:none !important; } dialog[open]:has(.cash-printable) { position:static;display:block;border:0;width:100%;max-width:none;max-height:none;box-shadow:none;padding:0; } dialog[open]:has(.cash-printable) .dialog-heading,dialog[open]:has(.cash-printable) .dialog-actions,dialog[open]:has(.cash-printable) .form-error { display:none !important; } .cash-printable { color:#000;background:#fff; } .cash-printable dt { font-weight:bold; } .cash-printable dd { margin:0 0 12px;overflow-wrap:anywhere; } }
+
+.cash-printable dl{display:grid;grid-template-columns:135px minmax(0,1fr);gap:8px 14px}.cash-printable dt{font-weight:600}.cash-printable dd{margin:0;overflow-wrap:anywhere}#dialog:has(.servicing-preview){width:min(1000px,calc(100% - 32px));max-width:1000px}
+
+.compliance-summary{padding:24px}.compliance-summary p{max-width:900px;line-height:1.7}#dialog:has(.compliance-detail){width:min(960px,calc(100% - 32px));max-width:960px}.compliance-detail .actions{display:flex;flex-wrap:wrap;gap:8px;margin:18px 0}.compliance-detail td{white-space:normal;overflow-wrap:anywhere}

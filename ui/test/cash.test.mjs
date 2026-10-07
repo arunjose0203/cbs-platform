@@ -75,3 +75,13 @@ test('partial transit receipts bind original route and require physical denomina
  assert.equal(posted.body.locationId,'vault');assert.equal(posted.body.ledgerId,'transit');assert.equal(posted.body.amount,'20');assert.deepEqual(posted.body.counts,[{denomination:'10',quantity:2}]);assert.deepEqual(posted.body.transit,{dispatchId:'dispatch',returned:false});
  shipment.source_branch='branch';await ui.render({...branch,role:'BRANCH_MANAGER'},content,()=>true);await ui.action('transit-receive','dispatch');await submit({amount:'10',counts:'10:1',reference:'RETURN',reason:'Physically returned'});assert.equal(posted.body.locationId,'source');assert.equal(posted.body.transit.returned,true);
 });
+
+test('inventory movements submit denominations while rendering held quantities',async()=>{
+ let submit,posted;const content={innerHTML:''};const data={...dashboard,accounts:[{id:'customer',account_number:'A001',currency:'KES',state:'ACTIVE',liability_ledger_id:'liability'}],items:[{...dashboard.items[0],inventoryEnabled:true,inventory:[{denomination:'50',quantity:2}]}]};
+ const ui=createCashUi({api:async(path,options)=>{if(options){posted=options;return {};}return path.endsWith('/exceptions')||path.endsWith('/transit')?[]:data;},form:(_t,_h,fn)=>submit=fn,field:()=>'',subject:()=> 'maker'});
+ await ui.render(branch,content,()=>true);assert.match(content.innerHTML,/50 × 2/);await ui.action('deposit','till');await submit({accountId:'customer',amount:'50',counts:'50:1',businessDate:'2026-10-07',reference:'INV-DEP',reason:'Counted'});assert.deepEqual(posted.body.counts,[{denomination:'50',quantity:1}]);
+});
+test('receipt generation is scoped, idempotency-keyed and escapes printable evidence',async()=>{
+ let html,posted;const ui=createCashUi({api:async(path,options)=>{if(options){posted={path,...options};return {bank:'<Bank>',number:17,copiesGenerated:2,amount:'9007199254740993.17',currency:'KES',reference:'<script>',counts:[{denomination:'100',quantity:1}]};}return path.endsWith('/exceptions')||path.endsWith('/transit')?[]:dashboard;},form:(_t,h)=>html=h});
+ await ui.render(branch,{innerHTML:''},()=>true);await ui.action('receipt','receipt-id');assert.equal(posted.path,'/banks/bank/branches/branch/operations/cash/receipt-id/receipt');assert.ok(posted.headers['Idempotency-Key']);assert.match(html,/REPRINT/);assert.match(html,/&lt;Bank&gt;/);assert.match(html,/&lt;script&gt;/);assert.match(html,/9007199254740993.17/);assert.match(html,/100 × 1/);
+});

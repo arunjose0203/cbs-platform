@@ -17,6 +17,7 @@ public class BankAccountStore {
     public boolean ready(Tenant bank){
         try(var c=connection(bank);var s=c.createStatement();var r=s.executeQuery("SELECT to_regclass('bank.account') IS NOT NULL AND to_regclass('bank.account_event') IS NOT NULL")){r.next();return r.getBoolean(1);}catch(SQLException e){throw unavailable();}
     }
+    public boolean posted(Tenant bank,UUID id){try(var c=connection(bank);var s=c.prepareStatement("SELECT EXISTS(SELECT 1 FROM bank.account_event WHERE request_id=?)")){s.setObject(1,id);try(var r=s.executeQuery()){r.next();return r.getBoolean(1);}}catch(SQLException e){throw unavailable();}}
     public Definition read(Tenant bank,UUID id){
         try(var c=connection(bank);var s=c.prepareStatement("SELECT payload FROM bank.account WHERE tenant_id=? AND id=?")){
             s.setObject(1,bank.id());s.setObject(2,id);try(var r=s.executeQuery()){return r.next()?JSON.readValue(r.getString(1),Definition.class):null;}

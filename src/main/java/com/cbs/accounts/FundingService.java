@@ -43,6 +43,7 @@ public class FundingService {
   if(!jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM platform.ledger_registry l JOIN platform.chart_account c ON c.id=l.chart_account_id WHERE l.id=? AND l.tenant_id=? AND c.category='ASSET' AND c.normal_balance='DEBIT')",Boolean.class,input.sourceLedgerId(),bank.id()))throw error(400,"FUNDING_SOURCE_INVALID");
   if(!jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM platform.ledger_registry WHERE id=? AND tenant_id=? AND chart_account_id=?)",Boolean.class,input.liabilityLedgerId(),bank.id(),a.terms().liabilityAccountId()))throw error(400,"FUNDING_LIABILITY_INVALID");
   com.cbs.access.TransactionLimits.check(jdbc,bank.id(),a.terms().currency(),"FUNDING",input.businessDate(),new BigDecimal(input.amount()));
+  if(jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM platform.servicing_policy WHERE tenant_id=? AND (payload->>'interestExpenseLedger'=? OR payload->>'interestPayableLedger'=? OR payload->>'feeIncomeLedger'=? OR payload->>'taxPayableLedger'=?))",Boolean.class,bank.id(),input.liabilityLedgerId().toString(),input.liabilityLedgerId().toString(),input.liabilityLedgerId().toString(),input.liabilityLedgerId().toString()))throw error(409,"FUNDING_LEDGER_USED");
   var bindings=jdbc.queryForList("SELECT ledger_id FROM platform.account_ledger WHERE account_id=?",UUID.class,a.id());
   if(bindings.isEmpty()){
    if(new BigDecimal(input.amount()).compareTo(new BigDecimal(a.terms().minimumOpening()))<0)throw error(400,"FUNDING_OPENING_MINIMUM");

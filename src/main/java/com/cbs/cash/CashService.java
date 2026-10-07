@@ -19,14 +19,15 @@ import tools.jackson.databind.json.JsonMapper;
 @Service
 @ConditionalOnProperty(name="cbs.tenancy.enabled",havingValue="true",matchIfMissing=true)
 public class CashService {
+ private final DenominationService denominations;
  private final com.cbs.accounts.FundingService funding;private final com.cbs.accounts.OperationService operations;private final BranchOperations accountBranches;private final com.cbs.customers.CustomerService customers;
  private static final JsonMapper JSON=JsonMapper.builder().build();
  private final JdbcTemplate jdbc;private final TenantRepository tenants;private final BranchService branches;private final AccessService access;
  private final BankCashStore store;private final JournalService journals;private final ReferenceDataService reference;private final TransactionTemplate tx;
- public CashService(com.cbs.accounts.FundingService funding,com.cbs.accounts.OperationService operations,BranchOperations accountBranches,com.cbs.customers.CustomerService customers,JdbcTemplate jdbc,TenantRepository tenants,BranchService branches,AccessService access,BankCashStore store,JournalService journals,ReferenceDataService reference,PlatformTransactionManager manager){this.funding=funding;this.operations=operations;this.accountBranches=accountBranches;this.customers=customers;this.jdbc=jdbc;this.tenants=tenants;this.branches=branches;this.access=access;this.store=store;this.journals=journals;this.reference=reference;this.tx=new TransactionTemplate(manager);}
+ public CashService(DenominationService denominations,com.cbs.accounts.FundingService funding,com.cbs.accounts.OperationService operations,BranchOperations accountBranches,com.cbs.customers.CustomerService customers,JdbcTemplate jdbc,TenantRepository tenants,BranchService branches,AccessService access,BankCashStore store,JournalService journals,ReferenceDataService reference,PlatformTransactionManager manager){this.denominations=denominations;this.funding=funding;this.operations=operations;this.accountBranches=accountBranches;this.customers=customers;this.jdbc=jdbc;this.tenants=tenants;this.branches=branches;this.access=access;this.store=store;this.journals=journals;this.reference=reference;this.tx=new TransactionTemplate(manager);}
  public void authorize(Actor actor,UUID bank,Change input,boolean review){
   if(input.kind()==Kind.REGISTER)AccessService.admin(actor);
-  else branches.check(actor,bank,input.branchId(),review||adjustment(input.kind())||input.kind()==Kind.RECEIVE||input.kind()==Kind.DISPATCH||input.kind()==Kind.COUNT?APPROVE_BRANCH:CASH_TRANSACT);
+  else branches.check(actor,bank,input.branchId(),review||adjustment(input.kind())||input.kind()==Kind.RECEIVE||input.kind()==Kind.DISPATCH||input.kind()==Kind.COUNT||input.kind()==Kind.INVENTORY?APPROVE_BRANCH:CASH_TRANSACT);
  }
  public void readRequest(Actor actor,UUID request,boolean review,boolean cancel){
   var rows=jdbc.query("SELECT bank_id,payload FROM platform.approval_request WHERE id=? AND issuer=? AND action='CASH_OPERATION'",(r,n)->Map.entry(r.getObject(1,UUID.class),JSON.readValue(r.getString(2),Change.class)),request,actor.issuer());
@@ -45,7 +46,7 @@ public class CashService {
    jdbc.query("SELECT id FROM platform.tenant WHERE id=? FOR SHARE",r->{},bankId);var bank=tenants.get(bankId,false);boolean ready=store.ready(bank);
    var ids=jdbc.queryForList("SELECT id FROM platform.cash_location WHERE tenant_id=? AND branch_id=? AND applied ORDER BY code LIMIT ? OFFSET ?",UUID.class,bankId,branch,limit,offset);
    var positions=ready?ids.stream().map(id->store.position(bank,location(bankId,id))).toList():List.of();
-   return Map.of("version",bank.version(),"businessDate",reference.read(bank).businessDate(),"storageReady",ready,"items",positions,"limit",limit,"offset",offset,"accounts",jdbc.queryForList("SELECT a.id,a.account_number,a.currency,a.state,l.ledger_id AS liability_ledger_id FROM platform.account_registry a JOIN platform.account_branch b ON b.account_id=a.id AND b.tenant_id=a.tenant_id LEFT JOIN platform.account_ledger l ON l.account_id=a.id WHERE b.tenant_id=? AND b.branch_id=? AND a.delivery='APPLIED' AND a.state IN ('AWAITING_FUNDING','ACTIVE') ORDER BY a.account_number LIMIT 100",bankId,branch),"requests",jdbc.queryForList("SELECT id,status,maker_subject,reason,proposed_values,created_at FROM platform.approval_request WHERE bank_id=? AND issuer=? AND action='CASH_OPERATION' AND payload->>'kind'<>'REGISTER' AND payload->>'branchId'=? ORDER BY created_at DESC,id LIMIT 25",bankId,actor.issuer(),branch.toString()),"deliveries",jdbc.queryForList("SELECT request_id,completed,failure_code FROM platform.cash_delivery WHERE tenant_id=? AND branch_id=? ORDER BY created_at DESC,request_id LIMIT 25",bankId,branch));
+   return Map.of("version",bank.version(),"businessDate",reference.read(bank).businessDate(),"storageReady",ready,"items",positions,"limit",limit,"offset",offset,"accounts",jdbc.queryForList("SELECT a.id,a.account_number,a.currency,a.state,l.ledger_id AS liability_ledger_id FROM platform.account_registry a JOIN platform.account_branch b ON b.account_id=a.id AND b.tenant_id=a.tenant_id LEFT JOIN platform.account_ledger l ON l.account_id=a.id WHERE b.tenant_id=? AND b.branch_id=? AND a.delivery='APPLIED' AND a.state IN ('AWAITING_FUNDING','ACTIVE') ORDER BY a.account_number LIMIT 100",bankId,branch),"requests",jdbc.queryForList("SELECT id,status,maker_subject,reason,proposed_values,created_at FROM platform.approval_request WHERE bank_id=? AND issuer=? AND action='CASH_OPERATION' AND payload->>'kind'<>'REGISTER' AND payload->>'branchId'=? ORDER BY created_at DESC,id LIMIT 25",bankId,actor.issuer(),branch.toString()),"deliveries",jdbc.queryForList("SELECT request_id,completed,failure_code,(payload->'journal' IS NOT NULL AND payload->'journal'<>'null'::jsonb) AS printable FROM platform.cash_delivery WHERE tenant_id=? AND branch_id=? ORDER BY created_at DESC,request_id LIMIT 25",bankId,branch));
   });
  }
  public List<Map<String,Object>> exceptions(Actor actor,UUID bank,UUID branch){
@@ -126,7 +127,7 @@ public class CashService {
    if(input.locationId()==null||input.code()!=null||input.name()!=null||input.currency()!=null||input.type()!=null)throw error("CASH_FIELDS_INVALID");
    location=location(bank.id(),input.locationId());if(!adjust)requireNoException(bank.id(),location.id());if(!location.branchId().equals(input.branchId()))throw error("BRANCH_ACCESS_DENIED");
    if(monetary(input.kind())){
-    if((!adjust&&!(input.transit()!=null&&input.kind()==Kind.RECEIVE)&&input.counts()!=null)||input.amount()==null||!input.amount().matches("[0-9]{1,18}(\\.[0-9]{1,6})?")||new BigDecimal(input.amount()).signum()<=0)throw error("CASH_FIELDS_INVALID");
+    if(input.amount()==null||!input.amount().matches("[0-9]{1,18}(\\.[0-9]{1,6})?")||new BigDecimal(input.amount()).signum()<=0)throw error("CASH_FIELDS_INVALID");
     if(reverse){
      var original=original(bank.id(),input.originalId(),maker.issuer());
      if(!original.location().equals(location)||!Objects.equals(input.destinationId(),original.destination()==null?null:original.destination().id())||input.ledgerId()!=null||new BigDecimal(input.amount()).compareTo(new BigDecimal(original.change().amount()))!=0)throw error("CASH_REVERSAL_INVALID");
@@ -170,11 +171,20 @@ public class CashService {
     }
     validateTransit(maker,bank,input,location);
     limits(maker,bank.id(),input,location.currency());
-   }else if(input.kind()==Kind.OPEN||input.kind()==Kind.CLOSE||input.kind()==Kind.COUNT){
-    if((input.kind()!=Kind.COUNT&&location.type()!=Type.TILL)||input.destinationId()!=null||input.ledgerId()!=null||input.amount()!=null)throw error("CASH_FIELDS_INVALID");counted(location.currency(),input.counts());
+   }else if(input.kind()==Kind.INVENTORY||input.kind()==Kind.OPEN||input.kind()==Kind.CLOSE||input.kind()==Kind.COUNT){
+    if((input.kind()!=Kind.COUNT&&input.kind()!=Kind.INVENTORY&&location.type()!=Type.TILL)||input.destinationId()!=null||input.ledgerId()!=null||input.amount()!=null)throw error("CASH_FIELDS_INVALID");counted(location.currency(),input.counts());
    }else throw error("CASH_FIELDS_INVALID");
   }
   if(reference.read(bank).currencies().stream().noneMatch(c->c.code().equals(location.currency())&&c.enabled()))throw error("CURRENCY_NOT_ENABLED");
+  if(input.kind()!=Kind.REGISTER){
+   var p=store.position(bank,location);
+   if(input.kind()==Kind.INVENTORY){
+    if(jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM platform.cash_transit t JOIN platform.cash_delivery d ON d.request_id=t.dispatch_id WHERE (t.source_id=? OR t.destination_id=?) AND (d.payload->'change'->>'amount')::numeric>coalesce((SELECT sum((r.payload->'change'->>'amount')::numeric) FROM platform.cash_delivery r WHERE r.completed AND r.payload->'change'->'transit'->>'dispatchId'=t.dispatch_id::text),0))",Boolean.class,location.id(),location.id()))throw error("CASH_IN_TRANSIT_OUTSTANDING");
+    if(denominations.list(bank.id()).stream().noneMatch(x->location.currency().equals(x.get("currency"))))throw error("CASH_DENOMINATION_INVALID");
+   }
+   if((p.inventoryEnabled()&&input.kind()!=Kind.REVERSAL)||input.kind()==Kind.INVENTORY)denominations.requireCounts(bank.id(),location.currency(),input.counts());
+   if(!p.inventoryEnabled()&&monetary(input.kind())&&!adjustment(input.kind())&&input.counts()!=null&&counted(location.currency(),input.counts()).compareTo(new BigDecimal(input.amount()))!=0)throw error("CASH_COUNT_MISMATCH");
+  }
   var e=new Entry(id,bank.id(),input,location,target,journal,deposit,withdrawal);store.validate(bank,e,maker.subject());return e;
  }
  private boolean transitLedger(UUID ledger){return jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM platform.cash_transit WHERE ledger_id=?)",Boolean.class,ledger);}
@@ -186,6 +196,7 @@ public class CashService {
    if(transit.dispatchId()!=null||transit.destinationId()==null||transit.expectedDate()==null||transit.expectedDate().isBefore(input.businessDate())||transit.returned())throw error("CASH_TRANSIT_INVALID");
    var target=location(bank.id(),transit.destinationId());requireNoException(bank.id(),target.id());
    if(target.type()!=Type.VAULT||source.branchId().equals(target.branchId())||!source.currency().equals(target.currency())||!source.legalEntityId().equals(target.legalEntityId())||!jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM platform.branch WHERE tenant_id=? AND id=? AND active)",Boolean.class,bank.id(),target.branchId()))throw error("CASH_SCOPE_MISMATCH");
+   if(store.position(bank,source).inventoryEnabled()!=store.position(bank,target).inventoryEnabled())throw error("CASH_INVENTORY_BOTH_REQUIRED");
    if(!transitLedger(input.ledgerId())){
     if(jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM platform.journal_ledger WHERE ledger_id=?)",Boolean.class,input.ledgerId()))throw error("CASH_LEDGER_USED");
     store.unused(bank,input.ledgerId());
@@ -276,6 +287,20 @@ public class CashService {
   if(input.transit()!=null&&input.kind()==Kind.DISPATCH)jdbc.update("INSERT INTO platform.cash_transit(dispatch_id,tenant_id,source_id,destination_id,ledger_id,expected_date) VALUES (?,?,?,?,?,?)",id,bankId,input.locationId(),input.transit().destinationId(),input.ledgerId(),input.transit().expectedDate());
   if(e.funding()==null&&e.operation()==null)tenants.change(bank,bank.status(),bank.displayName(),bank.defaultLanguage());tenants.audit(reviewer,bankId,"CASH_APPROVED",bank.version()+1,bank.status(),bank.status(),"Approved request "+id,null,null,values(e));
  }
+ public Map<String,Object> receipt(Actor actor,UUID bankId,UUID branch,UUID id,UUID printKey){
+  return tx.execute(t->{
+   branches.check(actor,bankId,branch,READ_BRANCH);var bank=tenants.get(bankId,true);
+   var rows=jdbc.query("SELECT payload FROM platform.cash_delivery WHERE request_id=? AND tenant_id=? AND branch_id=? AND reviewer_issuer=? AND completed",(r,n)->JSON.readValue(r.getString(1),Entry.class),id,bankId,branch,actor.issuer());
+   if(rows.size()!=1||rows.getFirst().journal()==null)throw error("CASH_RECEIPT_NOT_POSTED");var entry=rows.getFirst();
+   var saved=jdbc.queryForList("SELECT id FROM platform.cash_receipt_print WHERE id=? AND tenant_id=? AND request_id=? AND issuer=? AND subject=?",UUID.class,printKey,bankId,id,actor.issuer(),actor.subject());
+   if(saved.isEmpty()){
+    if(jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM platform.cash_receipt_print WHERE id=?)",Boolean.class,printKey))throw error("IDEMPOTENCY_CONFLICT");
+    jdbc.update("INSERT INTO platform.cash_receipt_print(id,tenant_id,request_id,issuer,subject) VALUES (?,?,?,?,?)",printKey,bankId,id,actor.issuer(),actor.subject());
+    tenants.audit(actor,bankId,"CASH_RECEIPT_GENERATED",bank.version(),bank.status(),bank.status(),"Generated printable cash receipt",null,null,Map.of("requestId",id,"printId",printKey));
+   }
+   var result=new LinkedHashMap<String,Object>(values(entry));result.putAll(store.receipt(bank,id));result.put("bank",bank.displayName());result.put("bankCode",bank.bankCode());result.put("requestId",id);result.put("copiesGenerated",jdbc.queryForObject("SELECT count(*) FROM platform.cash_receipt_print WHERE request_id=?",Long.class,id));return result;
+  });
+ }
  public List<UUID> pending(){return jdbc.query("SELECT request_id FROM platform.cash_delivery WHERE NOT completed ORDER BY last_attempt_at NULLS FIRST,created_at LIMIT 20",(r,n)->r.getObject(1,UUID.class));}
  public void deliver(UUID id){tx.executeWithoutResult(t->{
   var rows=jdbc.query("SELECT * FROM platform.cash_delivery WHERE request_id=? AND NOT completed FOR UPDATE",(r,n)->new Dispatch(JSON.readValue(r.getString("payload"),Entry.class),r.getString("maker_subject"),r.getString("reviewer_issuer"),r.getString("reviewer_subject"),r.getObject("correlation_id",UUID.class)),id);if(rows.isEmpty())return;
@@ -290,6 +315,7 @@ public class CashService {
   if(job.entry().operation()!=null)jdbc.update("UPDATE platform.account_operation SET completed=true,completed_at=clock_timestamp(),failure_code=NULL WHERE request_id=?",id);
   var input=job.entry().change();
   if(adjustment(input.kind()))jdbc.update("INSERT INTO platform.cash_exception_resolution(case_id,issuer,reviewer,payload,adjustment_request_id) VALUES (?,?,?,?::jsonb,?)",input.exceptionId(),job.issuer(),job.checker(),JSON.writeValueAsString(input),id);
+  if(input.kind()==Kind.INVENTORY)jdbc.update("UPDATE platform.cash_location SET inventory_enabled=true,counted_date=? WHERE id=?",input.businessDate(),input.locationId());
   if(input.kind()==Kind.REGISTER)jdbc.update("UPDATE platform.cash_location SET applied=true WHERE id=?",job.entry().location().id());
   if(input.kind()==Kind.OPEN||input.kind()==Kind.CLOSE)jdbc.update("UPDATE platform.cash_location SET session_open=?,custodian=?,session_date=? WHERE id=?",input.kind()==Kind.OPEN,job.maker(),input.businessDate(),input.locationId());
   if(input.kind()==Kind.CLOSE||input.kind()==Kind.COUNT)jdbc.update("UPDATE platform.cash_location SET counted_date=? WHERE id=?",input.businessDate(),job.entry().location().id());

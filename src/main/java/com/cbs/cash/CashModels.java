@@ -10,7 +10,7 @@ import java.util.*;
 
 public final class CashModels {
  private CashModels() {}
- public enum Kind { REGISTER, RECEIVE, DISPATCH, TRANSFER, OPEN, CLOSE, COUNT, DEPOSIT, WITHDRAWAL, SHORTAGE, OVERAGE, REVERSAL }
+ public enum Kind { REGISTER, INVENTORY, RECEIVE, DISPATCH, TRANSFER, OPEN, CLOSE, COUNT, DEPOSIT, WITHDRAWAL, SHORTAGE, OVERAGE, REVERSAL }
  public enum Type { VAULT, TILL }
  public record Count(@NotNull @Pattern(regexp="[0-9]{1,18}(\\.[0-9]{1,6})?") String denomination,
                      @Min(0) @Max(1000000000) long quantity) {}
@@ -31,7 +31,7 @@ public final class CashModels {
   public Change(long expectedVersion,Kind kind,UUID branchId,UUID locationId,UUID destinationId,UUID ledgerId,String code,String name,String currency,Type type,String amount,LocalDate businessDate,String reference,List<Count> counts,String reason){this(expectedVersion,kind,branchId,locationId,destinationId,ledgerId,code,name,currency,type,amount,businessDate,reference,counts,reason,null,null);}
  }
  public record Location(UUID id,UUID bankId,UUID branchId,UUID ledgerId,String code,String name,String currency,Type type,UUID legalEntityId) {}
- public record Position(Location location,String balance,String ledgerBalance,boolean reconciled,boolean sessionOpen,String custodian,LocalDate sessionDate,LocalDate countedDate) {}
+ public record Position(Location location,String balance,String ledgerBalance,boolean reconciled,boolean sessionOpen,String custodian,LocalDate sessionDate,LocalDate countedDate,boolean inventoryEnabled,List<Count> inventory) {}
  public record Entry(UUID id,UUID bankId,Change change,Location location,Location destination,JournalModels.Entry journal,com.cbs.accounts.FundingModels.Entry funding,com.cbs.accounts.OperationModels.Entry operation) {}
  public record Dispatch(Entry entry,String maker,String issuer,String checker,UUID correlationId) {}
  public static boolean adjustment(Kind kind){return kind==Kind.SHORTAGE||kind==Kind.OVERAGE;}

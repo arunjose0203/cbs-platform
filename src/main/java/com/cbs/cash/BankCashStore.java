@@ -17,7 +17,7 @@ public class BankCashStore {
  private final BankDatabaseProvisioner databases;private final BankJournalStore journals;
  public BankCashStore(BankDatabaseProvisioner databases,BankJournalStore journals,com.cbs.accounts.BankFundingStore funding,com.cbs.accounts.BankOperationStore operations){this.funding=funding;this.operations=operations;this.databases=databases;this.journals=journals;}
  private Connection connection(Tenant bank){return databases.openOwned(bank.id(),bank.databaseBinding().databaseReference());}
- public boolean ready(Tenant bank){try(var c=connection(bank);var s=c.createStatement();var r=s.executeQuery("SELECT to_regclass('bank.cash_transit') IS NOT NULL")){r.next();return r.getBoolean(1);}catch(SQLException e){throw error("CASH_DATABASE_UNAVAILABLE");}}
+ public boolean ready(Tenant bank){try(var c=connection(bank);var s=c.createStatement();var r=s.executeQuery("SELECT to_regclass('bank.cash_note_entry') IS NOT NULL")){r.next();return r.getBoolean(1);}catch(SQLException e){throw error("CASH_DATABASE_UNAVAILABLE");}}
  public boolean posted(Tenant bank,UUID id){try(var c=connection(bank);var s=c.prepareStatement("SELECT EXISTS(SELECT 1 FROM bank.cash_receipt WHERE request_id=?)")){s.setObject(1,id);try(var r=s.executeQuery()){r.next();return r.getBoolean(1);}}catch(SQLException e){throw error("CASH_DATABASE_UNAVAILABLE");}}
  public Position position(Tenant bank,Location location){try(var c=connection(bank)){return position(c,location);}catch(SQLException e){throw error("CASH_DATABASE_UNAVAILABLE");}}
  private Position position(Connection c,Location location)throws SQLException{
@@ -25,11 +25,14 @@ public class BankCashStore {
    s.setObject(1,location.id());s.setObject(2,location.bankId());try(var r=s.executeQuery()){
     if(!r.next()||!JSON.readValue(r.getString(1),Location.class).equals(location))throw error("CASH_LOCATION_NOT_READY");
     var balance=r.getBigDecimal("balance");var book=r.getBigDecimal("book");
-    return new Position(location,balance.toPlainString(),book.toPlainString(),balance.compareTo(book)==0,r.getBoolean(2),r.getString(3),r.getObject(4,java.time.LocalDate.class),r.getObject("counted_date",java.time.LocalDate.class));
+    return new Position(location,balance.toPlainString(),book.toPlainString(),balance.compareTo(book)==0,r.getBoolean(2),r.getString(3),r.getObject(4,java.time.LocalDate.class),r.getObject("counted_date",java.time.LocalDate.class),inventoryEnabled(c,location.id()),inventory(c,location.id()));
    }
   }
  }
  public void unused(Tenant bank,UUID ledger){try(var c=connection(bank)){unused(c,ledger);}catch(SQLException e){throw error("CASH_DATABASE_UNAVAILABLE");}}
+ private boolean inventoryEnabled(Connection c,UUID id)throws SQLException{try(var s=c.prepareStatement("SELECT EXISTS(SELECT 1 FROM bank.cash_inventory_start WHERE location_id=?)")){s.setObject(1,id);try(var r=s.executeQuery()){r.next();return r.getBoolean(1);}}}
+ private List<Count> inventory(Connection c,UUID id)throws SQLException{try(var s=c.prepareStatement("SELECT denomination,quantity FROM bank.cash_note_position WHERE location_id=? AND quantity<>0 ORDER BY denomination")){s.setObject(1,id);try(var r=s.executeQuery()){var rows=new ArrayList<Count>();while(r.next())rows.add(new Count(r.getBigDecimal(1).stripTrailingZeros().toPlainString(),r.getLong(2)));return rows;}}}
+ public Map<String,Object> receipt(Tenant bank,UUID id){try(var c=connection(bank);var s=c.prepareStatement("SELECT receipt_number,posted_at FROM bank.cash_receipt WHERE request_id=? AND journal_id IS NOT NULL")){s.setObject(1,id);try(var r=s.executeQuery()){if(!r.next())throw error("CASH_RECEIPT_NOT_POSTED");return Map.of("number",r.getLong(1),"postedAt",r.getTimestamp(2).toInstant());}}catch(SQLException ex){throw error("CASH_DATABASE_UNAVAILABLE");}}
  private void unused(Connection c,UUID ledger)throws SQLException{
   try(var s=c.prepareStatement("SELECT EXISTS(SELECT 1 FROM bank.journal_line WHERE ledger_id=?) OR EXISTS(SELECT 1 FROM bank.account_ledger WHERE ledger_id=?) OR EXISTS(SELECT 1 FROM bank.cash_location WHERE ledger_id=?)")){
    s.setObject(1,ledger);s.setObject(2,ledger);s.setObject(3,ledger);try(var r=s.executeQuery()){r.next();if(r.getBoolean(1))throw error("CASH_LEDGER_USED");}
@@ -37,8 +40,34 @@ public class BankCashStore {
  }
  public void validate(Tenant bank,Entry entry,String maker){
   if(entry.change().kind()==Kind.REGISTER){unused(bank,entry.location().ledgerId());return;}
+  validateInventory(bank,entry);
   validatePosition(position(bank,entry.location()),entry,maker,false);
   if(entry.destination()!=null)validatePosition(position(bank,entry.destination()),entry,maker,true);
+ }
+ private static Map<BigDecimal,Long> notes(List<Count> counts){var m=new HashMap<BigDecimal,Long>();for(var x:counts)m.put(new BigDecimal(x.denomination()).stripTrailingZeros(),x.quantity());return m;}
+ static void requireQuantity(long held,long change){
+  long after;try{after=Math.addExact(held,change);}catch(ArithmeticException ex){throw error("CASH_DENOMINATION_CAPACITY");}
+  if(after<0)throw error("CASH_DENOMINATION_INSUFFICIENT");if(after>1000000000L)throw error("CASH_DENOMINATION_CAPACITY");
+ }
+ private void validateInventory(Tenant bank,Entry e){
+  var p=position(bank,e.location());var input=e.change();
+  if(e.destination()!=null&&position(bank,e.destination()).inventoryEnabled()!=p.inventoryEnabled())throw error("CASH_INVENTORY_BOTH_REQUIRED");
+  if(!p.inventoryEnabled())return;
+  if(input.kind()==Kind.REVERSAL){
+   try(var c=connection(bank);var s=c.prepareStatement("SELECT location_id,denomination,quantity FROM bank.cash_note_entry WHERE request_id=?")){
+    s.setObject(1,input.originalId());try(var r=s.executeQuery()){boolean found=false;while(r.next()){found=true;var quantities=notes(inventory(c,r.getObject(1,UUID.class)));requireQuantity(quantities.getOrDefault(r.getBigDecimal(2).stripTrailingZeros(),0L),-r.getLong(3));}if(!found)throw error("CASH_REVERSAL_INVENTORY_MISSING");}
+   }catch(SQLException ex){throw error("CASH_DATABASE_UNAVAILABLE");}return;
+  }
+  counted(e.location().currency(),input.counts());var held=notes(p.inventory());var requested=notes(input.counts());
+  if(input.kind()==Kind.OPEN||input.kind()==Kind.CLOSE||input.kind()==Kind.COUNT){held.entrySet().removeIf(x->x.getValue()==0);requested.entrySet().removeIf(x->x.getValue()==0);if(!held.equals(requested))throw error("CASH_DENOMINATION_MISMATCH");}
+  else if(monetary(input.kind())&&!adjustment(input.kind())){
+   if(counted(e.location().currency(),input.counts()).compareTo(new BigDecimal(input.amount()))!=0)throw error("CASH_COUNT_MISMATCH");
+   for(var x:requested.entrySet())requireQuantity(held.getOrDefault(x.getKey(),0L),delta(e,e.location().ledgerId()).signum()*x.getValue());
+   if(e.destination()!=null){var destination=notes(position(bank,e.destination()).inventory());for(var x:requested.entrySet())requireQuantity(destination.getOrDefault(x.getKey(),0L),x.getValue());}
+   if(input.transit()!=null&&input.transit().dispatchId()!=null)try(var c=connection(bank);var st=c.prepareStatement("SELECT n.denomination,-sum(n.quantity) quantity FROM bank.cash_note_entry n WHERE n.request_id=? GROUP BY n.denomination UNION ALL SELECT n.denomination,-sum(n.quantity) quantity FROM bank.cash_transit_receipt t JOIN bank.cash_note_entry n ON n.request_id=t.request_id WHERE t.dispatch_id=? GROUP BY n.denomination")){
+    st.setObject(1,input.transit().dispatchId());st.setObject(2,input.transit().dispatchId());var remaining=new HashMap<BigDecimal,Long>();try(var r=st.executeQuery()){while(r.next())remaining.merge(r.getBigDecimal(1).stripTrailingZeros(),r.getLong(2),Long::sum);}for(var x:requested.entrySet())if(remaining.getOrDefault(x.getKey(),0L)<x.getValue())throw error("CASH_DENOMINATION_INSUFFICIENT");
+   }catch(SQLException ex){throw error("CASH_DATABASE_UNAVAILABLE");}
+  }
  }
  private void validatePosition(Position p,Entry entry,String maker,boolean destination){
   var change=entry.change();
@@ -48,7 +77,8 @@ public class BankCashStore {
    if(change.exceptionId()==null||new BigDecimal(p.balance()).add(delta).compareTo(counted(p.location().currency(),change.counts()))!=0)throw error("CASH_ADJUSTMENT_MISMATCH");
    return;
   }
-  if(change.kind()==Kind.OPEN){if(p.sessionOpen())throw error("CASH_SESSION_OPEN");}
+  if(change.kind()==Kind.INVENTORY){if(p.inventoryEnabled()||p.sessionOpen())throw error("CASH_INVENTORY_ACTIVATION_INVALID");}
+  else if(change.kind()==Kind.OPEN){if(p.sessionOpen())throw error("CASH_SESSION_OPEN");}
   else if(change.kind()==Kind.COUNT){if(p.sessionOpen())throw error("CASH_SESSION_OPEN");}
   else if(p.location().type()==Type.TILL){
    if(!p.sessionOpen()||!change.businessDate().equals(p.sessionDate()))throw error("CASH_SESSION_REQUIRED");
@@ -57,7 +87,7 @@ public class BankCashStore {
   if(change.kind()==Kind.REVERSAL){
    if(new BigDecimal(p.balance()).add(delta(entry,p.location().ledgerId())).signum()<0)throw error("CASH_INSUFFICIENT");return;
   }
-  if(change.kind()==Kind.OPEN||change.kind()==Kind.CLOSE||change.kind()==Kind.COUNT){
+  if(change.kind()==Kind.INVENTORY||change.kind()==Kind.OPEN||change.kind()==Kind.CLOSE||change.kind()==Kind.COUNT){
    if(counted(p.location().currency(),change.counts()).compareTo(new BigDecimal(p.balance()))!=0)throw error("CASH_COUNT_MISMATCH");
   }else if(!destination&&change.kind()!=Kind.RECEIVE&&change.kind()!=Kind.DEPOSIT&&new BigDecimal(p.balance()).compareTo(new BigDecimal(change.amount()))<0)throw error("CASH_INSUFFICIENT");
  }
@@ -92,7 +122,7 @@ public class BankCashStore {
    }else if(input.kind()==Kind.OPEN||input.kind()==Kind.CLOSE){
     try(var s=c.prepareStatement("UPDATE bank.cash_location SET session_open=?,custodian=?,session_date=? WHERE id=?")){s.setBoolean(1,input.kind()==Kind.OPEN);s.setString(2,job.maker());s.setObject(3,input.businessDate());s.setObject(4,l.id());s.executeUpdate();}
    }
-   if(input.kind()==Kind.CLOSE||input.kind()==Kind.COUNT){
+   if(input.kind()==Kind.INVENTORY||input.kind()==Kind.CLOSE||input.kind()==Kind.COUNT){
     try(var s=c.prepareStatement("UPDATE bank.cash_location SET counted_date=? WHERE id=?")){s.setObject(1,input.businessDate());s.setObject(2,l.id());s.executeUpdate();}
    }else if(monetary(input.kind())||input.kind()==Kind.OPEN){
     try(var s=c.prepareStatement("UPDATE bank.cash_location SET counted_date=NULL WHERE id=? OR id=?")){s.setObject(1,l.id());s.setObject(2,e.destination()==null?l.id():e.destination().id());s.executeUpdate();}

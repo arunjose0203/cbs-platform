@@ -34,15 +34,16 @@ public class StatementService {
    try(var c=databases.openOwned(bank.id(),bank.databaseBinding().databaseReference())){
     c.setAutoCommit(false);c.setTransactionIsolation(java.sql.Connection.TRANSACTION_REPEATABLE_READ);c.setReadOnly(true);
     boolean ready;try(var s=c.createStatement();var r=s.executeQuery("SELECT to_regclass('bank.customer_entry') IS NOT NULL")){r.next();ready=r.getBoolean(1);}if(!ready)throw new TenantException(409,"OPERATION_STORAGE_NOT_READY","Prepare account storage first");
-    String source="WITH entries AS (SELECT f.request_id,f.amount FROM bank.funding f WHERE f.account_id=? UNION ALL SELECT e.request_id,e.amount FROM bank.customer_entry e WHERE e.account_id=?), movements AS (SELECT j.id,j.business_date,j.reference,j.payload->>'narration' narration,j.posted_at,e.amount FROM entries e JOIN bank.journal j ON j.id=e.request_id) ";
+    boolean servicing;try(var st=c.createStatement();var r=st.executeQuery("SELECT to_regclass('bank.servicing_event') IS NOT NULL")){r.next();servicing=r.getBoolean(1);}
+    String source="WITH selected AS (SELECT ?::uuid aid),entries AS (SELECT f.request_id,f.amount FROM bank.funding f WHERE f.account_id=(SELECT aid FROM selected) UNION ALL SELECT e.request_id,e.amount FROM bank.customer_entry e WHERE e.account_id=(SELECT aid FROM selected)"+(servicing?" UNION ALL SELECT s.request_id,s.net_amount AS amount FROM bank.servicing_event s WHERE s.account_id=(SELECT aid FROM selected)":"")+"), movements AS (SELECT j.id,j.business_date,j.reference,j.payload->>'narration' narration,j.posted_at,e.amount FROM entries e JOIN bank.journal j ON j.id=e.request_id) ";
     BigDecimal opening,closing;long count;
     try(var s=c.prepareStatement(source+"SELECT coalesce(sum(amount) FILTER(WHERE business_date<?),0),coalesce(sum(amount) FILTER(WHERE business_date<=?),0),count(*) FILTER(WHERE business_date BETWEEN ? AND ?) FROM movements")){
-     s.setObject(1,accountId);s.setObject(2,accountId);s.setObject(3,from);s.setObject(4,to);s.setObject(5,from);s.setObject(6,to);try(var r=s.executeQuery()){r.next();opening=r.getBigDecimal(1);closing=r.getBigDecimal(2);count=r.getLong(3);}
+     s.setObject(1,accountId);s.setObject(2,from);s.setObject(3,to);s.setObject(4,from);s.setObject(5,to);try(var r=s.executeQuery()){r.next();opening=r.getBigDecimal(1);closing=r.getBigDecimal(2);count=r.getLong(3);}
     }
     if(export&&count>10000)throw new TenantException(400,"STATEMENT_EXPORT_TOO_LARGE","Select a shorter date range; exports support at most 10000 entries");
     List<Line> lines=new ArrayList<>();
     try(var s=c.prepareStatement(source+"SELECT *,?+sum(amount) OVER(ORDER BY business_date,posted_at,id ROWS UNBOUNDED PRECEDING) running FROM movements WHERE business_date BETWEEN ? AND ? ORDER BY business_date,posted_at,id LIMIT ? OFFSET ?")){
-     s.setObject(1,accountId);s.setObject(2,accountId);s.setBigDecimal(3,opening);s.setObject(4,from);s.setObject(5,to);s.setInt(6,limit);s.setInt(7,offset);
+     s.setObject(1,accountId);s.setBigDecimal(2,opening);s.setObject(3,from);s.setObject(4,to);s.setInt(5,limit);s.setInt(6,offset);
      try(var r=s.executeQuery()){while(r.next()){var amount=r.getBigDecimal("amount");lines.add(new Line(r.getObject("id",UUID.class),r.getObject("business_date",LocalDate.class),r.getString("reference"),r.getString("narration"),text(amount.negate().max(BigDecimal.ZERO)),text(amount.max(BigDecimal.ZERO)),text(r.getBigDecimal("running"))));}}
     }
     c.commit();tenants.audit(actor,bankId,export?"ACCOUNT_STATEMENT_EXPORTED":"ACCOUNT_STATEMENT_VIEWED",bank.version(),bank.status(),bank.status(),export?"Customer statement exported":"Customer statement viewed",null,null,Map.of("accountId",accountId,"from",from.toString(),"to",to.toString()));

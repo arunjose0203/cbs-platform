@@ -1,6 +1,6 @@
 # Development roadmap
 
-## Current increment: Account operations, internal transfers and customer statements
+## Current increment: Cash inventory, receipts and daily deposit servicing
 
 The foundation supplies executable service, health checks, packaging and CI.
 Module 01 adds tenant registration, legal entities, bank memberships, JWT-protected
@@ -25,12 +25,12 @@ bank backup restoration, load testing and production hosting remain later work.
 | 07 | Customer onboarding | Initial individual profiles, document/review references, duplicate checks, approved status changes and recoverable bank-database delivery implemented; automated verification, corporate/guardian workflows and periodic review remain planned |
 | 08 | Accounts and deposits | Account opening, pinned terms, approved received-deposit funding, exact customer balances, dedicated liability ledger integration and recoverable posting implemented; holds/releases, recorded withdrawals and full funding reversals added; closure and broader correction workflows remain planned |
 | 09 | Internal transfers | Initial same-bank/entity/currency transfers with independent approval and atomic customer/GL posting |
-| 10 | Teller and cash | Planned |
-| 11 | Interest, fees and accruals | Planned |
-| 12 | Business-day processing | Accounting date-close foundation in 05.5; interest, fees and scheduled financial batches remain planned |
+| 10 | Teller and cash | Custody, customer cash, adjustments, reversals, interbranch transit, denomination inventory and printable receipts implemented; specialist custody and acceptance remain |
+| 11 | Interest, fees and accruals | Daily capitalization, explicit fees/taxes, fractional carry and policy approval implemented; advanced servicing remains |
+| 12 | Business-day processing | Approved atomic daily servicing batch integrated with closing; scheduling, scalable partitions and period/year close remain |
 | 13 | Statements and notifications | Initial customer statement view with date range, opening/closing/running balances; exports and delivery remain planned |
-| 14 | External payment integration | Planned |
-| 15 | Settlement and reconciliation | Planned |
+| 14 | External payment integration | Initial Safaricom M-Pesa Kenya B2C sandbox implementation; actual provider acceptance and live certification pending |
+| 15 | Settlement and reconciliation | Individual payout evidence/approval and refunds implemented; complete statements, wallet balances, fees and conflict resolution pending |
 | 16 | FX conversion and valuation | Planned |
 | 17 | Term deposits | Planned |
 | 18 | Lending | Planned |
@@ -53,7 +53,7 @@ See [Module 05.4](module-05-reports.md) for report semantics, CSV export and lim
 See [Module 05.5](module-05-day-close.md) for closing controls, storage preparation,
 date advancement and recovery. See [Module 06.1](module-06-products.md) for deposit
 product definitions and approval. See [Module 07.1](module-07-customers.md) for
-individual customer onboarding and its manual review boundary. See [Module 08.1](module-08-accounts.md) for approved unfunded account opening and pinned terms. [Module 08.2](module-08-funding.md) now supplies approved funding and customer/GL balance reconciliation. [Account operations](module-08-operations.md) adds holds, withdrawals, funding corrections, same-currency transfers and statements. Next complete scoped posting permissions and limits before teller/cash. Period/year-close controls
+individual customer onboarding and its manual review boundary. See [Module 08.1](module-08-accounts.md) for approved unfunded account opening and pinned terms. [Module 08.2](module-08-funding.md) now supplies approved funding and customer/GL balance reconciliation. [Account operations](module-08-operations.md) adds holds, withdrawals, funding corrections, same-currency transfers and statements. Scoped posting permissions, mandatory limits and teller/cash increments are now implemented. Continue their acceptance gaps and the compliance workflow described below. Period/year-close controls
 remain accounting backlog items. See [application progress](application-progress.md)
 for the full delivery status and first end-to-end customer journey.
 
@@ -62,3 +62,15 @@ for the full delivery status and first end-to-end customer journey.
 Approved business examples; explicit journal effects; tenant isolation; permission
 checks; audit; retry safety; failure recovery; reconciliation; operator guidance.
 Record limitations and verification evidence before moving to the next module.
+
+Current setup and limitations: [inventory and receipts](cash-inventory-and-receipts.md), [daily deposit servicing](deposit-servicing.md).
+
+Manual financial-crime case management is now implemented: [compliance guide](compliance-cases.md). It includes independent decisions and effective restrictions; automated screening and mandatory onboarding verification remain pending. The [enterprise readiness review](enterprise-readiness-review-2026-10-07.md) supersedes older readiness assumptions and lists release blockers across all modules.
+
+First payment provider: [Safaricom M-Pesa Kenya sandbox](payments-mpesa-sandbox.md). Do not advertise live connectivity before credentialed provider acceptance.
+
+Statement workflow: [full normalized M-Pesa import and reconciliation](mpesa-statement-reconciliation.md), including balance controls, accounting adjustments and independent closure. Next payment release gates remain real provider export/contract acceptance, settlement timing and production operational controls.
+
+## Payment lifecycle delivery sequence
+
+Payment Returns, Reversals & Settlement Exceptions now provides confirmed full-return accounting, independently approved settlement timing carries, case history, scoped payment operators and overdue dashboard alerts. Read [payment-lifecycle-exceptions.md](payment-lifecycle-exceptions.md) for the operational workflow and current boundaries. Native M-Pesa statement acceptance and actual Daraja sandbox exercises require external evidence. Continue next with FX & Exchange Rate Management, then Term Deposits and Lending. Remote provider reversal initiation and partial/suspense returns remain distinct payment backlog items.

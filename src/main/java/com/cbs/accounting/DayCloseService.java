@@ -25,6 +25,7 @@ public class DayCloseService {
         this.jdbc=jdbc;this.tenants=tenants;this.reference=reference;this.store=store;this.tx=new TransactionTemplate(manager);
     }
     public static void requireOpen(JdbcTemplate jdbc,UUID bankId){
+        if(jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM platform.servicing_run r JOIN platform.bank_settings b ON b.tenant_id=r.tenant_id WHERE r.tenant_id=? AND r.business_date=b.business_date)",Boolean.class,bankId))throw error(409,"SERVICING_DAY_FINALIZED");
         if(jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM platform.business_day_close WHERE tenant_id=? AND NOT completed)",Boolean.class,bankId))throw error(409,"DAY_CLOSE_IN_PROGRESS");
     }
     private LocalDate next(Tenant bank){var s=reference.read(bank);return ReferenceDataService.nextWorkingDay(s.businessDate(),s.weekendDays(),s.holidays());}
@@ -33,7 +34,7 @@ public class DayCloseService {
         if(bank.status()!=Status.ACTIVE){result.add("LEDGER_BANK_NOT_ACTIVE");return result;}
         if(!store.ready(bank)){result.add("DAY_CLOSE_STORAGE_NOT_READY");return result;}
         if(jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM platform.business_day_close WHERE tenant_id=? AND NOT completed)",Boolean.class,bank.id()))result.add("DAY_CLOSE_IN_PROGRESS");
-        if(jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM platform.approval_request WHERE bank_id=? AND status='PENDING' AND action IN ('JOURNAL_POST','LEDGER_ACCOUNT','DAY_CLOSE','ACCOUNT_FUNDING','ACCOUNT_OPERATION','CASH_OPERATION') AND id<>?)",Boolean.class,bank.id(),ownRequest==null?new UUID(0,0):ownRequest))result.add("DAY_CLOSE_PENDING_APPROVALS");
+        if(jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM platform.approval_request WHERE bank_id=? AND status='PENDING' AND action IN ('JOURNAL_POST','LEDGER_ACCOUNT','DAY_CLOSE','ACCOUNT_FUNDING','ACCOUNT_OPERATION','CASH_OPERATION','SERVICING_RUN','SERVICING_POLICY','CASH_DENOMINATIONS','PAYMENT_ORDER','PAYMENT_RECONCILE','STATEMENT_ACTION','PAYMENT_CASE','PAYMENT_ACCESS') AND id<>?)",Boolean.class,bank.id(),ownRequest==null?new UUID(0,0):ownRequest))result.add("DAY_CLOSE_PENDING_APPROVALS");
         if(jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM platform.journal_delivery WHERE tenant_id=? AND NOT completed) OR EXISTS(SELECT 1 FROM platform.ledger_delivery WHERE tenant_id=? AND NOT completed)",Boolean.class,bank.id(),bank.id()))result.add("DAY_CLOSE_PENDING_DELIVERIES");
         if(jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM platform.account_operation WHERE tenant_id=? AND NOT completed)",Boolean.class,bank.id())&&!result.contains("DAY_CLOSE_PENDING_DELIVERIES"))result.add("DAY_CLOSE_PENDING_DELIVERIES");
         if(jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM platform.cash_delivery WHERE tenant_id=? AND NOT completed)",Boolean.class,bank.id()))result.add("CASH_DELIVERY_PENDING");
@@ -41,9 +42,15 @@ public class DayCloseService {
         if(jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM platform.cash_location l JOIN platform.bank_settings s ON s.tenant_id=l.tenant_id WHERE l.tenant_id=? AND l.counted_date IS DISTINCT FROM s.business_date)",Boolean.class,bank.id()))result.add("CASH_COUNT_REQUIRED");
         if(jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM platform.cash_exception e WHERE e.tenant_id=? AND NOT EXISTS(SELECT 1 FROM platform.cash_exception_resolution r WHERE r.case_id=e.id))",Boolean.class,bank.id()))result.add("CASH_EXCEPTION_OPEN");
         if(jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM platform.cash_transit t JOIN platform.cash_delivery c ON c.request_id=t.dispatch_id WHERE t.tenant_id=? AND (c.payload->'change'->>'amount')::numeric>coalesce((SELECT sum((r.payload->'change'->>'amount')::numeric) FROM platform.cash_delivery r WHERE r.completed AND r.tenant_id=t.tenant_id AND r.payload->'change'->'transit'->>'dispatchId'=t.dispatch_id::text),0))",Boolean.class,bank.id()))result.add("CASH_IN_TRANSIT_OUTSTANDING");
+        if(jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM platform.cash_location l WHERE l.tenant_id=? AND NOT l.inventory_enabled AND EXISTS(SELECT 1 FROM platform.cash_denomination d WHERE d.tenant_id=l.tenant_id AND d.currency=l.currency))",Boolean.class,bank.id()))result.add("CASH_INVENTORY_REQUIRED");
+        if(jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM platform.servicing_policy WHERE tenant_id=?) AND NOT EXISTS(SELECT 1 FROM platform.servicing_run r JOIN platform.bank_settings b ON b.tenant_id=r.tenant_id WHERE r.tenant_id=? AND r.business_date=b.business_date AND r.completed)",Boolean.class,bank.id(),bank.id()))result.add("SERVICING_REQUIRED");
+        if(jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM platform.statement_import WHERE tenant_id=? AND status='OPEN')",Boolean.class,bank.id()))result.add("STATEMENT_IMPORT_OPEN");
+        if(jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM platform.payment_order p WHERE p.tenant_id=? AND (p.reconciliation_conflict OR (p.state NOT IN ('SETTLED','REFUNDED','RETURNED') AND NOT EXISTS(SELECT 1 FROM platform.payment_case c WHERE c.payment_id=p.id AND c.kind='SETTLEMENT_DELAY' AND c.state='CARRIED' AND c.due_date>=? AND p.state IN ('SUBMITTED','UNKNOWN')))))",Boolean.class,bank.id(),next(bank)))result.add("PAYMENT_UNRESOLVED");
+        if(jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM platform.payment_case WHERE tenant_id=? AND state NOT IN ('RESOLVED','CANCELLED') AND (state<>'CARRIED' OR due_date<?))",Boolean.class,bank.id(),next(bank)))result.add("PAYMENT_CASE_OPEN");
         if(!store.balanced(bank))result.add("DAY_CLOSE_UNRECONCILED");
         return result;
     }
+    public void requireReadyForServicing(Tenant bank,UUID request){var problems=blockers(bank,request).stream().filter(x->!x.equals("SERVICING_REQUIRED")).toList();if(!problems.isEmpty())throw error(409,problems.getFirst());}
     public Dashboard dashboard(Actor actor,UUID bankId,int limit,int offset){
         AccessService.admin(actor);AccessService.page(limit,offset);
         return tx.execute(t->{

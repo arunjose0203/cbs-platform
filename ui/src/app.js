@@ -1,3 +1,8 @@
+import {createPaymentCasesUi} from './payment-cases-ui.js';
+import {createStatementImportUi} from './statement-import-ui.js';
+import {createPaymentsUi} from './payments-ui.js';
+import {createComplianceUi} from './compliance-ui.js';
+import {createServicingUi} from './servicing-ui.js';
 import {createBranchUi} from './branch-ui.js';
 import {UserManager,WebStorageStateStore,InMemoryWebStorage} from 'oidc-client-ts';
 import {escapeHtml as e,bankActions,errorMessage,signInErrorMessage} from './model.js';
@@ -17,7 +22,12 @@ let manager, user, me, configuration, view='banks', selectedBank, submitForm, la
 let rows=[], offset=0, busy=false, noticeTimer, renderVersion=0;
 let approvalScope='INBOX', approvalAction='', approvalBank='', selectedApproval;
 const pageSize=25;
-const labels={branchwork:'Branch workspace',banks:'Bank directory',staff:'Staff & access',approvals:'Approval Inbox',settings:'Bank settings',chart:'Chart of Accounts',ledgers:'Ledger Accounts',journals:'Journals & balances',reports:'Accounting reports',dayclose:'Business Day Close',products:'Product Factory',accounts:'Deposit accounts',customers:'Customers',sessions:'My sessions',audit:'Audit trail'};
+const labels={paymentcases:'Payment exceptions',statements:'M-Pesa statements',payments:'Payments & reconciliation',compliance:'Compliance cases',servicing:'Deposit servicing',branchwork:'Branch workspace',banks:'Bank directory',staff:'Staff & access',approvals:'Approval Inbox',settings:'Bank settings',chart:'Chart of Accounts',ledgers:'Ledger Accounts',journals:'Journals & balances',reports:'Accounting reports',dayclose:'Business Day Close',products:'Product Factory',accounts:'Deposit accounts',customers:'Customers',sessions:'My sessions',audit:'Audit trail'};
+const statementImportUi=createStatementImportUi({api,form,field,refresh:render});
+const paymentCasesUi=createPaymentCasesUi({api,form,field,refresh:render});
+const paymentsUi=createPaymentsUi({api,form,field,refresh:render});
+const complianceUi=createComplianceUi({api,form,field,refresh:render});
+const servicingUi=createServicingUi({api,form,field,refresh:render});
 const branchUi=createBranchUi({api,form,field,refresh:render,subject:()=>me?.staff.subject});
 const referenceUi=createReferenceUi({api,form,field,refresh:render});
 const accountUi=createAccountUi({api,form,field,refresh:render});
@@ -72,9 +82,14 @@ async function render(){
   document.querySelector('#breadcrumb').textContent=t(labels[view]);
   document.querySelectorAll('[data-view]').forEach(b=>{b.classList.toggle('active',b.dataset.view===view);b.setAttribute('aria-current',b.dataset.view===view?'page':'false');});
   if(!me){signedOut();return;}
-  if(!me.platformAdmin&&['banks','staff','audit','approvals','settings','chart','ledgers','journals','reports','dayclose','products','customers','accounts'].includes(view)){content.innerHTML=heading(labels[view],'Platform administrator access is required for this section.')+`<div class="card empty"><h3>You are signed in as ${e(me.staff.displayName)}</h3><p>Your current identity can manage its own sessions.</p>${button('View my sessions','my-sessions')}</div>`;return;}
+  if(!me.platformAdmin&&['banks','staff','audit','approvals','settings','chart','ledgers','journals','reports','dayclose','products','customers','accounts','servicing','compliance'].includes(view)){content.innerHTML=heading(labels[view],'Platform administrator access is required for this section.')+`<div class="card empty"><h3>You are signed in as ${e(me.staff.displayName)}</h3><p>Your current identity can manage its own sessions.</p>${button('View my sessions','my-sessions')}</div>`;return;}
   content.innerHTML='<div class="loading">Loading workspace…</div>';
   try{
+    if(view==='paymentcases'){await paymentCasesUi.render(content,()=>revision===renderVersion);return;}
+    if(view==='statements'){await statementImportUi.render(content,()=>revision===renderVersion);return;}
+    if(view==='payments'){await paymentsUi.render(content,()=>revision===renderVersion);return;}
+    if(view==='compliance'){await complianceUi.render(content,()=>revision===renderVersion);return;}
+    if(view==='servicing'){await servicingUi.render(content,()=>revision===renderVersion);return;}
     if(view==='branchwork'){await branchUi.render(content,()=>revision===renderVersion);return;}
     if(view==='accounts'){await accountUi.render(content,()=>revision===renderVersion);return;}
     if(view==='customers'){await customerUi.render(content,()=>revision===renderVersion);return;}
@@ -107,7 +122,7 @@ async function bankDetail(id,revision){
   if(revision!==renderVersion)return;
   selectedBank=bank.id;rows=[bank,...branches.items];
   content.innerHTML=`<button class="link-button back" data-action="back-banks">← Bank directory</button>`+heading(bank.displayName,`${bank.bankCode} · Independent bank workspace`,badge(bank.status))+
-    `<div class="detail-grid"><div class="stack"><section class="card"><div class="panel-title"><h2>Bank profile</h2><div class="actions">${bankActions(bank.status).map(a=>button(titleCase(a),`bank-${a}`,'',true)).join('')}${button('Deposit accounts','bank-accounts','',true)}${button('Customers','bank-customers','',true)}${button('Product Factory','bank-products','',true)}${button('Journals & balances','bank-journals','',true)}${button('Ledger Accounts','bank-ledgers','',true)}${button('Chart of Accounts','bank-chart','',true)}${button('Cash locations','bank-cash-locations','',true)}${button('Branch controls','bank-branch-controls','',true)}${button('Transaction limits','bank-limits','',true)}${button('Bank settings','bank-settings','',true)}${button('Edit','edit-bank','',true)}</div></div><dl class="metadata"><div><dt>Bank code</dt><dd>${e(bank.bankCode)}</dd></div><div><dt>Default language</dt><dd>${e(bank.defaultLanguage)}</dd></div><div><dt>Database reference</dt><dd>${e(bank.databaseBinding.databaseReference)}</dd></div><div><dt>Configuration version</dt><dd>${bank.version}</dd></div>${bank.databaseBinding.failureCode?`<div><dt>Provisioning issue</dt><dd>${e(bank.databaseBinding.failureCode)}</dd></div>`:''}</dl></section>
+    `<div class="detail-grid"><div class="stack"><section class="card"><div class="panel-title"><h2>Bank profile</h2><div class="actions">${bankActions(bank.status).map(a=>button(titleCase(a),`bank-${a}`,'',true)).join('')}${button('Deposit accounts','bank-accounts','',true)}${button('Customers','bank-customers','',true)}${button('Product Factory','bank-products','',true)}${button('Journals & balances','bank-journals','',true)}${button('Ledger Accounts','bank-ledgers','',true)}${button('Chart of Accounts','bank-chart','',true)}${button('Cash locations','bank-cash-locations','',true)}${button('Cash denominations','bank-denominations','',true)}${button('Branch controls','bank-branch-controls','',true)}${button('Transaction limits','bank-limits','',true)}${button('Bank settings','bank-settings','',true)}${button('Edit','edit-bank','',true)}</div></div><dl class="metadata"><div><dt>Bank code</dt><dd>${e(bank.bankCode)}</dd></div><div><dt>Default language</dt><dd>${e(bank.defaultLanguage)}</dd></div><div><dt>Database reference</dt><dd>${e(bank.databaseBinding.databaseReference)}</dd></div><div><dt>Configuration version</dt><dd>${bank.version}</dd></div>${bank.databaseBinding.failureCode?`<div><dt>Provisioning issue</dt><dd>${e(bank.databaseBinding.failureCode)}</dd></div>`:''}</dl></section>
     <section class="card"><div class="panel-title"><div><h2>Branches</h2><p>Showing up to 100 branches. Assign access within this bank.</p></div>${button('+ Add branch','new-branch','',true)}</div>${table(['Branch','Status',''],branches.items.map(b=>`<tr><td><strong>${e(b.displayName)}</strong><small>${e(b.code)}</small></td><td>${badge(b.active?'ACTIVE':'DISABLED')}</td><td><button class="link-button" data-action="branch-grant" data-id="${b.id}">Assign access</button><br><button class="link-button" data-action="edit-branch" data-id="${b.id}">Edit branch</button><br><button class="link-button" data-action="branch-members" data-id="${b.id}">View access</button></td></tr>`).join(''),'No branches registered.')}</section></div>
     <div class="stack"><section class="card"><div class="panel-title"><h2>Legal entities</h2>${button('+ Add','new-entity','',true)}</div>${table(['Entity','Currency'],bank.legalEntities.map(l=>`<tr><td><strong>${e(l.legalName)}</strong><small>${e(l.country)} · ${e(l.businessTimezone)}</small></td><td>${e(l.functionalCurrency)}</td></tr>`).join(''))}</section>
     <section class="card"><div class="panel-title"><div><h2>Bank memberships</h2><p>Showing up to 100 identities</p></div>${button('Manage','bank-membership','',true)}</div>${table(['Identity','Role','Status'],members.items.map(m=>`<tr><td class="mono">${e(m.subject)}</td><td>${e(titleCase(m.role))}</td><td>${badge(m.active?'ACTIVE':'DISABLED')}</td></tr>`).join(''),'No bank memberships.')}</section></div></div>
@@ -124,7 +139,7 @@ async function approvalDirectory(revision){
     `<button class="button ${approvalScope===value?'':'secondary'}" data-action="approval-scope" data-id="${value}" aria-pressed="${approvalScope===value}">${label}</button>`).join('');
   content.innerHTML=heading('Approval Inbox','Review proposed changes before they take effect. Every decision is recorded.')+
     `<div class="approval-tabs actions">${tabs}</div><section class="card"><div class="toolbar approval-filters">
-    <label class="field">Request type<select id="approval-type"><option value="">All types</option>${['BANK_SUSPEND','BANK_RESUME','STAFF_UPDATE','BANK_SETTINGS','CHART_ACCOUNT','LEDGER_ACCOUNT','JOURNAL_POST','DAY_CLOSE','DEPOSIT_PRODUCT','CUSTOMER_CHANGE','DEPOSIT_ACCOUNT','ACCOUNT_FUNDING','ACCOUNT_OPERATION','TRANSACTION_LIMIT','ACCOUNT_BRANCH','BRANCH_LIMIT','CASH_OPERATION'].map(a=>`<option value="${a}" ${a===approvalAction?'selected':''}>${e(titleCase(a))}</option>`).join('')}</select></label>
+    <label class="field">Request type<select id="approval-type"><option value="">All types</option>${['BANK_SUSPEND','BANK_RESUME','STAFF_UPDATE','BANK_SETTINGS','CHART_ACCOUNT','LEDGER_ACCOUNT','JOURNAL_POST','DAY_CLOSE','DEPOSIT_PRODUCT','CUSTOMER_CHANGE','DEPOSIT_ACCOUNT','ACCOUNT_FUNDING','ACCOUNT_OPERATION','TRANSACTION_LIMIT','ACCOUNT_BRANCH','BRANCH_LIMIT','CASH_OPERATION','CASH_DENOMINATIONS','SERVICING_POLICY','SERVICING_RUN','COMPLIANCE_REVIEW','PAYMENT_ORDER','PAYMENT_RECONCILE','STATEMENT_ACTION'].map(a=>`<option value="${a}" ${a===approvalAction?'selected':''}>${e(titleCase(a))}</option>`).join('')}</select></label>
     <label class="field">Bank<select id="approval-bank"><option value="">All banks and staff</option>${banks.items.map(b=>`<option value="${b.id}" ${b.id===approvalBank?'selected':''}>${e(b.displayName)}</option>`).join('')}</select></label>
     <span class="tag">${rows.length} on this page</span></div>`+
     table(['Request / target','Status','Submitted by','Submitted',''],rows.map(r=>`<tr><td><strong>${e(titleCase(r.action))}</strong><small>${e(r.targetLabel)}</small></td><td>${badge(r.status)}</td><td>${e(r.makerSubject)}${r.makerSubject===me.staff.subject?'<small>Your request</small>':''}</td><td>${e(date(r.createdAt))}</td><td><button class="link-button" data-action="open-approval" data-id="${r.id}">View request →</button></td></tr>`).join(''),approvalScope==='INBOX'?'No pending approvals. Changes submitted for review will appear here.':'No requests match these filters.')+pagination()+
@@ -158,6 +173,11 @@ function form(title,fields,submit,label='Save changes'){
 }
 function closeDialog(){if(busy)return;dialog.close();lastFocus?.focus();}
 async function action(name,id){
+  if(name.startsWith('statement-import-')){await statementImportUi.action(name.slice(17),id);return;}
+  if(name.startsWith('payment-case-')){await paymentCasesUi.action(name.slice(13),id);return;}
+  if(name.startsWith('payments-')){await paymentsUi.action(name.slice(9),id);return;}
+  if(name.startsWith('compliance-')){await complianceUi.action(name.slice(11),id);return;}
+  if(name.startsWith('servicing-')){await servicingUi.action(name.slice(10),id);return;}
   if(name.startsWith('account-')){await accountUi.action(name.slice(8),id);return;}
   if(name==='bank-accounts'){accountUi.selectBank(selectedBank);view='accounts';await render();return;}
   if(name.startsWith('customer-')){await customerUi.action(name.slice(9),id);return;}
@@ -200,9 +220,13 @@ async function action(name,id){
       return {keepOpen:true};
     },'Continue');return;
   }
+  if(name==='bank-denominations'){
+    const bank=await api('/admin/tenants/'+selectedBank),base='/admin/tenants/'+selectedBank+'/cash-denominations',existing=await api(base),key=crypto.randomUUID();
+    form('Cash denomination catalogue','<p class="field full">Existing denominations are retained. Enter accepted notes and coins as NOTE:1000; COIN:10. Each face value has one type. Values and types require independent approval.</p><pre class="field full">'+e(existing.map(d=>d.currency+' '+d.type+':'+d.value).join('; '))+'</pre>'+field('currency','Currency','',{pattern:'[A-Z]{3}',max:3})+field('denominations','Complete catalogue for this currency','',{full:true,max:2000})+reason(),v=>{const denominations=v.denominations.split(';').map(x=>{const [type,value,...extra]=x.trim().split(':');if(extra.length||!['NOTE','COIN'].includes(type)||!/^\d+(\.\d+)?$/.test(value))throw Error('Use NOTE:value or COIN:value separated by semicolons.');return {type,value};});return api(base,{method:'POST',headers:{'Idempotency-Key':key},body:{expectedVersion:bank.version,currency:v.currency,denominations,reason:v.reason}});},'Submit for approval');return;
+  }
   if(name==='bank-cash-locations'){
     const [bank,branches,ledgers,settings]=await Promise.all([api(base),api(base+'/branches?limit=100&offset=0'),api(base+'/ledger-accounts?limit=100&offset=0'),api(base+'/settings')]);
-    if(Number(bank.databaseBinding?.schemaVersion||0)<12){
+    if(Number(bank.databaseBinding?.schemaVersion||0)<14){
       form('Prepare cash storage','<p class="field full">Prepare the cash custody tables in this bank’s dedicated database. Then open Cash locations again to register its vaults and tills.</p>'+reason(),d=>api(base+'/ledger-accounts/prepare',{method:'POST',body:{expectedVersion:bank.version,reason:d.reason}}),'Prepare cash storage');return;
     }
     if(!branches.items.some(b=>b.active))throw new Error('Create an active branch before registering cash locations.');

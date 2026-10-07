@@ -435,3 +435,52 @@ Control V21 and bank V12 add linked dispatch/receipt storage and transit-ledger 
 - Initial focused runs exposed and corrected a PL/pgSQL CASE parsing issue in the new migration and a JDBC JSON operator/placeholder collision. The final complete suite includes both fixes.
 - Packaging succeeded (.local/transit-package.log). The restarted workspace app returned readiness UP on port 8080. Existing bank databases still require the ownership-checked Prepare cash storage operation before using V12 cash workflows.
 - No live financial limits or mappings were invented, no MFA exception was renewed, and no production acceptance or external cash movement was performed. Overnight carry, carrier tracking and shipment write-off cases remain pending as documented in interbranch-cash.md.
+
+## 7 October 2026 — denomination inventory, receipts and daily servicing
+
+Full local backend regression: **106 tests passed, zero failures/errors/skips**. UI regression: **50 tests passed**. After final policy supersession and inventory safeguards, the focused servicing/cash integration and calculation suite passed **5 tests**. All financial test data used isolated local PostgreSQL databases.
+
+Coverage includes stock activation, unavailable/unapproved denominations, stock-aware reversals, immutable note entries, stable receipt numbers and copy-generation retries; exact interest/tax/fee calculations, whole-unit currency carry, same-effective-date policy correction, insufficient fee funds, independent approval, atomic failure rollback, lost-acknowledgement recovery, statement reconciliation and day sealing/advancement. Browser checks used fictional fixtures for held stock, printable receipt layout and daily calculation preview. Native printer output was not tested.
+
+No live financial transaction, policy or cash catalogue was created. Per-bank storage upgrade remains an authenticated administrator action. Limits and remaining scope are recorded in cash-inventory-and-receipts.md and deposit-servicing.md.
+
+The application package rebuilt successfully and restarted on port 8080. Readiness returned UP. The saved Neon control database applied V22 and V23 successfully; no bank-specific V14 preparation or live servicing run was performed. Authentication settings were preserved.
+
+## 7 October 2026 — compliance cases and enterprise review
+
+- Full local backend suite: **108 passed**, zero failures/errors/skips (.local/compliance-full-tests.log).
+- Final focused integration run: **2 passed** after extending queued-account and daily-servicing compliance/recovery scenarios (.local/compliance-recovery-tests.log).
+- UI suite: **53 passed** (.local/compliance-ui-tests.log). npm production dependency audit: zero known vulnerabilities reported in the packages checked (.local/compliance-npm-audit.json); this is not a Java or complete supply-chain assessment.
+- Cases cover unauthenticated/non-admin denial, idempotency/conflict, cross-bank lookup, independent checker excluding opener, stale evidence, restriction/clearance, profile-version review expiry, immutable evidence and financial delivery restrictions. Servicing tests verify restriction before first commit and acknowledgement after a committed receipt despite a later restriction. Cash quantity unit coverage checks underflow and capacity.
+- Browser: fictional case list, history and clearance form verified. Screenshot .local/compliance-preview.png. No live customer case or clearance submitted; temporary tab/server closed.
+- Package succeeded (.local/compliance-package.log). Workspace app restarted on port 8080, readiness UP, saved Neon control database successfully applied V24 (.local/compliance-application.log). Bank schema remains V14 where prepared; no additional bank migration is introduced. Authentication settings were preserved.
+- Enterprise source/evidence review completed in enterprise-readiness-review-2026-10-07.md. Production acceptance remains outstanding. Changes are in the local working tree; no commit or push was performed in this increment.
+
+## 7 October 2026 — Safaricom M-Pesa Kenya sandbox payments
+
+- Final full backend regression: **113 tests passed**, zero failures/errors/skips (`.local/payments-release-tests.log`). UI regression: **56 passed** (`.local/payments-ui-tests.log`).
+- The first focused payment integration scenario passed before the broader regression. The initial full run found eager Java HttpClient startup failing on this Windows host; connector initialization was made lazy. The final full suite includes that fix and the late-conflict safeguards.
+- Payment coverage includes a mandatory current compliance case, approved customer/GL debit, posting prerequisite, concurrent dispatch claiming, no resend after acceptance or timeout, token rejection, callback replay, no callback-driven settlement, generic reversal denial, mismatched statement rejection, evidence idempotency, independent evidence/checker separation, full refund after a lost bank acknowledgement, immutable statement evidence, access denial and day-close conflict blocking.
+- Adapter tests use a mocked HTTP transport and verify the fixed sandbox OAuth/B2C endpoints, configuration isolation, production-profile disabling, provider-account pinning, bounded observation parsing and no automatic transport retry. These tests are not actual Safaricom sandbox certification.
+- Browser fixture: payment directory, evidence detail and independent match form inspected with fictional data. Screenshot `.local/payments-preview.png`; no provider or live bank request submitted. Temporary preview tab/server closed.
+- Package succeeded (`.local/payments-package.log`). Authentication settings and provider credentials were not changed; no sandbox integration was enabled. Control migration V25 is additive; bank migration remains V14.
+- Remaining provider setup and scope are in `payments-mpesa-sandbox.md`. Full provider statements, wallet/fee/net settlement and production acceptance remain incomplete. Work is local; no commit/push performed.
+
+The restarted application returned readiness UP on port 8080. The saved Neon control database applied V25 successfully (`.local/payments-application.log`). No live payment, statement evidence, customer debit or provider credentials were created in the development bank.
+## 7 October 2026 — full normalized M-Pesa statement reconciliation
+
+Implemented the statement directory/import preview, configurable CSV headers, exact opening/running/closing validation, immutable source evidence, whole-file deduplication, receipt reuse controls, payout and existing-journal matching, fee/unknown-movement journals, journal unlink/reversal corrections, duplicate acknowledgement, conflict review, independent close/reopen/replacement, CSV export and wallet-period/day-close guards. See [operator guide](mpesa-statement-reconciliation.md).
+
+Verification: the complete **119-test backend suite passed**, with no failures, errors or skips, against isolated PostgreSQL. **60 UI tests passed**. The extended payment integration scenario covers a fresh imported payment settlement, an already-settled payout, exact fee posting, lost acknowledgement/retry, self-review denial, report-hash invalidation after delivery, correction/rebooking, duplicate overlap without recharging, dependent closure, incorrect-import replacement, cross-bank lookup, immutable evidence and authentication. Six CSV parser tests cover exact decimals, quoted fields/BOM, mapping, malformed/duplicate rows, date bounds, running/closing differences and size limits.
+
+Browser checks used the isolated fictional fixture and verified the directory, balance differences, disabled close action, row review/adjustment form and import metadata/file controls. No live statement or financial adjustment was created. Native provider-export compatibility and original-document authentication remain unverified.
+
+Final evidence hardening was followed by **3 passing migration/reconciliation tests** (zero failures/errors/skips). Packaging succeeded. The local application applied V26 to the configured Neon development control database and restarted on port 8080 with readiness `UP`; the portal serves the M-Pesa statements navigation and unauthenticated statement access returns 401. Bank migration remains V14. Existing identity/MFA configuration was used; no sign-in exception was renewed. No live financial data was imported or posted.
+
+## Payment lifecycle — 7 October 2026
+
+- Full isolated backend suite: **120 passed, 0 failed, 0 skipped** (`.local/lifecycle-release-tests.log`).
+- UI suite: **65 passed**, including scoped investigation display, read-only controls, evidence selection, return payload pinning and owner/version controls (`.local/lifecycle-ui-tests.log`).
+- Focused lifecycle integration covers historical carry across business-day close, subsequent settlement, full return, lost acknowledgement recovery, contradictory callbacks, partial-return rejection, scoped lookup APIs, bank/auditor denial and revoked-maker denial (`.local/lifecycle-final-tests.log`).
+- Browser fixture: payment exception list, investigation details and full-return proposal rendered; `.local/payment-exceptions-preview.png` uses fictional data.
+- Actual M-Pesa export format and live Daraja sandbox acceptance: **not executed / external evidence needed**. No production readiness claim.

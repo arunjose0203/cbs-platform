@@ -44,6 +44,7 @@ public class SecurityConfiguration {
                         .requestMatchers(HttpMethod.GET,"/","/admin","/admin/","/admin/index.html","/admin/app.js","/admin/styles.css","/admin/chart.css","/portal/config").permitAll()
                         .requestMatchers(HttpMethod.GET, "/actuator/health", "/actuator/health/liveness",
                                 "/actuator/health/readiness").permitAll()
+                        .requestMatchers(HttpMethod.POST,"/api/v1/payments/mpesa/callback/*/*").permitAll()
                         .requestMatchers("/api/v1/admin/**").access((authentication, context) ->
                                 new org.springframework.security.authorization.AuthorizationDecision(
                                         settings.enabled() && authentication.get().getAuthorities().stream()

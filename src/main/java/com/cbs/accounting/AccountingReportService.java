@@ -23,7 +23,10 @@ public class AccountingReportService {
     private final BankDatabaseProvisioner databases;
     public AccountingReportService(TenantRepository tenants,BankDatabaseProvisioner databases){this.tenants=tenants;this.databases=databases;}
     public Report generate(Actor actor,UUID bankId,Kind kind,UUID entityId,String currency,LocalDate from,LocalDate to,UUID ledgerId){
-        AccessService.admin(actor);
+        AccessService.admin(actor);return generateInternal(actor,bankId,kind,entityId,currency,from,to,ledgerId);
+    }
+    public Report generateForReconciliation(Actor actor,UUID bankId,Kind kind,UUID entityId,String currency,LocalDate from,LocalDate to,UUID ledgerId,org.springframework.jdbc.core.JdbcTemplate jdbc){com.cbs.payments.PaymentAccess.require(jdbc,actor,bankId,com.cbs.payments.PaymentAccess.Capability.READ);return generateInternal(actor,bankId,kind,entityId,currency,from,to,ledgerId);}
+    private Report generateInternal(Actor actor,UUID bankId,Kind kind,UUID entityId,String currency,LocalDate from,LocalDate to,UUID ledgerId){
         Tenant bank=tenants.get(bankId,false);
         if(!List.of(Status.ACTIVE,Status.SUSPENDED).contains(bank.status()))throw error(409,"JOURNAL_STORAGE_NOT_READY");
         var entity=bank.legalEntities().stream().filter(e->e.id().equals(entityId)).findFirst().orElseThrow(()->error(400,"LEGAL_ENTITY_NOT_IN_BANK"));

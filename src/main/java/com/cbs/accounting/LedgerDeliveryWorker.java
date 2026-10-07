@@ -9,6 +9,8 @@ import org.springframework.scheduling.annotation.Scheduled;
 @EnableScheduling
 @ConditionalOnProperty(name={"cbs.tenancy.enabled","cbs.ledger.delivery-enabled"},havingValue="true",matchIfMissing=true)
 public class LedgerDeliveryWorker {
+    private final com.cbs.payments.PaymentReturnService returns;
+    private final com.cbs.servicing.ServicingService servicing;
     private final com.cbs.cash.CashService cash;
     private final com.cbs.accounts.OperationService operations;
     private final com.cbs.accounts.AccountService accounts;
@@ -17,13 +19,16 @@ public class LedgerDeliveryWorker {
     private final JournalService journals;
     private final DayCloseService days;
     private final com.cbs.customers.CustomerService customers;
-    public LedgerDeliveryWorker(com.cbs.cash.CashService cash,LedgerService ledgers,JournalService journals,DayCloseService days,com.cbs.customers.CustomerService customers,com.cbs.accounts.AccountService accounts,com.cbs.accounts.FundingService funding,com.cbs.accounts.OperationService operations){this.cash=cash;this.operations=operations;this.funding=funding;this.accounts=accounts;this.customers=customers;this.ledgers=ledgers;this.journals=journals;this.days=days;}
+    public LedgerDeliveryWorker(com.cbs.payments.PaymentReturnService returns,com.cbs.servicing.ServicingService servicing,com.cbs.cash.CashService cash,LedgerService ledgers,JournalService journals,DayCloseService days,com.cbs.customers.CustomerService customers,com.cbs.accounts.AccountService accounts,com.cbs.accounts.FundingService funding,com.cbs.accounts.OperationService operations){this.returns=returns;this.servicing=servicing;this.cash=cash;this.operations=operations;this.funding=funding;this.accounts=accounts;this.customers=customers;this.ledgers=ledgers;this.journals=journals;this.days=days;}
     @Scheduled(fixedDelay=30000,initialDelay=30000)
     public void postOperations(){
+        try{for(var id:servicing.pending())try{servicing.deliver(id);}catch(RuntimeException ignored){org.slf4j.LoggerFactory.getLogger(getClass()).warn("Deposit servicing remains pending; retry is safe");}}catch(RuntimeException ignored){org.slf4j.LoggerFactory.getLogger(getClass()).warn("Deposit servicing queue unavailable");}
         try{for(var id:cash.pending())try{cash.deliver(id);}catch(RuntimeException ignored){org.slf4j.LoggerFactory.getLogger(getClass()).warn("Cash delivery remains pending; retry is safe");}}catch(RuntimeException ignored){org.slf4j.LoggerFactory.getLogger(getClass()).warn("Cash delivery queue is unavailable");}
         try{for(var id:operations.pending())try{operations.deliver(id);}catch(RuntimeException ignored){org.slf4j.LoggerFactory.getLogger(getClass()).warn("Account operation remains pending; retry is safe");}}
         catch(RuntimeException ignored){org.slf4j.LoggerFactory.getLogger(getClass()).warn("Account operation queue is unavailable");}
     }
+    @Scheduled(fixedDelay=30000,initialDelay=30000)
+    public void acknowledgeReturns(){try{for(var id:returns.pending())returns.refresh(id);}catch(RuntimeException ignored){org.slf4j.LoggerFactory.getLogger(getClass()).warn("Payment return acknowledgement remains pending");}}
     @Scheduled(fixedDelay=30000,initialDelay=30000)
     public void postFunding(){
         try{for(var id:funding.pending())try{funding.deliver(id);}catch(RuntimeException ignored){org.slf4j.LoggerFactory.getLogger(getClass()).warn("Funding remains pending; retry is safe");}}

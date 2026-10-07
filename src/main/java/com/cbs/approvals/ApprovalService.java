@@ -22,6 +22,13 @@ import tools.jackson.databind.json.JsonMapper;
 @ConditionalOnProperty(name="cbs.tenancy.enabled",havingValue="true",matchIfMissing=true)
 public class ApprovalService {
     private static final JsonMapper JSON=JsonMapper.builder().build();
+    private final com.cbs.payments.PaymentService payments;
+    private final com.cbs.payments.PaymentCaseService paymentCases;
+    private final com.cbs.payments.PaymentAccess paymentAccess;
+    private final com.cbs.payments.StatementImportService statements;
+    private final com.cbs.compliance.ComplianceService compliance;
+    private final com.cbs.servicing.ServicingService servicing;
+    private final com.cbs.cash.DenominationService denominations;
     private final com.cbs.cash.CashService cash;
     private final com.cbs.access.BranchOperations branchOperations;
     private final JdbcTemplate jdbc;
@@ -39,9 +46,9 @@ public class ApprovalService {
     private final com.cbs.accounts.AccountService accounts;
     private final com.cbs.accounts.FundingService funding;
     private final com.cbs.accounts.OperationService operations;
-    public ApprovalService(com.cbs.cash.CashService cash,com.cbs.access.BranchOperations branchOperations,JdbcTemplate jdbc, PlatformTransactionManager manager, TenantService tenants,
+    public ApprovalService(com.cbs.payments.PaymentCaseService paymentCases,com.cbs.payments.PaymentAccess paymentAccess,com.cbs.payments.StatementImportService statements,com.cbs.payments.PaymentService payments,com.cbs.compliance.ComplianceService compliance,com.cbs.servicing.ServicingService servicing,com.cbs.cash.DenominationService denominations,com.cbs.cash.CashService cash,com.cbs.access.BranchOperations branchOperations,JdbcTemplate jdbc, PlatformTransactionManager manager, TenantService tenants,
             TenantRepository tenantRepository, AccessService access,com.cbs.reference.ReferenceDataService reference,
-            com.cbs.accounting.ChartService chart,com.cbs.accounting.LedgerService ledger,com.cbs.accounting.JournalService journals,com.cbs.accounting.DayCloseService days,com.cbs.products.ProductService products,com.cbs.customers.CustomerService customers,com.cbs.accounts.AccountService accounts,com.cbs.accounts.FundingService funding,com.cbs.accounts.OperationService operations) {this.cash=cash;this.branchOperations=branchOperations;this.operations=operations;this.funding=funding;
+            com.cbs.accounting.ChartService chart,com.cbs.accounting.LedgerService ledger,com.cbs.accounting.JournalService journals,com.cbs.accounting.DayCloseService days,com.cbs.products.ProductService products,com.cbs.customers.CustomerService customers,com.cbs.accounts.AccountService accounts,com.cbs.accounts.FundingService funding,com.cbs.accounts.OperationService operations) {this.paymentCases=paymentCases;this.paymentAccess=paymentAccess;this.statements=statements;this.payments=payments;this.compliance=compliance;this.servicing=servicing;this.denominations=denominations;this.cash=cash;this.branchOperations=branchOperations;this.operations=operations;this.funding=funding;
         this.accounts=accounts;
         this.jdbc=jdbc; this.tx=new TransactionTemplate(manager); this.tenants=tenants;
         this.tenantRepository=tenantRepository; this.access=access;
@@ -67,6 +74,16 @@ public class ApprovalService {
     public Request ledger(Actor actor,UUID key,UUID bankId,com.cbs.accounting.LedgerModels.Change input) {
         return submit(actor,key,bankId,Action.LEDGER_ACCOUNT,input.expectedVersion(),input.reason(),input);
     }
+    public Request paymentCase(Actor actor,UUID key,UUID bank,com.cbs.payments.PaymentCaseModels.Change input){return submit(actor,key,bank,Action.PAYMENT_CASE,input.expectedVersion(),input.reason(),input);}
+    public Request paymentGrant(Actor actor,UUID key,UUID bank,com.cbs.payments.PaymentAccess.Grant input){return submit(actor,key,bank,Action.PAYMENT_ACCESS,input.expectedVersion(),input.reason(),input);}
+    private static boolean paymentScoped(Action a){return List.of(Action.STATEMENT_ACTION,Action.PAYMENT_CASE,Action.PAYMENT_RECONCILE).contains(a);}
+    public Request statementAction(Actor actor,UUID key,UUID bank,com.cbs.payments.StatementImportModels.Action input){return submit(actor,key,bank,Action.STATEMENT_ACTION,input.expectedVersion(),input.reason(),input);}
+    public Request payment(Actor actor,UUID key,UUID bank,com.cbs.payments.PaymentModels.Order input){return submit(actor,key,bank,Action.PAYMENT_ORDER,input.expectedVersion(),input.reason(),input);}
+    public Request paymentReconcile(Actor actor,UUID key,UUID bank,com.cbs.payments.PaymentModels.Reconcile input){return submit(actor,key,bank,Action.PAYMENT_RECONCILE,input.expectedVersion(),input.reason(),input);}
+    public Request compliance(Actor actor,UUID key,UUID bank,com.cbs.compliance.ComplianceModels.Review input){return submit(actor,key,bank,Action.COMPLIANCE_REVIEW,input.expectedVersion(),input.reason(),input);}
+    public Request servicingPolicy(Actor actor,UUID key,UUID bank,com.cbs.servicing.ServicingModels.Policy input){return submit(actor,key,bank,Action.SERVICING_POLICY,input.expectedVersion(),input.reason(),input);}
+    public Request servicingRun(Actor actor,UUID key,UUID bank,com.cbs.servicing.ServicingModels.Run input){return submit(actor,key,bank,Action.SERVICING_RUN,input.expectedVersion(),input.reason(),input);}
+    public Request denominations(Actor actor,UUID key,UUID bank,com.cbs.cash.DenominationService.Change input){return submit(actor,key,bank,Action.CASH_DENOMINATIONS,input.expectedVersion(),input.reason(),input);}
     public Request cash(Actor actor,UUID key,UUID bank,com.cbs.cash.CashModels.Change input){return submit(actor,key,bank,Action.CASH_OPERATION,input.expectedVersion(),input.reason(),input);}
     public Request assignment(Actor actor,UUID key,UUID bank,com.cbs.access.BranchOperations.Assignment input){return submit(actor,key,bank,Action.ACCOUNT_BRANCH,input.expectedVersion(),input.reason(),input);}
     public Request branchLimit(Actor actor,UUID key,UUID bank,com.cbs.access.BranchOperations.Limit input){return submit(actor,key,bank,Action.BRANCH_LIMIT,input.expectedVersion(),input.reason(),input);}
@@ -114,7 +131,7 @@ public class ApprovalService {
         });
     }
     private Request submit(Actor actor, UUID key, UUID id, Action action, long version, String reason, Object input) {
-        if(action!=Action.ACCOUNT_OPERATION&&action!=Action.CASH_OPERATION)AccessService.admin(actor);
+        if(paymentScoped(action))paymentAccess.require(actor,id,com.cbs.payments.PaymentAccess.Capability.MAKE);else if(action!=Action.ACCOUNT_OPERATION&&action!=Action.CASH_OPERATION)AccessService.admin(actor);
         return tx.execute(transaction->{
             access.requireAssignable(actor.issuer(),actor.subject());
             // Serialize retries before checking the target, including retries after the request was approved.
@@ -130,10 +147,21 @@ public class ApprovalService {
                 if(action==Action.CASH_OPERATION)cash.readRequest(actor,saved.id(),false,false);
                 return saved;
             }
+            if(paymentScoped(action)){tenantRepository.get(id,true);paymentAccess.require(actor,id,com.cbs.payments.PaymentAccess.Capability.MAKE);}
             Map<String,Object> before,after;
             String label;
             UUID bankId=null;
-            if(action==Action.STAFF_UPDATE) {
+            if(action==Action.PAYMENT_ACCESS){
+                var bank=tenantRepository.get(id,true);var change=(com.cbs.payments.PaymentAccess.Grant)input;paymentAccess.validate(actor,bank,change);before=Map.of();after=Map.of("grant",change);label=bank.displayName();bankId=id;
+            } else if(action==Action.PAYMENT_CASE){
+                var bank=tenantRepository.get(id,true);var change=(com.cbs.payments.PaymentCaseModels.Change)input;before=Map.of();after=paymentCases.values(actor,bank,change);label=bank.displayName();bankId=id;
+            } else if(action==Action.STATEMENT_ACTION){
+                var bank=tenantRepository.get(id,true);var change=(com.cbs.payments.StatementImportModels.Action)input;before=Map.of();after=statements.values(actor,bank,change);label=bank.displayName();bankId=id;
+            } else if(action==Action.PAYMENT_ORDER){
+                var bank=tenantRepository.get(id,true);var change=(com.cbs.payments.PaymentModels.Order)input;payments.validate(actor,bank,change);before=Map.of();after=payments.values(bank,change);label=bank.displayName();bankId=id;
+            } else if(action==Action.PAYMENT_RECONCILE){
+                var bank=tenantRepository.get(id,true);var change=(com.cbs.payments.PaymentModels.Reconcile)input;before=Map.of();after=payments.values(actor,bank,change);label=bank.displayName();bankId=id;
+            } else if(action==Action.STAFF_UPDATE) {
                 var staff=access.staff(id,true);
                 if(!staff.issuer().equals(actor.issuer())) throw error(404,"STAFF_NOT_FOUND");
                 if(staff.version()!=version) throw error(409,"STALE_VERSION");
@@ -142,6 +170,14 @@ public class ApprovalService {
                 before=staffValues(staff.displayName(),staff.email(),staff.active());
                 after=staffValues(update.displayName(),update.email(),update.active());
                 label=staff.displayName();
+            } else if(action==Action.COMPLIANCE_REVIEW) {
+                var bank=tenantRepository.get(id,true);var change=(com.cbs.compliance.ComplianceModels.Review)input;compliance.validate(bank,change);before=compliance.before(actor,id,change);after=compliance.values(change);label="Compliance case review";bankId=id;
+            } else if(action==Action.SERVICING_POLICY) {
+                var bank=tenantRepository.get(id,true);var change=(com.cbs.servicing.ServicingModels.Policy)input;servicing.validatePolicy(bank,change);before=Map.of();after=servicing.policyValues(change);label="Deposit servicing policy";bankId=id;
+            } else if(action==Action.SERVICING_RUN) {
+                var bank=tenantRepository.get(id,true);var change=(com.cbs.servicing.ServicingModels.Run)input;var batch=servicing.prepare(bank,change,UUID.randomUUID());before=Map.of();after=servicing.values(batch);label="Daily interest, fees and taxes";bankId=id;
+            } else if(action==Action.CASH_DENOMINATIONS) {
+                var bank=tenantRepository.get(id,true);var change=(com.cbs.cash.DenominationService.Change)input;denominations.validate(bank,change);before=Map.of("catalogue",denominations.list(id));after=denominations.values(change);label="Cash denomination catalogue";bankId=id;
             } else if(action==Action.CASH_OPERATION) {
                 var bank=tenantRepository.get(id,true);var change=(com.cbs.cash.CashModels.Change)input;var entry=cash.validate(actor,bank,change,UUID.randomUUID());before=cash.before(bank,entry);after=cash.values(entry);label=entry.location().code()+" — "+change.kind();bankId=id;
             } else if(action==Action.ACCOUNT_BRANCH) {
@@ -217,6 +253,9 @@ public class ApprovalService {
                     VALUES (?,?,?,?,?,?,?,?,?,?,?::jsonb,?::jsonb,?::jsonb)
                     """,requestId,actor.issuer(),actor.subject(),key,action.name(),id,bankId,label,version,reason,payload,
                     JSON.writeValueAsString(before),JSON.writeValueAsString(after));
+            if(paymentScoped(action))jdbc.update("INSERT INTO platform.payment_approval_scope VALUES (?,?,?)",requestId,id,actor.platformAdmin());
+            if(action==Action.PAYMENT_ORDER)payments.record(actor,id,(com.cbs.payments.PaymentModels.Order)input,requestId);
+            if(action==Action.PAYMENT_RECONCILE)payments.recordResolution(actor,tenantRepository.get(id,false),(com.cbs.payments.PaymentModels.Reconcile)input,requestId);
             if(action==Action.ACCOUNT_OPERATION)branchOperations.record(actor,id,(com.cbs.accounts.OperationModels.Change)input,requestId);
             if(action==Action.CASH_OPERATION)cash.record(actor,id,(com.cbs.cash.CashModels.Change)input,requestId);
             audit(actor,requestId,"SUBMITTED",reason);
@@ -239,6 +278,8 @@ public class ApprovalService {
         return new Page<>(jdbc.query("SELECT * FROM platform.approval_request WHERE issuer=?"+condition+
                 " ORDER BY created_at DESC,id LIMIT ? OFFSET ?",(row,n)->request(row),args.toArray()),limit,offset);
     }
+    public Page<Request> paymentInbox(Actor actor,UUID bank,int limit,int offset){paymentAccess.require(actor,bank,com.cbs.payments.PaymentAccess.Capability.READ);AccessService.page(limit,offset);return new Page<>(jdbc.query("SELECT * FROM platform.approval_request WHERE issuer=? AND bank_id=? AND action IN ('PAYMENT_CASE','STATEMENT_ACTION','PAYMENT_RECONCILE') ORDER BY (status='PENDING') DESC,created_at DESC,id LIMIT ? OFFSET ?",(r,n)->request(r),actor.issuer(),bank,limit,offset),limit,offset);}
+    public void paymentRequestBank(Actor actor,UUID bank,UUID id){paymentAccess.require(actor,bank,com.cbs.payments.PaymentAccess.Capability.READ);if(!jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM platform.approval_request WHERE id=? AND issuer=? AND bank_id=? AND action IN ('PAYMENT_CASE','STATEMENT_ACTION','PAYMENT_RECONCILE'))",Boolean.class,id,actor.issuer(),bank))throw error(404,"APPROVAL_NOT_FOUND");}
     public Details details(Actor actor, UUID id) {
         Request request=get(actor,id,false);
         return new Details(request,jdbc.query("SELECT * FROM platform.approval_event WHERE request_id=? ORDER BY occurred_at,id",
@@ -249,7 +290,7 @@ public class ApprovalService {
     public Request decide(Actor actor, UUID id, Decision decision, String reason) {
         return tx.execute(transaction->{
             Request request=get(actor,id,true);
-            if(request.action()==Action.ACCOUNT_OPERATION)branchOperations.review(actor,id,decision==Decision.CANCEL);else if(request.action()==Action.CASH_OPERATION)cash.readRequest(actor,id,true,decision==Decision.CANCEL);else AccessService.admin(actor);
+            if(paymentScoped(request.action()))paymentAccess.require(actor,request.bankId(),decision==Decision.CANCEL?com.cbs.payments.PaymentAccess.Capability.MAKE:com.cbs.payments.PaymentAccess.Capability.APPROVE);else if(request.action()==Action.ACCOUNT_OPERATION)branchOperations.review(actor,id,decision==Decision.CANCEL);else if(request.action()==Action.CASH_OPERATION)cash.readRequest(actor,id,true,decision==Decision.CANCEL);else AccessService.admin(actor);
             boolean own=request.makerSubject().equals(actor.subject());
             if(decision==Decision.CANCEL && !own) throw error(403,"ONLY_MAKER_CAN_CANCEL");
             if(decision!=Decision.CANCEL && own) throw error(403,"SELF_APPROVAL_FORBIDDEN");
@@ -264,6 +305,7 @@ public class ApprovalService {
                 var maker=jdbc.queryForObject("SELECT active FROM platform.staff_identity WHERE issuer=? AND subject=? FOR SHARE",
                         Boolean.class,actor.issuer(),request.makerSubject());
                 if(!Boolean.TRUE.equals(maker)) throw error(409,"MAKER_DISABLED");
+                if(paymentScoped(request.action())){var privileged=jdbc.queryForList("SELECT maker_admin FROM platform.payment_approval_scope WHERE request_id=?",Boolean.class,id);paymentAccess.require(new Actor(actor.issuer(),request.makerSubject(),!privileged.isEmpty()&&Boolean.TRUE.equals(privileged.getFirst()),actor.correlationId()),request.bankId(),com.cbs.payments.PaymentAccess.Capability.MAKE);}
                 long version;
                 if(request.action()==Action.STAFF_UPDATE) {
                     var staff=access.staff(request.targetId(),true);
@@ -277,6 +319,15 @@ public class ApprovalService {
                     switch(request.action()) {
                         case BANK_SUSPEND -> tenants.suspend(actor,request.targetId(),change);
                         case BANK_RESUME -> tenants.resume(actor,request.targetId(),change);
+                        case PAYMENT_CASE -> paymentCases.apply(actor,request.targetId(),JSON.readValue(jdbc.queryForObject("SELECT payload::text FROM platform.approval_request WHERE id=?",String.class,id),com.cbs.payments.PaymentCaseModels.Change.class),id);
+                        case PAYMENT_ACCESS -> paymentAccess.apply(actor,request.targetId(),JSON.readValue(jdbc.queryForObject("SELECT payload::text FROM platform.approval_request WHERE id=?",String.class,id),com.cbs.payments.PaymentAccess.Grant.class),id);
+                        case STATEMENT_ACTION -> statements.apply(actor,request.targetId(),JSON.readValue(jdbc.queryForObject("SELECT payload::text FROM platform.approval_request WHERE id=?",String.class,id),com.cbs.payments.StatementImportModels.Action.class),id,request.makerSubject());
+                        case PAYMENT_ORDER -> payments.enqueue(actor,request.targetId(),JSON.readValue(jdbc.queryForObject("SELECT payload::text FROM platform.approval_request WHERE id=?",String.class,id),com.cbs.payments.PaymentModels.Order.class),id,request.makerSubject());
+                        case PAYMENT_RECONCILE -> payments.reconcile(actor,request.targetId(),JSON.readValue(jdbc.queryForObject("SELECT payload::text FROM platform.approval_request WHERE id=?",String.class,id),com.cbs.payments.PaymentModels.Reconcile.class),id,request.makerSubject());
+                        case COMPLIANCE_REVIEW -> compliance.apply(actor,request.targetId(),JSON.readValue(jdbc.queryForObject("SELECT payload::text FROM platform.approval_request WHERE id=?",String.class,id),com.cbs.compliance.ComplianceModels.Review.class),id);
+                        case SERVICING_POLICY -> servicing.applyPolicy(actor,request.targetId(),JSON.readValue(jdbc.queryForObject("SELECT payload::text FROM platform.approval_request WHERE id=?",String.class,id),com.cbs.servicing.ServicingModels.Policy.class),id);
+                        case SERVICING_RUN -> servicing.enqueue(actor,request.targetId(),JSON.readValue(jdbc.queryForObject("SELECT payload::text FROM platform.approval_request WHERE id=?",String.class,id),com.cbs.servicing.ServicingModels.Run.class),id,request.makerSubject());
+                        case CASH_DENOMINATIONS -> denominations.apply(actor,request.targetId(),JSON.readValue(jdbc.queryForObject("SELECT payload::text FROM platform.approval_request WHERE id=?",String.class,id),com.cbs.cash.DenominationService.Change.class));
                         case CASH_OPERATION -> {
                             String payload=jdbc.queryForObject("SELECT payload::text FROM platform.approval_request WHERE id=?",String.class,id);
                             cash.enqueue(actor,request.targetId(),JSON.readValue(payload,com.cbs.cash.CashModels.Change.class),id,request.makerSubject());
@@ -351,7 +402,7 @@ public class ApprovalService {
         var rows=jdbc.query("SELECT * FROM platform.approval_request WHERE id=? AND issuer=?"+(lock?" FOR UPDATE":""),
                 (row,n)->request(row),id,actor.issuer());
         if(rows.isEmpty()) throw error(404,"APPROVAL_NOT_FOUND");
-        if(rows.getFirst().action()==Action.ACCOUNT_OPERATION)branchOperations.readRequest(actor,id);else if(rows.getFirst().action()==Action.CASH_OPERATION)cash.readRequest(actor,id,false,false);else AccessService.admin(actor);
+        if(paymentScoped(rows.getFirst().action()))paymentAccess.require(actor,rows.getFirst().bankId(),com.cbs.payments.PaymentAccess.Capability.READ);else if(rows.getFirst().action()==Action.ACCOUNT_OPERATION)branchOperations.readRequest(actor,id);else if(rows.getFirst().action()==Action.CASH_OPERATION)cash.readRequest(actor,id,false,false);else AccessService.admin(actor);
         return rows.getFirst();
     }
     private void audit(Actor actor, UUID id, String action, String reason) {
