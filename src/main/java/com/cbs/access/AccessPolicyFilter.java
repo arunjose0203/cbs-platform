@@ -24,7 +24,7 @@ public class AccessPolicyFilter extends OncePerRequestFilter {
                 AccessService service=access.getIfAvailable();
                 if(service==null) { write(response,503,"ACCESS_STORE_UNAVAILABLE");return; }
                 boolean admin=token.getAuthorities().stream().anyMatch(a->a.getAuthority().equals("ROLE_PLATFORM_ADMIN"));
-                request.setAttribute(ME,service.authenticate(token.getToken(),admin));
+                request.setAttribute(ME,service.authenticate(token.getToken(),admin,(request.getRequestURI().startsWith("/api/v1/banks/") && request.getRequestURI().contains("/operations"))));
             } catch(TenantException exception) { write(response,exception.status(),exception.code());return; }
             catch(DataAccessException exception) { write(response,503,"ACCESS_STORE_UNAVAILABLE");return; }
         }

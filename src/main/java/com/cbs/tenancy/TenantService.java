@@ -58,6 +58,9 @@ public class TenantService {
         validateLanguage(request.defaultLanguage());
         return transactions.execute(status -> {
             Tenant current = editable(tenantId, request.expectedVersion());
+            if (!current.defaultLanguage().equals(request.defaultLanguage())) {
+                throw conflict("SETTINGS_APPROVAL_REQUIRED", "Change the default language through bank settings approval");
+            }
             repository.change(current, current.status(), request.displayName(), request.defaultLanguage());
             repository.audit(actor, tenantId, "TENANT_UPDATED", current.version() + 1, current.status(), current.status(),
                     request.reason(), null, null, Map.of("before", Map.of("displayName", current.displayName(),
@@ -72,6 +75,9 @@ public class TenantService {
         validateEntity(request.legalEntity());
         return transactions.execute(status -> {
             Tenant current = editable(tenantId, request.expectedVersion());
+            if (!repository.currencyEnabled(tenantId, request.legalEntity().functionalCurrency())) {
+                throw conflict("CURRENCY_NOT_ENABLED", "Enable the functional currency through bank settings first");
+            }
             repository.addLegalEntity(tenantId, request.legalEntity());
             repository.change(current, current.status(), current.displayName(), current.defaultLanguage());
             repository.audit(actor, tenantId, "LEGAL_ENTITY_ADDED", current.version() + 1, current.status(), current.status(),

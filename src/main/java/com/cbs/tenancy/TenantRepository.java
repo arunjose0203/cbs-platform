@@ -46,6 +46,12 @@ public class TenantRepository {
                 """, id, request.databaseReference());
         if (bound == 0) { throw new TenantException(409, "DATABASE_REFERENCE_IN_USE", "The database reference is already assigned"); }
         addLegalEntity(id, request.legalEntity());
+        jdbc.query("SELECT platform.initialize_bank_settings(?)",rs->{},id);
+    }
+
+    public boolean currencyEnabled(UUID id,String code) {
+        return Boolean.TRUE.equals(jdbc.queryForObject("SELECT currencies @> ?::jsonb FROM platform.bank_settings WHERE tenant_id=?",
+                Boolean.class,JSON.writeValueAsString(List.of(Map.of("code",code,"enabled",true))),id));
     }
 
     public void addLegalEntity(UUID tenantId, LegalEntityInput entity) {

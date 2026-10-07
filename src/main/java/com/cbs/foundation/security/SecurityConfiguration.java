@@ -41,7 +41,7 @@ public class SecurityConfiguration {
                         "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self' https:"
                                 + settings.localConnectOrigin() + "; object-src 'none'; base-uri 'none'; frame-ancestors 'none'")))
                 .authorizeHttpRequests(auth -> auth
-                        .requestMatchers(HttpMethod.GET,"/","/admin","/admin/","/admin/index.html","/admin/app.js","/admin/styles.css","/portal/config").permitAll()
+                        .requestMatchers(HttpMethod.GET,"/","/admin","/admin/","/admin/index.html","/admin/app.js","/admin/styles.css","/admin/chart.css","/portal/config").permitAll()
                         .requestMatchers(HttpMethod.GET, "/actuator/health", "/actuator/health/liveness",
                                 "/actuator/health/readiness").permitAll()
                         .requestMatchers("/api/v1/admin/**").access((authentication, context) ->

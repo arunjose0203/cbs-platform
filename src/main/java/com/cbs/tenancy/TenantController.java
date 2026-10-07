@@ -17,7 +17,10 @@ import org.springframework.web.bind.annotation.*;
 public class TenantController {
     private final TenantService service;
     private final com.cbs.access.AccessService identities;
-    public TenantController(TenantService service,com.cbs.access.AccessService identities) { this.service = service; this.identities=identities; }
+    private final com.cbs.approvals.ApprovalService approvals;
+    public TenantController(TenantService service,com.cbs.access.AccessService identities,com.cbs.approvals.ApprovalService approvals) {
+        this.service = service; this.identities=identities; this.approvals=approvals;
+    }
 
     @PostMapping("/admin/tenants")
     ResponseEntity<Tenant> register(JwtAuthenticationToken identity,
@@ -50,13 +53,17 @@ public class TenantController {
     }
 
     @PostMapping("/admin/tenants/{id}/suspend")
-    Tenant suspend(JwtAuthenticationToken identity, @PathVariable UUID id, @Valid @RequestBody ChangeRequest request) {
-        return service.suspend(actor(identity), id, request);
+    @ResponseStatus(org.springframework.http.HttpStatus.ACCEPTED)
+    com.cbs.approvals.ApprovalModels.Request suspend(JwtAuthenticationToken identity, @PathVariable UUID id,
+            @RequestHeader("Idempotency-Key") UUID key, @Valid @RequestBody ChangeRequest request) {
+        return approvals.bank(actor(identity),key,id,com.cbs.approvals.ApprovalModels.Action.BANK_SUSPEND,request);
     }
 
     @PostMapping("/admin/tenants/{id}/resume")
-    Tenant resume(JwtAuthenticationToken identity, @PathVariable UUID id, @Valid @RequestBody ChangeRequest request) {
-        return service.resume(actor(identity), id, request);
+    @ResponseStatus(org.springframework.http.HttpStatus.ACCEPTED)
+    com.cbs.approvals.ApprovalModels.Request resume(JwtAuthenticationToken identity, @PathVariable UUID id,
+            @RequestHeader("Idempotency-Key") UUID key, @Valid @RequestBody ChangeRequest request) {
+        return approvals.bank(actor(identity),key,id,com.cbs.approvals.ApprovalModels.Action.BANK_RESUME,request);
     }
 
     @PutMapping("/admin/tenants/{id}/memberships")

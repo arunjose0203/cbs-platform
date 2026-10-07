@@ -29,11 +29,15 @@ public class AccessService {
     private final JdbcTemplate jdbc;
     private final TransactionTemplate tx;
     private final AccessConfiguration.Settings settings;
-    public AccessService(JdbcTemplate jdbc, PlatformTransactionManager manager, AccessConfiguration.Settings settings) {
+    private final DevelopmentMfaPolicy developmentMfa;
+    public AccessService(JdbcTemplate jdbc, PlatformTransactionManager manager, AccessConfiguration.Settings settings,
+            DevelopmentMfaPolicy developmentMfa) {
         this.jdbc=jdbc; this.tx=new TransactionTemplate(manager); this.settings=settings;
+        this.developmentMfa=developmentMfa;
     }
 
-    public Me authenticate(Jwt jwt, boolean admin) {
+    public Me authenticate(Jwt jwt, boolean admin) {return authenticate(jwt,admin,false);}
+    public Me authenticate(Jwt jwt,boolean admin,boolean operationalMfa) {
         Instant now = Instant.now();
         Instant issued = jwt.getIssuedAt();
         Object rawSid = jwt.getClaims().get("sid");
@@ -48,10 +52,13 @@ public class AccessService {
                 || !authTime.plus(settings.maximumSessionAge()).isAfter(now)) {
             throw deny(401,"SESSION_EXPIRED","Your session has expired; sign in again");
         }
-        if (admin) {
+        if ((admin || operationalMfa) && !developmentMfa.allows(jwt, now)) {
             Object amr = jwt.getClaims().get("amr");
             if (!(amr instanceof List<?> methods) || !methods.contains("mfa")
-                    || !authTime.plus(settings.administratorMfaAge()).isAfter(now)) {
+                || !authTime.plus(settings.administratorMfaAge()).isAfter(now)) {
+                if (developmentMfa.expiredFor(jwt, now)) {
+                    throw deny(403,"LOCAL_MFA_EXCEPTION_EXPIRED","The temporary development MFA exception expired");
+                }
                 throw deny(403,"MFA_REQUIRED","Sign in with recent multifactor authentication");
             }
         }

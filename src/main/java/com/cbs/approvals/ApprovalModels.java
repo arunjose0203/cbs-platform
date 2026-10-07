@@ -1,0 +1,22 @@
+package com.cbs.approvals;
+
+import jakarta.validation.constraints.*;
+import java.time.Instant;
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
+
+public final class ApprovalModels {
+    private ApprovalModels() { }
+    public enum Action { BANK_SUSPEND, BANK_RESUME, STAFF_UPDATE, BANK_SETTINGS, CHART_ACCOUNT, LEDGER_ACCOUNT, JOURNAL_POST, DAY_CLOSE, DEPOSIT_PRODUCT, CUSTOMER_CHANGE, DEPOSIT_ACCOUNT, ACCOUNT_FUNDING, ACCOUNT_OPERATION, TRANSACTION_LIMIT, ACCOUNT_BRANCH, BRANCH_LIMIT, CASH_OPERATION }
+    public enum Status { PENDING, APPROVED, REJECTED, CANCELLED, STALE }
+    public enum Scope { INBOX, MINE, HISTORY }
+    public enum Decision { APPROVE, REJECT, CANCEL }
+    public record DecisionInput(@NotBlank @Size(max=500) @Pattern(regexp="[^\\p{Cntrl}]+") String reason) { }
+    public record Request(UUID id, Action action, UUID targetId, UUID bankId, String targetLabel,
+            long expectedVersion, String makerSubject, String reason, Map<String,Object> beforeValues,
+            Map<String,Object> proposedValues, Status status, String reviewerSubject, String decisionReason,
+            Instant createdAt, Instant decidedAt) { }
+    public record Event(UUID id, String actorSubject, String action, String reason, UUID correlationId, Instant occurredAt) { }
+    public record Details(Request request, List<Event> events) { }
+}

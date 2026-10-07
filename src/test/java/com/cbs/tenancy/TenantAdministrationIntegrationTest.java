@@ -39,7 +39,7 @@ import tools.jackson.databind.ObjectMapper;
 
 @EnabledIfEnvironmentVariable(named = "CBS_INTEGRATION_TESTS", matches = "true")
 @SpringBootTest(properties = {
-        "cbs.security.enabled=true", "cbs.security.issuer=https://identity.cbs.test",
+        "cbs.ledger.delivery-enabled=false", "cbs.security.enabled=true", "cbs.security.issuer=https://identity.cbs.test",
         "cbs.security.jwk-set-uri=https://identity.cbs.test/jwks", "cbs.security.audience=cbs-api"
 })
 @AutoConfigureMockMvc
@@ -47,6 +47,22 @@ import tools.jackson.databind.ObjectMapper;
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class TenantAdministrationIntegrationTest {
     private static final Actor ADMIN = new Actor(TestIdentity.ISSUER, "administrator", true, UUID.randomUUID());
+    private static final Actor CHECKER = new Actor(TestIdentity.ISSUER, "checker", true, UUID.randomUUID());
+    @Autowired com.cbs.approvals.ApprovalService approvals;
+    @Autowired com.cbs.reference.ReferenceDataService reference;
+    @Autowired com.cbs.accounting.ChartService chart;
+    @Autowired com.cbs.products.ProductService products;
+    @Autowired com.cbs.customers.CustomerService customers;
+    @Autowired com.cbs.accounts.AccountService accounts;
+    @Autowired com.cbs.accounts.FundingService funding;
+    @Autowired com.cbs.accounts.OperationService operations;
+    @Autowired com.cbs.accounts.StatementService statements;
+    @Autowired com.cbs.accounting.LedgerService ledger;
+    @Autowired com.cbs.accounting.JournalService journals;
+    @Autowired com.cbs.accounting.DayCloseService days;
+    @Autowired com.cbs.accounting.BankJournalStore bankJournals;
+    @Autowired com.cbs.accounting.AccountingReportService reports;
+    @Autowired BankDatabaseProvisioner bankDatabases;
     @Autowired MockMvc mvc;
     @Autowired ObjectMapper json;
     @Autowired TenantService service;
@@ -57,7 +73,7 @@ class TenantAdministrationIntegrationTest {
     @Autowired com.cbs.access.AccessService access;
     @Autowired com.cbs.access.BranchService branchService;
     @BeforeAll void knownIdentities() {
-        for(String subject:List.of("administrator","operator","operator-a","operator-b")) { access.bootstrap(TestIdentity.ISSUER,subject); }
+        for(String subject:List.of("administrator","checker","operator","operator-a","operator-b")) { access.bootstrap(TestIdentity.ISSUER,subject); }
     }
 
     @DynamicPropertySource
@@ -127,7 +143,7 @@ class TenantAdministrationIntegrationTest {
             Callable<String> task = () -> {
                 start.await();
                 try {
-                    service.update(ADMIN, tenant.id(), new UpdateRequest(0L, "Updated", "hi-IN", "Correct display name"));
+                    service.update(ADMIN, tenant.id(), new UpdateRequest(0L, "Updated", "en-IN", "Correct display name"));
                     return "UPDATED";
                 } catch (TenantException exception) { return exception.code(); }
             };
@@ -160,6 +176,14 @@ class TenantAdministrationIntegrationTest {
 
     @Test void legalEntitiesAndAuditChangesArePreserved() throws Exception {
         Tenant tenant = register("entity-one");
+        var settings=reference.get(ADMIN,tenant.id());
+        var change=new com.cbs.reference.ReferenceModels.Change(settings.version(),List.of(
+                new com.cbs.reference.ReferenceModels.CurrencyRule("INR","HALF_EVEN",true),
+                new com.cbs.reference.ReferenceModels.CurrencyRule("EUR","HALF_EVEN",true)),List.of("en-IN","hi-IN"),"hi-IN",
+                settings.businessTimezone(),settings.businessDate(),settings.weekendDays(),settings.holidays(),"Prepare European entity and language");
+        var pending=approvals.settings(ADMIN,UUID.randomUUID(),tenant.id(),change);
+        approveHttp(pending.id());
+        tenant=service.get(ADMIN,tenant.id());
         LegalEntityInput entity = new LegalEntityInput("Example Europe", "DE", "EUR", "Europe/Berlin");
         Tenant updated = invokeTenant(post("/api/v1/admin/tenants/" + tenant.id() + "/legal-entities"),
                 new AddLegalEntityRequest(tenant.version(), entity, "Add legal entity"));
@@ -168,11 +192,14 @@ class TenantAdministrationIntegrationTest {
                 new UpdateRequest(updated.version(), "बैंक", "hi-IN", "Localize display"));
         assertThat(updated.displayName()).isEqualTo("बैंक");
         assertThat(updated.defaultLanguage()).isEqualTo("hi-IN");
-        mvc.perform(admin(get("/api/v1/admin/tenants/" + tenant.id() + "/audit")))
-                .andExpect(status().isOk()).andExpect(jsonPath("$.items[2].changeDetails.after.displayName").value("बैंक"));
-        assertThatThrownBy(() -> jdbc.update("UPDATE platform.tenant_audit SET reason='rewrite' WHERE tenant_id=?", tenant.id()))
+        mvc.perform(admin(get("/api/v1/admin/tenants/" + tenant.id() + "/audit"))).andExpect(status().isOk());
+        assertThat(service.auditEvents(ADMIN,tenant.id(),100,0).items()).anySatisfy(event->{
+            assertThat(event.action()).isEqualTo("TENANT_UPDATED");assertThat(event.changeDetails().get("after")).asString().contains("बैंक");
+        });
+        UUID tenantId=tenant.id();
+        assertThatThrownBy(() -> jdbc.update("UPDATE platform.tenant_audit SET reason='rewrite' WHERE tenant_id=?", tenantId))
                 .isInstanceOf(DataAccessException.class);
-        assertThatThrownBy(() -> jdbc.update("DELETE FROM platform.tenant_audit WHERE tenant_id=?", tenant.id()))
+        assertThatThrownBy(() -> jdbc.update("DELETE FROM platform.tenant_audit WHERE tenant_id=?", tenantId))
                 .isInstanceOf(DataAccessException.class);
     }
 
@@ -188,7 +215,7 @@ class TenantAdministrationIntegrationTest {
         b = provision(b);
         assertThat(a.status()).isEqualTo(Status.ACTIVE);
         assertThat(b.status()).isEqualTo(Status.ACTIVE);
-        assertThat(a.databaseBinding().schemaVersion()).isEqualTo("1");
+        assertThat(a.databaseBinding().schemaVersion()).isEqualTo("10");
         bankGet(a.id(), "operator-a", true).andExpect(status().isOk())
                 .andExpect(jsonPath("$.tenantId").value(a.id().toString())).andExpect(jsonPath("$.databaseBinding").doesNotExist());
         mvc.perform(get("/api/v1/banks/" + b.id() + "/operational-context")
@@ -298,7 +325,7 @@ class TenantAdministrationIntegrationTest {
         Tenant tenant = register("audit-only");
         Actor invalidAuditActor = new Actor(TestIdentity.ISSUER, "x".repeat(201), true, UUID.randomUUID());
         assertThatThrownBy(() -> service.update(invalidAuditActor, tenant.id(),
-                new UpdateRequest(0L, "Must not persist", "en", "Simulate audit-store failure")))
+                new UpdateRequest(0L, "Must not persist", tenant.defaultLanguage(), "Simulate audit-store failure")))
                 .isInstanceOf(DataAccessException.class);
         Tenant unchanged = service.get(ADMIN, tenant.id());
         assertThat(unchanged.version()).isZero();
@@ -324,8 +351,10 @@ class TenantAdministrationIntegrationTest {
         String token=TestIdentity.token(staff.subject(),false);
         accessMe(token).andExpect(status().isOk()).andExpect(jsonPath("$.staff.id").value(staff.id().toString()));
         var disabled=new com.cbs.access.AccessModels.StaffUpdate(staff.version(),staff.displayName(),staff.email(),false,"Employee leaves");
-        mvc.perform(admin(patch("/api/v1/admin/staff/"+staff.id())).contentType("application/json").content(json.writeValueAsString(disabled)))
-                .andExpect(status().isOk()).andExpect(jsonPath("$.active").value(false));
+        String pending=mvc.perform(admin(patch("/api/v1/admin/staff/"+staff.id())).header("Idempotency-Key",UUID.randomUUID()).contentType("application/json").content(json.writeValueAsString(disabled)))
+                .andExpect(status().isAccepted()).andExpect(jsonPath("$.status").value("PENDING")).andReturn().getResponse().getContentAsString();
+        accessMe(token).andExpect(status().isOk());
+        approveHttp(json.readValue(pending,com.cbs.approvals.ApprovalModels.Request.class).id());
         accessMe(token).andExpect(status().isForbidden()).andExpect(jsonPath("$.code").value("STAFF_DISABLED"));
         access.bootstrap(TestIdentity.ISSUER,staff.subject());
         assertThat(access.staff(staff.id(),false).active()).isFalse();
@@ -435,6 +464,1106 @@ class TenantAdministrationIntegrationTest {
         return mvc.perform(get("/api/v1/banks/"+bank+"/branches/"+branch+"/access?permission="+permission).header("Authorization","Bearer "+token));
     }
 
+    @Test void approvalSubmissionIsRetrySafeAndCannotBeSelfApprovedOrReadAcrossIssuers() throws Exception {
+        var staff=approvalStaff();
+        var input=approvalUpdate(staff,"Reviewed name");
+        UUID key=UUID.randomUUID();
+        var request=approvals.staff(ADMIN,key,staff.id(),input);
+        assertThat(access.staff(staff.id(),false).displayName()).isEqualTo(staff.displayName());
+        assertThat(approvals.staff(ADMIN,key,staff.id(),input).id()).isEqualTo(request.id());
+        assertCode(()->approvals.staff(ADMIN,key,staff.id(),approvalUpdate(staff,"Different name")),"IDEMPOTENCY_CONFLICT");
+        mvc.perform(admin(post("/api/v1/admin/approvals/"+request.id()+"/approve")).contentType("application/json").content("{\"reason\":\"My own request\"}"))
+                .andExpect(status().isForbidden()).andExpect(jsonPath("$.code").value("SELF_APPROVAL_FORBIDDEN"));
+        mvc.perform(get("/api/v1/admin/approvals")).andExpect(status().isUnauthorized());
+        mvc.perform(get("/api/v1/admin/approvals").header("Authorization","Bearer "+TestIdentity.token("operator",false))).andExpect(status().isForbidden());
+        mvc.perform(admin(patch("/api/v1/admin/staff/"+staff.id())).contentType("application/json").content(json.writeValueAsString(input)))
+                .andExpect(status().isBadRequest());
+        var foreign=new Actor("https://different-issuer.test",ADMIN.subject(),true,UUID.randomUUID());
+        assertCode(()->approvals.details(foreign,request.id()),"APPROVAL_NOT_FOUND");
+        assertThat(approvals.list(foreign,com.cbs.approvals.ApprovalModels.Scope.INBOX,null,null,100,0).items()).isEmpty();
+        assertThat(approvals.list(ADMIN,com.cbs.approvals.ApprovalModels.Scope.MINE,null,null,100,0).items()).extracting("id").contains(request.id());
+        approveHttp(request.id());
+        assertThat(access.staff(staff.id(),false).displayName()).isEqualTo("Reviewed name");
+        assertThat(approvals.staff(ADMIN,key,staff.id(),input).status()).isEqualTo(com.cbs.approvals.ApprovalModels.Status.APPROVED);
+        assertThat(approvals.details(ADMIN,request.id()).events()).extracting("action").containsExactly("SUBMITTED","APPROVED");
+        assertThat(approvals.list(ADMIN,com.cbs.approvals.ApprovalModels.Scope.HISTORY,com.cbs.approvals.ApprovalModels.Action.STAFF_UPDATE,null,100,0).items()).extracting("id").contains(request.id());
+        assertThatThrownBy(()->jdbc.update("DELETE FROM platform.approval_event WHERE request_id=?",request.id())).isInstanceOf(DataAccessException.class);
+    }
+
+    @Test void rejectingAndCancellingLeaveTheTargetUnchanged() {
+        var staff=approvalStaff();
+        var first=approvals.staff(ADMIN,UUID.randomUUID(),staff.id(),approvalUpdate(staff,"Rejected name"));
+        var result=approvals.decide(CHECKER,first.id(),com.cbs.approvals.ApprovalModels.Decision.REJECT,"Insufficient evidence");
+        assertThat(result.status()).isEqualTo(com.cbs.approvals.ApprovalModels.Status.REJECTED);
+        assertCode(()->approvals.decide(CHECKER,first.id(),com.cbs.approvals.ApprovalModels.Decision.APPROVE,"Changed mind"),"APPROVAL_ALREADY_DECIDED");
+        var second=approvals.staff(ADMIN,UUID.randomUUID(),staff.id(),approvalUpdate(staff,"Cancelled name"));
+        assertCode(()->approvals.decide(CHECKER,second.id(),com.cbs.approvals.ApprovalModels.Decision.CANCEL,"Not mine"),"ONLY_MAKER_CAN_CANCEL");
+        assertThat(approvals.decide(ADMIN,second.id(),com.cbs.approvals.ApprovalModels.Decision.CANCEL,"Withdraw request").status())
+                .isEqualTo(com.cbs.approvals.ApprovalModels.Status.CANCELLED);
+        assertThat(access.staff(staff.id(),false).version()).isZero();
+    }
+
+    @Test void aStaleApprovalNeverOverwritesALaterChange() {
+        var staff=approvalStaff();
+        var first=approvals.staff(ADMIN,UUID.randomUUID(),staff.id(),approvalUpdate(staff,"First approved value"));
+        var second=approvals.staff(ADMIN,UUID.randomUUID(),staff.id(),approvalUpdate(staff,"Outdated value"));
+        approvals.decide(CHECKER,first.id(),com.cbs.approvals.ApprovalModels.Decision.APPROVE,"Verified");
+        assertThat(approvals.decide(CHECKER,second.id(),com.cbs.approvals.ApprovalModels.Decision.APPROVE,"Verified").status())
+                .isEqualTo(com.cbs.approvals.ApprovalModels.Status.STALE);
+        assertThat(access.staff(staff.id(),false).displayName()).isEqualTo("First approved value");
+        assertThat(access.staff(staff.id(),false).version()).isEqualTo(1);
+        assertThat(approvals.details(ADMIN,second.id()).events()).extracting("action").containsExactly("SUBMITTED","STALE");
+    }
+
+    @Test void concurrentApprovalsApplyOnceAndReturnTheSameDecision() throws Exception {
+        var staff=approvalStaff();
+        var request=approvals.staff(ADMIN,UUID.randomUUID(),staff.id(),approvalUpdate(staff,"Once only"));
+        CyclicBarrier start=new CyclicBarrier(2);
+        try(var executor=Executors.newFixedThreadPool(2)) {
+            Callable<com.cbs.approvals.ApprovalModels.Request> task=()->{start.await();return approvals.decide(CHECKER,request.id(),com.cbs.approvals.ApprovalModels.Decision.APPROVE,"Verified");};
+            var results=executor.invokeAll(List.of(task,task));
+            for(var result:results)assertThat(result.get().status()).isEqualTo(com.cbs.approvals.ApprovalModels.Status.APPROVED);
+        }
+        assertThat(access.staff(staff.id(),false).version()).isEqualTo(1);
+        assertThat(approvals.details(ADMIN,request.id()).events()).hasSize(2);
+    }
+
+    @Test void disabledMakerAndFailedBusinessRulesCannotApplyAnApproval() {
+        var makerStaff=approvalStaff();
+        var target=approvalStaff();
+        var maker=new Actor(ADMIN.issuer(),makerStaff.subject(),true,UUID.randomUUID());
+        var request=approvals.staff(maker,UUID.randomUUID(),target.id(),approvalUpdate(target,"Must not apply"));
+        access.update(ADMIN,makerStaff.id(),new com.cbs.access.AccessModels.StaffUpdate(0L,makerStaff.displayName(),null,false,"Disable maker"));
+        assertCode(()->approvals.decide(CHECKER,request.id(),com.cbs.approvals.ApprovalModels.Decision.APPROVE,"Review"),"MAKER_DISABLED");
+        assertThat(access.staff(target.id(),false).version()).isZero();
+        assertThat(approvals.details(ADMIN,request.id()).events()).hasSize(1);
+        var checker=access.requireAssignable(CHECKER.issuer(),CHECKER.subject());
+        var selfDisable=approvals.staff(ADMIN,UUID.randomUUID(),checker.id(),new com.cbs.access.AccessModels.StaffUpdate(checker.version(),checker.displayName(),null,false,"Disable checker"));
+        assertCode(()->approvals.decide(CHECKER,selfDisable.id(),com.cbs.approvals.ApprovalModels.Decision.APPROVE,"Review"),"SELF_DEACTIVATION_FORBIDDEN");
+        assertThat(approvals.details(ADMIN,selfDisable.id()).request().status()).isEqualTo(com.cbs.approvals.ApprovalModels.Status.PENDING);
+        assertThat(access.staff(checker.id(),false).active()).isTrue();
+        assertThat(approvals.details(ADMIN,selfDisable.id()).events()).hasSize(1);
+    }
+
+    @Test void bankSettingsRequireApprovalAndUseExactCurrencyRounding() throws Exception {
+        Tenant bank=register("reference-main");
+        var initial=reference.get(ADMIN,bank.id());
+        assertThat(initial.currencies()).extracting("code").containsExactly("INR");
+        var change=new com.cbs.reference.ReferenceModels.Change(initial.version(),List.of(
+                new com.cbs.reference.ReferenceModels.CurrencyRule("INR","HALF_EVEN",true),
+                new com.cbs.reference.ReferenceModels.CurrencyRule("JPY","HALF_EVEN",true),
+                new com.cbs.reference.ReferenceModels.CurrencyRule("BHD","HALF_UP",true)),List.of("en-IN","sw"),"sw",
+                "Africa/Nairobi",initial.businessDate(),initial.weekendDays(),List.of(),"Enable bank currencies and Swahili");
+        UUID key=UUID.randomUUID();
+        String body=mvc.perform(admin(put("/api/v1/admin/tenants/"+bank.id()+"/settings")).header("Idempotency-Key",key)
+                .contentType("application/json").content(json.writeValueAsString(change)))
+                .andExpect(status().isAccepted()).andExpect(jsonPath("$.action").value("BANK_SETTINGS"))
+                .andReturn().getResponse().getContentAsString();
+        var request=json.readValue(body,com.cbs.approvals.ApprovalModels.Request.class);
+        assertThat(reference.get(ADMIN,bank.id()).defaultLanguage()).isEqualTo("en-IN");
+        assertCode(()->reference.round(ADMIN,bank.id(),"JPY","2.5"),"CURRENCY_NOT_ENABLED");
+        assertThat(approvals.settings(ADMIN,key,bank.id(),change).id()).isEqualTo(request.id());
+        approveHttp(request.id());
+        assertThat(reference.get(ADMIN,bank.id()).defaultLanguage()).isEqualTo("sw");
+        assertThat(service.get(ADMIN,bank.id()).defaultLanguage()).isEqualTo("sw");
+        assertThat(reference.round(ADMIN,bank.id(),"INR","1.245").roundedAmount()).isEqualTo("1.24");
+        assertThat(reference.round(ADMIN,bank.id(),"JPY","2.5").roundedAmount()).isEqualTo("2");
+        assertThat(reference.round(ADMIN,bank.id(),"BHD","1.2345").roundedAmount()).isEqualTo("1.235");
+        assertThat(reference.round(ADMIN,bank.id(),"BHD","-1.2345").roundedAmount()).isEqualTo("-1.235");
+        assertCode(()->reference.round(ADMIN,bank.id(),"INR","1e1000000"),"INVALID_AMOUNT");
+        assertThat(service.auditEvents(ADMIN,bank.id(),100,0).items()).extracting("action").contains("BANK_SETTINGS_UPDATED");
+        mvc.perform(admin(get("/api/v1/admin/reference-data/catalogue"))).andExpect(status().isOk());
+    }
+
+    @Test void settingsRejectInvalidReferenceDataAndDirectLanguageBypass() throws Exception {
+        Tenant bank=register("reference-guards");
+        var s=reference.get(ADMIN,bank.id());
+        var base=settingsChange(s);
+        var tree=json.valueToTree(base);
+        ((tools.jackson.databind.node.ObjectNode)tree).put("defaultLanguage","fr");
+        assertCode(()->approvals.settings(ADMIN,UUID.randomUUID(),bank.id(),json.treeToValue(tree,com.cbs.reference.ReferenceModels.Change.class)),"DEFAULT_LANGUAGE_REQUIRED");
+        var disabled=new com.cbs.reference.ReferenceModels.Change(s.version(),List.of(new com.cbs.reference.ReferenceModels.CurrencyRule("INR","HALF_EVEN",false)),s.languages(),s.defaultLanguage(),s.businessTimezone(),s.businessDate(),s.weekendDays(),s.holidays(),"Disable functional currency");
+        assertCode(()->approvals.settings(ADMIN,UUID.randomUUID(),bank.id(),disabled),"FUNCTIONAL_CURRENCY_REQUIRED");
+        var invalid=new com.cbs.reference.ReferenceModels.Change(s.version(),List.of(new com.cbs.reference.ReferenceModels.CurrencyRule("ZZZ","HALF_EVEN",true)),s.languages(),s.defaultLanguage(),s.businessTimezone(),s.businessDate(),s.weekendDays(),s.holidays(),"Invalid currency");
+        assertCode(()->approvals.settings(ADMIN,UUID.randomUUID(),bank.id(),invalid),"INVALID_CURRENCY_SETTINGS");
+        assertCode(()->service.update(ADMIN,bank.id(),new UpdateRequest(bank.version(),bank.displayName(),"fr","Bypass approval")),"SETTINGS_APPROVAL_REQUIRED");
+        assertCode(()->service.addLegalEntity(ADMIN,bank.id(),new AddLegalEntityRequest(bank.version(),new LegalEntityInput("USD entity","US","USD","America/New_York"),"New entity")),"CURRENCY_NOT_ENABLED");
+        mvc.perform(admin(put("/api/v1/admin/tenants/"+bank.id()+"/settings")).header("Idempotency-Key",UUID.randomUUID()).contentType("application/json").content("{}"))
+                .andExpect(status().isBadRequest());
+        assertThat(reference.get(ADMIN,bank.id()).version()).isEqualTo(s.version());
+    }
+
+    @Test void bankSettingsAreIsolatedAndMembershipCannotBeForged() throws Exception {
+        Tenant first=register("reference-isolation"),second=register("reference-other");
+        service.setMembership(ADMIN,first.id(),new MembershipRequest(first.version(),"operator-a",BankRole.BANK_AUDITOR,true,"Read own settings"));
+        mvc.perform(get("/api/v1/banks/"+first.id()+"/reference-data").header("Authorization","Bearer "+TestIdentity.token("operator-a",false)))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.bankId").value(first.id().toString()));
+        mvc.perform(get("/api/v1/banks/"+second.id()+"/reference-data").header("Authorization","Bearer "+TestIdentity.token("operator-a",false)).header("X-Tenant-ID",first.id()))
+                .andExpect(status().isForbidden());
+        mvc.perform(get("/api/v1/admin/tenants/"+first.id()+"/settings").header("Authorization","Bearer "+TestIdentity.token("operator-a",false))).andExpect(status().isForbidden());
+        mvc.perform(admin(get("/api/v1/banks/"+second.id()+"/reference-data"))).andExpect(status().isForbidden());
+        var request=approvals.settings(ADMIN,UUID.randomUUID(),first.id(),settingsChange(reference.get(ADMIN,first.id())));
+        approveHttp(request.id());
+        assertThat(reference.get(ADMIN,second.id()).version()).isZero();
+    }
+
+    @Test void staleSettingsApprovalCannotOverwriteBankChanges() {
+        Tenant bank=register("reference-stale");
+        var s=reference.get(ADMIN,bank.id());
+        var request=approvals.settings(ADMIN,UUID.randomUUID(),bank.id(),settingsChange(s));
+        service.update(ADMIN,bank.id(),new UpdateRequest(bank.version(),"Changed bank name",bank.defaultLanguage(),"Update name"));
+        assertThat(approvals.decide(CHECKER,request.id(),com.cbs.approvals.ApprovalModels.Decision.APPROVE,"Review").status()).isEqualTo(com.cbs.approvals.ApprovalModels.Status.STALE);
+        assertThat(reference.get(ADMIN,bank.id()).currencies()).isEqualTo(s.currencies());
+    }
+
+    @Test void calendarsRespectHolidaysWeekendsAndForwardOnlyBusinessDates() throws Exception {
+        Tenant bank=register("reference-calendar");
+        var s=reference.get(ADMIN,bank.id());
+        java.time.LocalDate date=s.businessDate();
+        var holidayDate=com.cbs.reference.ReferenceDataService.nextWorkingDay(date,s.weekendDays(),List.of());
+        var holidays=List.of(new com.cbs.reference.ReferenceModels.Holiday(holidayDate,"Bank holiday"));
+        var change=new com.cbs.reference.ReferenceModels.Change(s.version(),s.currencies(),s.languages(),s.defaultLanguage(),"Africa/Nairobi",date,s.weekendDays(),holidays,"Set bank holiday");
+        approveHttp(approvals.settings(ADMIN,UUID.randomUUID(),bank.id(),change).id());
+        assertThat(reference.day(ADMIN,bank.id(),holidayDate).workingDay()).isFalse();
+        assertThat(reference.day(ADMIN,bank.id(),holidayDate).holiday()).isEqualTo("Bank holiday");
+        var current=reference.get(ADMIN,bank.id());
+        var backwards=new com.cbs.reference.ReferenceModels.Change(current.version(),current.currencies(),current.languages(),current.defaultLanguage(),current.businessTimezone(),date.minusDays(1),current.weekendDays(),current.holidays(),"Backdate");
+        assertCode(()->approvals.settings(ADMIN,UUID.randomUUID(),bank.id(),backwards),"BUSINESS_DATE_BACKWARDS");
+        var nonWorking=new com.cbs.reference.ReferenceModels.Change(current.version(),current.currencies(),current.languages(),current.defaultLanguage(),current.businessTimezone(),holidayDate,current.weekendDays(),current.holidays(),"Use holiday");
+        assertCode(()->approvals.settings(ADMIN,UUID.randomUUID(),bank.id(),nonWorking),"BUSINESS_DATE_NOT_WORKING");
+        var next=reference.day(ADMIN,bank.id(),date).nextWorkingDay();
+        assertThat(next).isAfter(holidayDate);
+        mvc.perform(admin(get("/api/v1/admin/tenants/"+bank.id()+"/calendar-day?date="+holidayDate))).andExpect(status().isOk()).andExpect(jsonPath("$.workingDay").value(false));
+        assertThat(com.cbs.reference.ReferenceDataService.nextWorkingDay(java.time.LocalDate.of(2024,2,28),List.of(5,6),List.of(new com.cbs.reference.ReferenceModels.Holiday(java.time.LocalDate.of(2024,2,29),"Leap holiday"))))
+                .isEqualTo(java.time.LocalDate.of(2024,3,3));
+    }
+
+    @Test void languagePreferencesAreOwnedByTheAuthenticatedUser() throws Exception {
+        var staff=approvalStaff();
+        String token=TestIdentity.token(staff.subject(),false);
+        mvc.perform(put("/api/v1/access/preferences").header("Authorization","Bearer "+token).contentType("application/json").content("{\"language\":\"fr\"}"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.language").value("fr"));
+        mvc.perform(get("/api/v1/access/preferences").header("Authorization","Bearer "+token)).andExpect(status().isOk()).andExpect(jsonPath("$.language").value("fr"));
+        assertThat(reference.preference(ADMIN).language()).isEqualTo("en");
+        assertThat(access.staff(staff.id(),false).version()).isZero();
+        mvc.perform(put("/api/v1/access/preferences").header("Authorization","Bearer "+token).contentType("application/json").content("{\"language\":\"invalid_@@\"}"))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test void chartChangesRequireAnotherAdministratorAndReplaySafely() throws Exception {
+        Tenant bank=chartBank("chart-main");
+        var change=chartChange(bank.id(),null,"1000","Assets",com.cbs.accounting.ChartModels.Category.ASSET,com.cbs.accounting.ChartModels.Kind.GROUP,null,true);
+        UUID key=UUID.randomUUID();
+        String path="/api/v1/admin/tenants/"+bank.id()+"/chart-of-accounts";
+        var pending=json.readValue(mvc.perform(admin(post(path)).header("Idempotency-Key",key).contentType("application/json").content(json.writeValueAsString(change)))
+                .andExpect(status().isAccepted()).andExpect(jsonPath("$.action").value("CHART_ACCOUNT")).andReturn().getResponse().getContentAsString(),com.cbs.approvals.ApprovalModels.Request.class);
+        assertThat(chart.list(ADMIN,bank.id(),"",null,null,null,25,0).total()).isZero();
+        assertCode(()->approvals.decide(ADMIN,pending.id(),com.cbs.approvals.ApprovalModels.Decision.APPROVE,"Self approve"),"SELF_APPROVAL_FORBIDDEN");
+        approveHttp(pending.id());
+        var account=chart.list(ADMIN,bank.id(),"assets",null,true,null,25,0).items().getFirst();
+        assertThat(account.code()).isEqualTo("1000");
+        assertThat(approvals.chart(ADMIN,key,bank.id(),change).id()).isEqualTo(pending.id());
+        assertThat(chart.list(ADMIN,bank.id(),"",null,null,null,25,0).total()).isEqualTo(1);
+        var edit=chartChange(bank.id(),account.id(),"1000","Total assets",account.category(),account.kind(),null,true);
+        var update=approvals.chart(ADMIN,UUID.randomUUID(),bank.id(),edit);
+        assertThat(chart.get(bank.id(),account.id()).name()).isEqualTo("Assets");
+        assertThat(update.beforeValues()).containsEntry("name","Assets");
+        approveHttp(update.id());
+        assertThat(chart.get(bank.id(),account.id()).name()).isEqualTo("Total assets");
+        assertThat(service.auditEvents(ADMIN,bank.id(),100,0).items().stream().filter(a->a.action().equals("CHART_ACCOUNT_CHANGED")).count()).isEqualTo(2);
+        mvc.perform(admin(get(path+"?search=Total&category=ASSET&limit=1"))).andExpect(status().isOk()).andExpect(jsonPath("$.total").value(1)).andExpect(jsonPath("$.items[0].name").value("Total assets"));
+        mvc.perform(admin(get(path+"?offset=1&limit=1"))).andExpect(status().isOk()).andExpect(jsonPath("$.items").isEmpty());
+    }
+
+    @Test void chartEnforcesHierarchyUniquenessAndBankBoundaries() throws Exception {
+        Tenant bank=chartBank("chart-guards"),other=chartBank("chart-other");
+        var rootChange=chartChange(bank.id(),null,"1000","Assets",com.cbs.accounting.ChartModels.Category.ASSET,com.cbs.accounting.ChartModels.Kind.GROUP,null,true);
+        approveHttp(approvals.chart(ADMIN,UUID.randomUUID(),bank.id(),rootChange).id());
+        var root=chart.list(ADMIN,bank.id(),"",null,null,null,25,0).items().getFirst();
+        var child=chartChange(bank.id(),null,"1100","Cash",root.category(),com.cbs.accounting.ChartModels.Kind.POSTING,root.id(),true);
+        approveHttp(approvals.chart(ADMIN,UUID.randomUUID(),bank.id(),child).id());
+        assertCode(()->approvals.chart(ADMIN,UUID.randomUUID(),bank.id(),chartChange(bank.id(),null,"1000","Duplicate",root.category(),root.kind(),null,true)),"CHART_CODE_IN_USE");
+        assertCode(()->approvals.chart(ADMIN,UUID.randomUUID(),other.id(),chartChange(other.id(),null,"1100","Foreign parent",root.category(),root.kind(),root.id(),true)),"CHART_ACCOUNT_NOT_FOUND");
+        assertCode(()->approvals.chart(ADMIN,UUID.randomUUID(),bank.id(),chartChange(bank.id(),null,"2000","Wrong category",com.cbs.accounting.ChartModels.Category.LIABILITY,root.kind(),root.id(),true)),"CHART_INVALID_PARENT");
+        var cash=chart.list(ADMIN,bank.id(),"1100",null,null,null,25,0).items().getFirst();
+        assertCode(()->approvals.chart(ADMIN,UUID.randomUUID(),bank.id(),chartChange(bank.id(),null,"1110","Bad parent",root.category(),root.kind(),cash.id(),true)),"CHART_INVALID_PARENT");
+        assertCode(()->approvals.chart(ADMIN,UUID.randomUUID(),bank.id(),chartChange(bank.id(),root.id(),"1000","Assets",root.category(),root.kind(),null,false)),"CHART_ACTIVE_CHILDREN");
+        assertCode(()->approvals.chart(ADMIN,UUID.randomUUID(),bank.id(),chartChange(bank.id(),root.id(),"9999","Changed code",root.category(),root.kind(),null,true)),"CHART_STRUCTURE_IMMUTABLE");
+        approveHttp(approvals.chart(ADMIN,UUID.randomUUID(),bank.id(),chartChange(bank.id(),cash.id(),cash.code(),cash.name(),cash.category(),cash.kind(),root.id(),false)).id());
+        approveHttp(approvals.chart(ADMIN,UUID.randomUUID(),bank.id(),chartChange(bank.id(),root.id(),root.code(),root.name(),root.category(),root.kind(),null,false)).id());
+        assertCode(()->approvals.chart(ADMIN,UUID.randomUUID(),bank.id(),chartChange(bank.id(),cash.id(),cash.code(),cash.name(),cash.category(),cash.kind(),root.id(),true)),"CHART_INVALID_PARENT");
+        assertThat(chart.list(ADMIN,other.id(),"",null,null,null,25,0).total()).isZero();
+        approveHttp(approvals.chart(ADMIN,UUID.randomUUID(),other.id(),chartChange(other.id(),null,"1000","Other bank assets",root.category(),root.kind(),null,true)).id());
+        assertThat(chart.get(bank.id(),root.id()).name()).isEqualTo("Assets");
+    }
+
+    @Test void chartApiRejectsUnauthorizedInvalidAndInactiveBankChanges() throws Exception {
+        Tenant bank=register("chart-access");
+        String path="/api/v1/admin/tenants/"+bank.id()+"/chart-of-accounts";
+        var input=chartChange(bank.id(),null,"1000","Assets",com.cbs.accounting.ChartModels.Category.ASSET,com.cbs.accounting.ChartModels.Kind.GROUP,null,true);
+        String body=json.writeValueAsString(input);
+        mvc.perform(get(path)).andExpect(status().isUnauthorized());
+        mvc.perform(get(path).header("Authorization","Bearer "+TestIdentity.token("operator",false))).andExpect(status().isForbidden());
+        mvc.perform(post(path).header("Authorization","Bearer "+TestIdentity.token("operator",false)).header("Idempotency-Key",UUID.randomUUID()).contentType("application/json").content(body)).andExpect(status().isForbidden());
+        mvc.perform(admin(post(path)).header("Idempotency-Key",UUID.randomUUID()).contentType("application/json").content(body)).andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("CHART_BANK_NOT_ACTIVE"));
+        mvc.perform(admin(post(path)).contentType("application/json").content(body)).andExpect(status().isBadRequest());
+        for(String invalid:List.of(body.replace("1000","bad code"),body.replace("Assets","   "),body.replace("ASSET","INVALID"),body.replace("\"active\":true","\"active\":null"))) {
+            mvc.perform(admin(post(path)).header("Idempotency-Key",UUID.randomUUID()).contentType("application/json").content(invalid)).andExpect(status().isBadRequest());
+        }
+        mvc.perform(admin(get(path+"?limit=101"))).andExpect(status().isBadRequest());
+    }
+
+    @Test void competingChartApprovalsCannotOverwriteEachOther() throws Exception {
+        Tenant bank=chartBank("chart-race");
+        var input=chartChange(bank.id(),null,"1000","Assets",com.cbs.accounting.ChartModels.Category.ASSET,com.cbs.accounting.ChartModels.Kind.GROUP,null,true);
+        var one=approvals.chart(ADMIN,UUID.randomUUID(),bank.id(),input);
+        var two=approvals.chart(ADMIN,UUID.randomUUID(),bank.id(),input);
+        CyclicBarrier barrier=new CyclicBarrier(2);
+        try(var executor=Executors.newFixedThreadPool(2)) {
+            var results=executor.invokeAll(List.<Callable<com.cbs.approvals.ApprovalModels.Status>>of(
+                    ()->{barrier.await();return approvals.decide(CHECKER,one.id(),com.cbs.approvals.ApprovalModels.Decision.APPROVE,"Approve first").status();},
+                    ()->{barrier.await();return approvals.decide(CHECKER,two.id(),com.cbs.approvals.ApprovalModels.Decision.APPROVE,"Approve second").status();}));
+            assertThat(List.of(results.get(0).get(),results.get(1).get())).containsExactlyInAnyOrder(com.cbs.approvals.ApprovalModels.Status.APPROVED,com.cbs.approvals.ApprovalModels.Status.STALE);
+        }
+        assertThat(chart.list(ADMIN,bank.id(),"",null,null,null,25,0).total()).isEqualTo(1);
+    }
+
+    @Test void chartAccountDecisionAndAuditRollBackTogether() {
+        Tenant bank=chartBank("chart-rollback");
+        var input=chartChange(bank.id(),null,"1000","Assets",com.cbs.accounting.ChartModels.Category.ASSET,com.cbs.accounting.ChartModels.Kind.GROUP,null,true);
+        var pending=approvals.chart(ADMIN,UUID.randomUUID(),bank.id(),input);
+        TransactionTemplate transaction=new TransactionTemplate(transactionManager);
+        transaction.executeWithoutResult(s->{
+            approvals.decide(CHECKER,pending.id(),com.cbs.approvals.ApprovalModels.Decision.APPROVE,"Rollback simulation");
+            assertThat(chart.list(ADMIN,bank.id(),"",null,null,null,25,0).total()).isEqualTo(1);
+            s.setRollbackOnly();
+        });
+        assertThat(chart.list(ADMIN,bank.id(),"",null,null,null,25,0).total()).isZero();
+        assertThat(approvals.details(ADMIN,pending.id()).request().status()).isEqualTo(com.cbs.approvals.ApprovalModels.Status.PENDING);
+        assertThat(approvals.details(ADMIN,pending.id()).events()).hasSize(1);
+        assertThat(service.get(ADMIN,bank.id()).version()).isEqualTo(bank.version());
+        assertThat(service.auditEvents(ADMIN,bank.id(),100,0).items()).noneMatch(a->a.action().equals("CHART_ACCOUNT_CHANGED"));
+    }
+
+    private UUID ledgerBankId;
+    private UUID ledgerOtherId;
+    private Tenant ledgerBank() {
+        if(ledgerBankId==null)ledgerBankId=provision(register("ledger-main")).id();
+        return service.get(ADMIN,ledgerBankId);
+    }
+    private Tenant ledgerOther() {
+        if(ledgerOtherId==null)ledgerOtherId=provision(register("ledger-other")).id();
+        return service.get(ADMIN,ledgerOtherId);
+    }
+    private com.cbs.accounting.ChartModels.Account ledgerPosting(Tenant bank) throws Exception {
+        String code="L"+UUID.randomUUID().toString().replace("-","").substring(0,12).toUpperCase();
+        var change=chartChange(bank.id(),null,code,"Cash posting definition",com.cbs.accounting.ChartModels.Category.ASSET,com.cbs.accounting.ChartModels.Kind.POSTING,null,true);
+        approveHttp(approvals.chart(ADMIN,UUID.randomUUID(),bank.id(),change).id());
+        return chart.list(ADMIN,bank.id(),code,null,null,null,25,0).items().getFirst();
+    }
+    private com.cbs.accounting.LedgerModels.Change ledgerChange(Tenant bank,UUID ledgerId,String code,UUID chartId,String name,boolean active) {
+        return new com.cbs.accounting.LedgerModels.Change(service.get(ADMIN,bank.id()).version(),ledgerId,code,name,chartId,bank.legalEntities().getFirst().id(),"INR",active,"Set up bank ledger");
+    }
+    private long bankLedgerCount(String code) throws Exception {
+        try(var c=TestDatabases.bank("ledger");var s=c.prepareStatement("SELECT count(*) FROM bank.ledger_account WHERE code=?")){
+            s.setString(1,code);try(var r=s.executeQuery()){r.next();return r.getLong(1);}
+        }
+    }
+    @Test void ledgerApprovalAndDeliveryStoreAccountsOnlyInTheirOwnBank() throws Exception {
+        Tenant bank=ledgerBank(),other=ledgerOther();var posting=ledgerPosting(bank);
+        var input=ledgerChange(bank,null,"CASH_INR",posting.id(),"Cash INR",true);UUID key=UUID.randomUUID();
+        String path="/api/v1/admin/tenants/"+bank.id()+"/ledger-accounts";
+        var request=json.readValue(mvc.perform(admin(post(path)).header("Idempotency-Key",key).contentType("application/json").content(json.writeValueAsString(input)))
+                .andExpect(status().isAccepted()).andExpect(jsonPath("$.action").value("LEDGER_ACCOUNT")).andReturn().getResponse().getContentAsString(),com.cbs.approvals.ApprovalModels.Request.class);
+        assertThat(bankLedgerCount("CASH_INR")).isZero();
+        assertCode(()->approvals.decide(ADMIN,request.id(),com.cbs.approvals.ApprovalModels.Decision.APPROVE,"Self review"),"SELF_APPROVAL_FORBIDDEN");
+        approveHttp(request.id());
+        assertThat(bankLedgerCount("CASH_INR")).isZero();
+        assertThat(ledger.list(ADMIN,bank.id(),"CASH_INR",null,null,25,0).items().getFirst().delivery()).isEqualTo("PENDING");
+        ledger.retry(ADMIN,bank.id(),request.id());ledger.retry(ADMIN,bank.id(),request.id());
+        var saved=ledger.list(ADMIN,bank.id(),"CASH_INR","INR",true,25,0).items().getFirst();
+        assertThat(saved.delivery()).isEqualTo("APPLIED");assertThat(bankLedgerCount("CASH_INR")).isEqualTo(1);
+        assertThat(approvals.ledger(ADMIN,key,bank.id(),input).id()).isEqualTo(request.id());
+        assertThat(ledger.list(ADMIN,other.id(),"CASH_INR",null,null,25,0).total()).isZero();
+        try(var c=TestDatabases.bank("ledgerother");var s=c.createStatement();var r=s.executeQuery("SELECT count(*) FROM bank.ledger_account WHERE code='CASH_INR'")){r.next();assertThat(r.getLong(1)).isZero();}
+        assertCode(()->bankDatabases.openOwned(other.id(),"ledger-main"),"DATABASE_OWNERSHIP_MISMATCH");
+        assertCode(()->ledger.retry(ADMIN,other.id(),request.id()),"APPROVAL_NOT_FOUND");
+        var edited=ledgerChange(bank,saved.definition().id(),"CASH_INR",posting.id(),"Cash reserve INR",false);
+        var change=approvals.ledger(ADMIN,UUID.randomUUID(),bank.id(),edited);approveHttp(change.id());ledger.deliver(change.id());
+        var result=ledger.list(ADMIN,bank.id(),"reserve",null,false,25,0).items().getFirst();
+        assertThat(result.definition().version()).isEqualTo(1);assertThat(result.definition().name()).isEqualTo("Cash reserve INR");
+        assertThat(result.definition().active()).isFalse();
+        mvc.perform(admin(get(path+"?search=reserve&currency=INR&active=false"))).andExpect(status().isOk()).andExpect(jsonPath("$.items[0].delivery").value("APPLIED"));
+    }
+    @Test void ledgerDeliverySurvivesControlRollbackAfterBankCommit() throws Exception {
+        Tenant bank=ledgerBank();var posting=ledgerPosting(bank);
+        var input=ledgerChange(bank,null,"RECOVERY_INR",posting.id(),"Recovery ledger",true);
+        var request=approvals.ledger(ADMIN,UUID.randomUUID(),bank.id(),input);
+        new TransactionTemplate(transactionManager).executeWithoutResult(s->{
+            approvals.decide(CHECKER,request.id(),com.cbs.approvals.ApprovalModels.Decision.APPROVE,"Rollback approval");s.setRollbackOnly();
+        });
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM platform.ledger_delivery WHERE request_id=?",Integer.class,request.id())).isZero();
+        assertThat(bankLedgerCount("RECOVERY_INR")).isZero();
+        approveHttp(request.id());
+        new TransactionTemplate(transactionManager).executeWithoutResult(s->{ledger.deliver(request.id());s.setRollbackOnly();});
+        assertThat(bankLedgerCount("RECOVERY_INR")).isEqualTo(1);
+        assertThat(ledger.list(ADMIN,bank.id(),"RECOVERY_INR",null,null,25,0).items().getFirst().delivery()).isEqualTo("PENDING");
+        CyclicBarrier barrier=new CyclicBarrier(2);
+        try(var executor=Executors.newFixedThreadPool(2)){
+            var tasks=executor.invokeAll(List.<Callable<Boolean>>of(()->{barrier.await();ledger.deliver(request.id());return true;},()->{barrier.await();ledger.deliver(request.id());return true;}));
+            for(var task:tasks)assertThat(task.get()).isTrue();
+        }
+        assertThat(ledger.list(ADMIN,bank.id(),"RECOVERY_INR",null,null,25,0).items().getFirst().delivery()).isEqualTo("APPLIED");
+        try(var c=TestDatabases.bank("ledger");var s=c.prepareStatement("SELECT count(*) FROM bank.ledger_event WHERE request_id=?")){
+            s.setObject(1,request.id());try(var r=s.executeQuery()){r.next();assertThat(r.getLong(1)).isEqualTo(1);}
+        }
+    }
+    @Test void ledgerFailureRollsBackBankWriteAndCanBeRetried() throws Exception {
+        Tenant bank=ledgerBank();var posting=ledgerPosting(bank);
+        var request=approvals.ledger(ADMIN,UUID.randomUUID(),bank.id(),ledgerChange(bank,null,"RETRY_INR",posting.id(),"Retry ledger",true));approveHttp(request.id());
+        try(var c=TestDatabases.bank("ledger");var s=c.createStatement()){
+            s.execute("ALTER TABLE bank.ledger_event RENAME TO ledger_event_offline");
+            try{ledger.deliver(request.id());assertThat(bankLedgerCount("RETRY_INR")).isZero();}
+            finally{s.execute("ALTER TABLE bank.ledger_event_offline RENAME TO ledger_event");}
+        }
+        var pending=ledger.list(ADMIN,bank.id(),"RETRY_INR",null,null,25,0).items().getFirst();
+        assertThat(pending.delivery()).isEqualTo("PENDING");assertThat(pending.failureCode()).isEqualTo("LEDGER_DATABASE_UNAVAILABLE");
+        ledger.retry(ADMIN,bank.id(),request.id());assertThat(bankLedgerCount("RETRY_INR")).isEqualTo(1);
+        assertThat(ledger.list(ADMIN,bank.id(),"RETRY_INR",null,null,25,0).items().getFirst().failureCode()).isNull();
+    }
+    @Test void ledgerValidationProtectsBankChartCurrencyAndPendingDependencies() throws Exception {
+        Tenant bank=ledgerBank(),other=ledgerOther();var posting=ledgerPosting(bank);var foreign=ledgerPosting(other);
+        var base=ledgerChange(bank,null,"GUARDS_INR",posting.id(),"Guard ledger",true);
+        assertCode(()->approvals.ledger(ADMIN,UUID.randomUUID(),bank.id(),ledgerChange(bank,null,"FOREIGN",foreign.id(),"Wrong chart",true)),"CHART_ACCOUNT_NOT_FOUND");
+        var wrongEntity=new com.cbs.accounting.LedgerModels.Change(base.expectedVersion(),null,base.code(),base.name(),base.chartAccountId(),other.legalEntities().getFirst().id(),"INR",true,base.reason());
+        assertCode(()->approvals.ledger(ADMIN,UUID.randomUUID(),bank.id(),wrongEntity),"LEGAL_ENTITY_NOT_IN_BANK");
+        var usd=new com.cbs.accounting.LedgerModels.Change(base.expectedVersion(),null,base.code(),base.name(),base.chartAccountId(),base.legalEntityId(),"USD",true,base.reason());
+        assertCode(()->approvals.ledger(ADMIN,UUID.randomUUID(),bank.id(),usd),"CURRENCY_NOT_ENABLED");
+        var request=approvals.ledger(ADMIN,UUID.randomUUID(),bank.id(),base);approveHttp(request.id());
+        assertCode(()->approvals.ledger(ADMIN,UUID.randomUUID(),bank.id(),ledgerChange(bank,null,base.code(),posting.id(),"Duplicate",true)),"LEDGER_CODE_IN_USE");
+        var saved=ledger.list(ADMIN,bank.id(),base.code(),null,null,25,0).items().getFirst().definition();
+        assertCode(()->approvals.ledger(ADMIN,UUID.randomUUID(),bank.id(),ledgerChange(bank,saved.id(),saved.code(),posting.id(),"Rename",true)),"LEDGER_DELIVERY_PENDING");
+        assertCode(()->approvals.chart(ADMIN,UUID.randomUUID(),bank.id(),chartChange(bank.id(),posting.id(),posting.code(),posting.name(),posting.category(),posting.kind(),null,false)),"CHART_USED_BY_LEDGER");
+        ledger.deliver(request.id());
+        var edit=ledgerChange(bank,saved.id(),"NEW_CODE",posting.id(),"Changed structure",true);
+        assertCode(()->approvals.ledger(ADMIN,UUID.randomUUID(),bank.id(),edit),"LEDGER_STRUCTURE_IMMUTABLE");
+        var config=reference.get(ADMIN,bank.id());
+        var rules=new java.util.ArrayList<>(config.currencies());rules.add(new com.cbs.reference.ReferenceModels.CurrencyRule("USD","HALF_EVEN",true));
+        var enable=new com.cbs.reference.ReferenceModels.Change(config.version(),rules,config.languages(),config.defaultLanguage(),config.businessTimezone(),config.businessDate(),config.weekendDays(),config.holidays(),"Enable USD");
+        approveHttp(approvals.settings(ADMIN,UUID.randomUUID(),bank.id(),enable).id());
+        var usdInput=new com.cbs.accounting.LedgerModels.Change(service.get(ADMIN,bank.id()).version(),null,"GUARDS_USD","USD ledger",posting.id(),base.legalEntityId(),"USD",true,"Create USD ledger");
+        approveHttp(approvals.ledger(ADMIN,UUID.randomUUID(),bank.id(),usdInput).id());
+        var now=reference.get(ADMIN,bank.id());
+        var disable=new com.cbs.reference.ReferenceModels.Change(now.version(),config.currencies(),now.languages(),now.defaultLanguage(),now.businessTimezone(),now.businessDate(),now.weekendDays(),now.holidays(),"Remove USD");
+        assertCode(()->approvals.settings(ADMIN,UUID.randomUUID(),bank.id(),disable),"CURRENCY_USED_BY_LEDGER");
+    }
+    @Test void ledgerApiChecksAuthorizationAndStaleApprovals() throws Exception {
+        Tenant bank=ledgerBank();var posting=ledgerPosting(bank);String path="/api/v1/admin/tenants/"+bank.id()+"/ledger-accounts";
+        var input=ledgerChange(bank,null,"STALE_INR",posting.id(),"Stale ledger",true);String body=json.writeValueAsString(input);
+        mvc.perform(get(path)).andExpect(status().isUnauthorized());
+        mvc.perform(get(path).header("Authorization","Bearer "+TestIdentity.token("operator",false))).andExpect(status().isForbidden());
+        mvc.perform(post(path).header("Authorization","Bearer "+TestIdentity.token("operator",false)).header("Idempotency-Key",UUID.randomUUID()).contentType("application/json").content(body)).andExpect(status().isForbidden());
+        mvc.perform(admin(post(path)).header("Idempotency-Key",UUID.randomUUID()).contentType("application/json").content(body.replace("STALE_INR","invalid code"))).andExpect(status().isBadRequest());
+        var request=approvals.ledger(ADMIN,UUID.randomUUID(),bank.id(),input);
+        Tenant latest=service.get(ADMIN,bank.id());service.update(ADMIN,bank.id(),new UpdateRequest(latest.version(),"Renamed bank",latest.defaultLanguage(),"Bank update"));
+        assertThat(approvals.decide(CHECKER,request.id(),com.cbs.approvals.ApprovalModels.Decision.APPROVE,"Review").status()).isEqualTo(com.cbs.approvals.ApprovalModels.Status.STALE);
+        assertThat(bankLedgerCount("STALE_INR")).isZero();
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM platform.ledger_delivery WHERE request_id=?",Integer.class,request.id())).isZero();
+    }
+    @Test void existingBankUpgradePreservesOwnershipAndIsRetryable() throws Exception {
+        Tenant bank=register("ledger-upgrade");
+        // Emulate a bank provisioned by the previous release, without ledger tables.
+        try(var c=TestDatabases.bank("ledgerupgrade");var s=c.createStatement()){
+            s.execute("CREATE SCHEMA cbs_identity");s.execute("CREATE TABLE cbs_identity.owner(singleton boolean PRIMARY KEY,tenant_id uuid NOT NULL)");
+            try(var p=c.prepareStatement("INSERT INTO cbs_identity.owner VALUES (true,?)")){p.setObject(1,bank.id());p.executeUpdate();}
+            org.flywaydb.core.Flyway.configure().dataSource(new org.springframework.jdbc.datasource.SingleConnectionDataSource(c,true))
+                    .defaultSchema("bank").schemas("bank").locations("classpath:db/bank-migration").target("1").load().migrate();
+        }
+        jdbc.update("UPDATE platform.tenant SET status='ACTIVE' WHERE id=?",bank.id());
+        assertThat(ledger.list(ADMIN,bank.id(),"",null,null,25,0).storageReady()).isFalse();
+        ledger.initialize(ADMIN,bank.id(),new ChangeRequest(0L,"Prepare ledgers"));
+        assertThat(ledger.list(ADMIN,bank.id(),"",null,null,25,0).storageReady()).isTrue();
+        ledger.initialize(ADMIN,bank.id(),new ChangeRequest(service.get(ADMIN,bank.id()).version(),"Recheck upgrade"));
+        assertThat(service.get(ADMIN,bank.id()).databaseBinding().schemaVersion()).isEqualTo("10");
+    }
+
+    private List<com.cbs.accounting.LedgerModels.Definition> journalLedgers(Tenant bank) throws Exception {
+        var posting=ledgerPosting(bank);
+        var result=new java.util.ArrayList<com.cbs.accounting.LedgerModels.Definition>();
+        for(int n=0;n<2;n++){
+            String code="J"+UUID.randomUUID().toString().replace("-","").substring(0,16).toUpperCase();
+            var request=approvals.ledger(ADMIN,UUID.randomUUID(),bank.id(),ledgerChange(bank,null,code,posting.id(),"Journal test ledger",true));
+            approveHttp(request.id());ledger.deliver(request.id());
+            result.add(ledger.list(ADMIN,bank.id(),code,null,null,25,0).items().getFirst().definition());
+        }
+        return result;
+    }
+    private com.cbs.accounting.JournalModels.Change journalChange(Tenant bank,List<com.cbs.accounting.LedgerModels.Definition> accounts,String amount){
+        return new com.cbs.accounting.JournalModels.Change(service.get(ADMIN,bank.id()).version(),"TEST-"+UUID.randomUUID(),"Test journal",
+                reference.get(ADMIN,bank.id()).businessDate(),bank.legalEntities().getFirst().id(),"INR",
+                List.of(new com.cbs.accounting.JournalModels.Line(accounts.get(0).id(),com.cbs.accounting.JournalModels.Side.DEBIT,amount),new com.cbs.accounting.JournalModels.Line(accounts.get(1).id(),com.cbs.accounting.JournalModels.Side.CREDIT,amount)),null,"Verify journal posting");
+    }
+    private String journalBalance(UUID id) throws Exception {
+        try(var c=TestDatabases.bank("ledger");var s=c.prepareStatement("SELECT debit-credit FROM bank.ledger_balance WHERE ledger_id=?")){
+            s.setObject(1,id);try(var r=s.executeQuery()){return r.next()?r.getBigDecimal(1).stripTrailingZeros().toPlainString():"0";}
+        }
+    }
+    @Test void journalApprovalPostingAndReversalAreAuditedAndIdempotent() throws Exception {
+        Tenant bank=ledgerBank();var accounts=journalLedgers(bank);var input=journalChange(bank,accounts,"9007199254740993.17");UUID key=UUID.randomUUID();
+        String path="/api/v1/admin/tenants/"+bank.id()+"/journals";
+        var request=json.readValue(mvc.perform(admin(post(path)).header("Idempotency-Key",key).contentType("application/json").content(json.writeValueAsString(input)))
+                .andExpect(status().isAccepted()).andExpect(jsonPath("$.action").value("JOURNAL_POST")).andReturn().getResponse().getContentAsString(),com.cbs.approvals.ApprovalModels.Request.class);
+        assertThat(journalBalance(accounts.get(0).id())).isEqualTo("0");
+        assertCode(()->approvals.decide(ADMIN,request.id(),com.cbs.approvals.ApprovalModels.Decision.APPROVE,"Self"),"SELF_APPROVAL_FORBIDDEN");
+        approveHttp(request.id());assertThat(journalBalance(accounts.get(0).id())).isEqualTo("0");
+        var a=accounts.getFirst();
+        assertCode(()->approvals.ledger(ADMIN,UUID.randomUUID(),bank.id(),ledgerChange(bank,a.id(),a.code(),a.chartAccountId(),a.name(),false)),"LEDGER_JOURNAL_PENDING");
+        journals.retry(ADMIN,bank.id(),request.id());journals.retry(ADMIN,bank.id(),request.id());
+        assertThat(journalBalance(a.id())).isEqualTo("9007199254740993.17");
+        assertThat(journalBalance(accounts.get(1).id())).isEqualTo("-9007199254740993.17");
+        assertThat(approvals.journal(ADMIN,key,bank.id(),input).id()).isEqualTo(request.id());
+        assertCode(()->approvals.journal(ADMIN,UUID.randomUUID(),bank.id(),input),"JOURNAL_REFERENCE_IN_USE");
+        assertCode(()->approvals.ledger(ADMIN,UUID.randomUUID(),bank.id(),ledgerChange(bank,a.id(),a.code(),a.chartAccountId(),a.name(),false)),"LEDGER_BALANCE_NOT_ZERO");
+        mvc.perform(admin(get(path+"/"+request.id()))).andExpect(status().isOk()).andExpect(jsonPath("$.lines[0].amount").value("9007199254740993.17"));
+        assertThat(journals.list(ADMIN,bank.id(),100,0).items()).anyMatch(i->i.entry().id().equals(request.id())&&i.postingStatus().equals("POSTED"));
+        UUID reversalKey=UUID.randomUUID();var reverseInput=new com.cbs.accounting.JournalModels.Reversal(service.get(ADMIN,bank.id()).version(),"REV-"+UUID.randomUUID(),"Reverse erroneous entry");
+        var reversal=approvals.reverseJournal(ADMIN,reversalKey,bank.id(),request.id(),reverseInput);approveHttp(reversal.id());journals.deliver(reversal.id());
+        assertThat(journalBalance(a.id())).isEqualTo("0");assertThat(journalBalance(accounts.get(1).id())).isEqualTo("0");
+        assertThat(journals.posted(ADMIN,bank.id(),reversal.id()).reversalOf()).isEqualTo(request.id());
+        assertThat(approvals.reverseJournal(ADMIN,reversalKey,bank.id(),request.id(),reverseInput).id()).isEqualTo(reversal.id());
+        assertCode(()->approvals.reverseJournal(ADMIN,UUID.randomUUID(),bank.id(),request.id(),reverseInput),"JOURNAL_REFERENCE_IN_USE");
+        assertCode(()->approvals.reverseJournal(ADMIN,UUID.randomUUID(),bank.id(),reversal.id(),reverseInput),"JOURNAL_REVERSAL_INVALID");
+        try(var c=TestDatabases.bank("ledger");var s=c.createStatement()){
+            assertThatThrownBy(()->s.executeUpdate("UPDATE bank.journal SET reference='tamper' WHERE id='"+request.id()+"'")).isInstanceOf(SQLException.class);
+            assertThatThrownBy(()->s.executeUpdate("DELETE FROM bank.journal_line WHERE journal_id='"+request.id()+"'")).isInstanceOf(SQLException.class);
+            assertThatThrownBy(()->s.executeUpdate("INSERT INTO bank.journal_line VALUES ('"+request.id()+"',99,'"+a.id()+"','DEBIT',1)")).isInstanceOf(SQLException.class);
+        }
+        assertThat(service.auditEvents(ADMIN,bank.id(),100,0).items()).anyMatch(e->e.action().equals("JOURNAL_POSTED"));
+    }
+    @Test void journalBankCommitSurvivesLostAcknowledgementAndConcurrentRetries() throws Exception {
+        Tenant bank=ledgerBank();var accounts=journalLedgers(bank);var input=journalChange(bank,accounts,"0.10");var request=approvals.journal(ADMIN,UUID.randomUUID(),bank.id(),input);
+        new TransactionTemplate(transactionManager).executeWithoutResult(s->{approvals.decide(CHECKER,request.id(),com.cbs.approvals.ApprovalModels.Decision.APPROVE,"Roll back decision");s.setRollbackOnly();});
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM platform.journal_delivery WHERE request_id=?",Integer.class,request.id())).isZero();
+        approveHttp(request.id());
+        new TransactionTemplate(transactionManager).executeWithoutResult(s->{journals.deliver(request.id());s.setRollbackOnly();});
+        assertThat(journalBalance(accounts.get(0).id())).isEqualTo("0.1");
+        assertThat(jdbc.queryForObject("SELECT completed FROM platform.journal_delivery WHERE request_id=?",Boolean.class,request.id())).isFalse();
+        CyclicBarrier barrier=new CyclicBarrier(2);
+        try(var executor=Executors.newFixedThreadPool(2)){
+            var tasks=executor.invokeAll(List.<Callable<Boolean>>of(()->{barrier.await();journals.deliver(request.id());return true;},()->{barrier.await();journals.deliver(request.id());return true;}));
+            for(var task:tasks)assertThat(task.get()).isTrue();
+        }
+        assertThat(journalBalance(accounts.get(0).id())).isEqualTo("0.1");
+        var second=approvals.journal(ADMIN,UUID.randomUUID(),bank.id(),journalChange(bank,accounts,"0.20"));approveHttp(second.id());
+        var third=approvals.journal(ADMIN,UUID.randomUUID(),bank.id(),journalChange(bank,accounts,"0.30"));approveHttp(third.id());
+        try(var executor=Executors.newFixedThreadPool(2)){
+            var tasks=executor.invokeAll(List.<Callable<Boolean>>of(()->{journals.deliver(second.id());return true;},()->{journals.deliver(third.id());return true;}));
+            for(var task:tasks)assertThat(task.get()).isTrue();
+        }
+        assertThat(journalBalance(accounts.get(0).id())).isEqualTo("0.6");assertThat(journalBalance(accounts.get(1).id())).isEqualTo("-0.6");
+    }
+    @Test void journalFailureRollsBackAllLinesAndBalances() throws Exception {
+        Tenant bank=ledgerBank();var accounts=journalLedgers(bank);var request=approvals.journal(ADMIN,UUID.randomUUID(),bank.id(),journalChange(bank,accounts,"123.45"));approveHttp(request.id());
+        try(var c=TestDatabases.bank("ledger");var s=c.createStatement()){
+            // Force failure on the second line after the first line's balance update.
+            s.execute("ALTER TABLE bank.journal_line ADD CONSTRAINT simulate_failure CHECK(side='DEBIT') NOT VALID");
+            try{journals.deliver(request.id());assertThat(journalBalance(accounts.get(0).id())).isEqualTo("0");assertCode(()->journals.posted(ADMIN,bank.id(),request.id()),"JOURNAL_NOT_POSTED");}
+            finally{s.execute("ALTER TABLE bank.journal_line DROP CONSTRAINT simulate_failure");}
+        }
+        assertThat(jdbc.queryForObject("SELECT failure_code FROM platform.journal_delivery WHERE request_id=?",String.class,request.id())).isEqualTo("JOURNAL_DATABASE_UNAVAILABLE");
+        journals.retry(ADMIN,bank.id(),request.id());assertThat(journalBalance(accounts.get(0).id())).isEqualTo("123.45");
+    }
+    @Test void journalValidationEnforcesScopePrecisionBalanceDateAndAccess() throws Exception {
+        Tenant bank=ledgerBank(),other=ledgerOther();var accounts=journalLedgers(bank);var input=journalChange(bank,accounts,"10.00");String path="/api/v1/admin/tenants/"+bank.id()+"/journals";
+        mvc.perform(get(path)).andExpect(status().isUnauthorized());
+        mvc.perform(get(path).header("Authorization","Bearer "+TestIdentity.token("operator",false))).andExpect(status().isForbidden());
+        mvc.perform(post(path).header("Authorization","Bearer "+TestIdentity.token("operator",false)).header("Idempotency-Key",UUID.randomUUID()).contentType("application/json").content(json.writeValueAsString(input))).andExpect(status().isForbidden());
+        for(String amount:List.of("0","-1","1.001","1e2","1000000000000000000.00"))assertCode(()->approvals.journal(ADMIN,UUID.randomUUID(),bank.id(),journalChange(bank,accounts,amount)),"JOURNAL_AMOUNT_INVALID");
+        String body=json.writeValueAsString(input);
+        mvc.perform(admin(post(path)).header("Idempotency-Key",UUID.randomUUID()).contentType("application/json").content(body.replaceFirst("10.00","10.01"))).andExpect(status().isBadRequest()).andExpect(jsonPath("$.code").value("JOURNAL_UNBALANCED"));
+        mvc.perform(admin(post(path)).header("Idempotency-Key",UUID.randomUUID()).contentType("application/json").content(body.replace(input.businessDate().toString(),input.businessDate().minusDays(1).toString()))).andExpect(status().isBadRequest()).andExpect(jsonPath("$.code").value("JOURNAL_BUSINESS_DATE_INVALID"));
+        mvc.perform(admin(post(path)).header("Idempotency-Key",UUID.randomUUID()).contentType("application/json").content(body.replace(input.legalEntityId().toString(),other.legalEntities().getFirst().id().toString()))).andExpect(status().isBadRequest()).andExpect(jsonPath("$.code").value("LEGAL_ENTITY_NOT_IN_BANK"));
+        var foreign=journalLedgers(other);
+        mvc.perform(admin(post(path)).header("Idempotency-Key",UUID.randomUUID()).contentType("application/json").content(body.replace(accounts.getFirst().id().toString(),foreign.getFirst().id().toString()))).andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("JOURNAL_LEDGER_NOT_READY"));
+        var pending=approvals.journal(ADMIN,UUID.randomUUID(),bank.id(),input);
+        Tenant latest=service.get(ADMIN,bank.id());service.update(ADMIN,bank.id(),new UpdateRequest(latest.version(),"Journal test renamed bank",latest.defaultLanguage(),"Change configuration"));
+        assertThat(approvals.decide(CHECKER,pending.id(),com.cbs.approvals.ApprovalModels.Decision.APPROVE,"Review old request").status()).isEqualTo(com.cbs.approvals.ApprovalModels.Status.STALE);
+        var valid=approvals.journal(ADMIN,UUID.randomUUID(),bank.id(),journalChange(bank,accounts,"7.25"));approveHttp(valid.id());journals.deliver(valid.id());
+        assertCode(()->journals.posted(ADMIN,other.id(),valid.id()),"JOURNAL_NOT_POSTED");
+        assertCode(()->journals.retry(ADMIN,other.id(),valid.id()),"APPROVAL_NOT_FOUND");
+        assertThat(journals.balances(ADMIN,other.id(),100,0).items()).noneMatch(b->b.ledgerId().equals(accounts.getFirst().id()));
+    }
+
+    @Test void reportsUsePostedBusinessDatesAndExactStatementBalances() throws Exception {
+        Tenant bank=ledgerBank();var accounts=journalLedgers(bank);var input=journalChange(bank,accounts,"9007199254740993.17");
+        var request=approvals.journal(ADMIN,UUID.randomUUID(),bank.id(),input);approveHttp(request.id());
+        var kind=com.cbs.accounting.AccountingReportService.Kind.TRIAL_BALANCE;
+        var pending=reports.generate(ADMIN,bank.id(),kind,input.legalEntityId(),"INR",null,input.businessDate(),null);
+        assertThat(pending.rows().stream().filter(r->r.getFirst().equals(accounts.getFirst().code())).findFirst().orElseThrow().get(4)).isEqualTo("0");
+        // Report reads bank commits even when the control acknowledgement was lost.
+        new TransactionTemplate(transactionManager).executeWithoutResult(s->{journals.deliver(request.id());s.setRollbackOnly();});
+        var trial=reports.generate(ADMIN,bank.id(),kind,input.legalEntityId(),"INR",null,input.businessDate(),null);
+        assertThat(trial.reconciled()).isTrue();
+        assertThat(trial.rows().stream().filter(r->r.getFirst().equals(accounts.getFirst().code())).findFirst().orElseThrow().get(4)).isEqualTo("9007199254740993.17");
+        var earlier=reports.generate(ADMIN,bank.id(),kind,input.legalEntityId(),"INR",null,input.businessDate().minusDays(1),null);
+        assertThat(earlier.rows().stream().filter(r->r.getFirst().equals(accounts.getFirst().code())).findFirst().orElseThrow().get(4)).isEqualTo("0");
+        var statement=reports.generate(ADMIN,bank.id(),com.cbs.accounting.AccountingReportService.Kind.LEDGER_STATEMENT,input.legalEntityId(),"INR",input.businessDate(),input.businessDate(),accounts.getFirst().id());
+        assertThat(statement.rows()).hasSize(1);assertThat(statement.summary()).containsEntry("Opening net debit","0").containsEntry("Closing net debit","9007199254740993.17");
+        var nextDay=reports.generate(ADMIN,bank.id(),com.cbs.accounting.AccountingReportService.Kind.LEDGER_STATEMENT,input.legalEntityId(),"INR",input.businessDate().plusDays(1),input.businessDate().plusDays(1),accounts.getFirst().id());
+        assertThat(nextDay.rows()).isEmpty();assertThat(nextDay.summary()).containsEntry("Opening net debit","9007199254740993.17").containsEntry("Closing net debit","9007199254740993.17");
+        journals.deliver(request.id());
+        var reverse=approvals.reverseJournal(ADMIN,UUID.randomUUID(),bank.id(),request.id(),new com.cbs.accounting.JournalModels.Reversal(service.get(ADMIN,bank.id()).version(),"RPT-REV-"+UUID.randomUUID(),"Test statement reversal"));approveHttp(reverse.id());journals.deliver(reverse.id());
+        var reversed=reports.generate(ADMIN,bank.id(),com.cbs.accounting.AccountingReportService.Kind.LEDGER_STATEMENT,input.legalEntityId(),"INR",input.businessDate(),input.businessDate(),accounts.getFirst().id());
+        assertThat(reversed.rows()).hasSize(2);assertThat(reversed.summary()).containsEntry("Closing net debit","0");assertThat(reversed.rows().getLast().get(4)).isEqualTo(request.id().toString());
+    }
+    @Test void reconciliationFindsTurnoverDriftEvenWhenNetBalanceMatches() throws Exception {
+        Tenant bank=ledgerBank();var accounts=journalLedgers(bank);var input=journalChange(bank,accounts,"31.25");var request=approvals.journal(ADMIN,UUID.randomUUID(),bank.id(),input);approveHttp(request.id());journals.deliver(request.id());
+        var kind=com.cbs.accounting.AccountingReportService.Kind.RECONCILIATION;
+        assertThat(reports.generate(ADMIN,bank.id(),kind,input.legalEntityId(),"INR",null,null,null).reconciled()).isTrue();
+        try(var c=TestDatabases.bank("ledger");var s=c.prepareStatement("UPDATE bank.ledger_balance SET debit=debit+?,credit=credit+? WHERE ledger_id=?")){
+            s.setInt(1,1);s.setInt(2,1);s.setObject(3,accounts.getFirst().id());s.executeUpdate();
+            try{
+                var report=reports.generate(ADMIN,bank.id(),kind,input.legalEntityId(),"INR",null,null,null);
+                assertThat(report.reconciled()).isFalse();assertThat(report.summary()).containsEntry("Mismatched accounts","1");
+                var row=report.rows().stream().filter(r->r.getFirst().equals(accounts.getFirst().code())).findFirst().orElseThrow();
+                assertThat(row.get(4)).isEqualTo("1");assertThat(row.get(7)).isEqualTo("1");assertThat(row.get(8)).isEqualTo("MISMATCH");
+                assertThat(reports.generate(ADMIN,bank.id(),kind,input.legalEntityId(),"INR",null,null,null).reconciled()).isFalse();
+            }finally{s.setInt(1,-1);s.setInt(2,-1);s.executeUpdate();}
+        }
+        assertThat(reports.generate(ADMIN,bank.id(),kind,input.legalEntityId(),"INR",null,null,null).reconciled()).isTrue();
+    }
+    @Test void reportApiEnforcesAccessScopeFiltersAndCsvResponse() throws Exception {
+        Tenant bank=ledgerBank(),other=ledgerOther();var accounts=journalLedgers(bank);var entity=bank.legalEntities().getFirst().id();
+        String path="/api/v1/admin/tenants/"+bank.id()+"/accounting-reports?kind=TRIAL_BALANCE&legalEntityId="+entity+"&currency=INR&toDate=2026-10-05";
+        mvc.perform(get(path)).andExpect(status().isUnauthorized());
+        mvc.perform(get(path).header("Authorization","Bearer "+TestIdentity.token("operator",false))).andExpect(status().isForbidden());
+        mvc.perform(admin(get(path))).andExpect(status().isOk()).andExpect(header().string("Cache-Control","no-store"));
+        mvc.perform(admin(get(path+"&csv=true"))).andExpect(status().isOk()).andExpect(header().string("Content-Disposition","attachment; filename=accounting-report.csv")).andExpect(content().contentTypeCompatibleWith("text/csv"));
+        mvc.perform(admin(get(path.replace(entity.toString(),other.legalEntities().getFirst().id().toString())))).andExpect(status().isBadRequest());
+        mvc.perform(admin(get(path.replace("2026-10-05","1800-01-01")))).andExpect(status().isBadRequest());
+        var kind=com.cbs.accounting.AccountingReportService.Kind.LEDGER_STATEMENT;
+        var day=java.time.LocalDate.of(2026,10,5);
+        assertCode(()->reports.generate(ADMIN,other.id(),kind,other.legalEntities().getFirst().id(),"INR",day,day,accounts.getFirst().id()),"LEDGER_NOT_FOUND");
+        assertCode(()->reports.generate(ADMIN,bank.id(),kind,entity,"INR",day.plusDays(1),day,accounts.getFirst().id()),"REPORT_FILTER_INVALID");
+        assertCode(()->reports.generate(ADMIN,bank.id(),kind,entity,"USD",day,day,accounts.getFirst().id()),"LEDGER_NOT_FOUND");
+        assertThat(reports.generate(ADMIN,bank.id(),com.cbs.accounting.AccountingReportService.Kind.TRIAL_BALANCE,entity,"JPY",null,day,null).rows()).isEmpty();
+    }
+
+    private com.cbs.accounting.DayCloseModels.Change closeChange(Tenant bank){
+        var s=reference.get(ADMIN,bank.id());return new com.cbs.accounting.DayCloseModels.Change(service.get(ADMIN,bank.id()).version(),s.businessDate(),com.cbs.reference.ReferenceDataService.nextWorkingDay(s.businessDate(),s.weekendDays(),s.holidays()),"Close reconciled business day");
+    }
+    @Test void dayCloseRequiresApprovalFreezesPostingsAndRecoversAfterBankCommit() throws Exception {
+        Tenant bank=provision(register("day-main"));var s=reference.get(ADMIN,bank.id());
+        var friday=s.businessDate().with(java.time.temporal.TemporalAdjusters.nextOrSame(java.time.DayOfWeek.FRIDAY));
+        var calendar=new com.cbs.reference.ReferenceModels.Change(s.version(),s.currencies(),s.languages(),s.defaultLanguage(),s.businessTimezone(),friday,List.of(6,7),List.of(new com.cbs.reference.ReferenceModels.Holiday(friday.plusDays(3),"Monday holiday")),"Prepare closing test calendar");
+        approveHttp(approvals.settings(ADMIN,UUID.randomUUID(),bank.id(),calendar).id());
+        var accounts=journalLedgers(bank);var journal=journalChange(bank,accounts,"20.25");var posting=approvals.journal(ADMIN,UUID.randomUUID(),bank.id(),journal);approveHttp(posting.id());journals.deliver(posting.id());
+        var input=closeChange(bank);assertThat(input.nextBusinessDate()).isEqualTo(friday.plusDays(4));UUID key=UUID.randomUUID();
+        var request=approvals.closeDay(ADMIN,key,bank.id(),input);
+        assertCode(()->approvals.decide(ADMIN,request.id(),com.cbs.approvals.ApprovalModels.Decision.APPROVE,"Self review"),"SELF_APPROVAL_FORBIDDEN");
+        new TransactionTemplate(transactionManager).executeWithoutResult(t->{approvals.decide(CHECKER,request.id(),com.cbs.approvals.ApprovalModels.Decision.APPROVE,"Rollback approval");t.setRollbackOnly();});
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM platform.business_day_close WHERE request_id=?",Integer.class,request.id())).isZero();
+        approveHttp(request.id());
+        assertCode(()->approvals.journal(ADMIN,UUID.randomUUID(),bank.id(),journalChange(bank,accounts,"1")),"DAY_CLOSE_IN_PROGRESS");
+        var account=accounts.getFirst();assertCode(()->approvals.ledger(ADMIN,UUID.randomUUID(),bank.id(),ledgerChange(bank,account.id(),account.code(),account.chartAccountId(),"Renamed",true)),"DAY_CLOSE_IN_PROGRESS");
+        assertCode(()->approvals.settings(ADMIN,UUID.randomUUID(),bank.id(),settingsChange(reference.get(ADMIN,bank.id()))),"DAY_CLOSE_IN_PROGRESS");
+        new TransactionTemplate(transactionManager).executeWithoutResult(t->{days.deliver(request.id());t.setRollbackOnly();});
+        var waiting=days.dashboard(ADMIN,bank.id(),25,0);assertThat(waiting.businessDate()).isEqualTo(friday);assertThat(waiting.closedThrough()).isEqualTo(friday);assertThat(waiting.blockers()).contains("DAY_CLOSE_IN_PROGRESS");
+        CyclicBarrier barrier=new CyclicBarrier(2);
+        try(var executor=Executors.newFixedThreadPool(2)){
+            var tasks=executor.invokeAll(List.<Callable<Boolean>>of(()->{barrier.await();days.retry(ADMIN,bank.id(),request.id());return true;},()->{barrier.await();days.retry(ADMIN,bank.id(),request.id());return true;}));for(var task:tasks)assertThat(task.get()).isTrue();
+        }
+        var done=days.dashboard(ADMIN,bank.id(),25,0);assertThat(done.businessDate()).isEqualTo(friday.plusDays(4));assertThat(done.history().getFirst().status()).isEqualTo("CLOSED");
+        assertThat(done.history().getFirst().totals().getFirst().debitBalance()).isEqualTo("20.25");assertThat(done.history().getFirst().totals().getFirst().creditBalance()).isEqualTo("20.25");
+        assertThat(approvals.closeDay(ADMIN,key,bank.id(),input).id()).isEqualTo(request.id());
+        var staleEntry=new com.cbs.accounting.JournalModels.Entry(UUID.randomUUID(),bank.id(),"LATE-"+UUID.randomUUID(),"Late write",friday,journal.legalEntityId(),"INR",journal.lines(),null);
+        assertCode(()->bankJournals.post(service.get(ADMIN,bank.id()),new com.cbs.accounting.JournalModels.Dispatch(staleEntry,"administrator",TestIdentity.ISSUER,"checker",UUID.randomUUID())),"JOURNAL_DATABASE_UNAVAILABLE");
+        try(var c=TestDatabases.bank("dayclose");var st=c.createStatement();var r=st.executeQuery("SELECT count(*) FROM bank.business_day_close")){r.next();assertThat(r.getInt(1)).isEqualTo(1);}
+        var nextPosting=approvals.journal(ADMIN,UUID.randomUUID(),bank.id(),journalChange(bank,accounts,"1"));approveHttp(nextPosting.id());journals.deliver(nextPosting.id());assertThat(journals.posted(ADMIN,bank.id(),nextPosting.id()).businessDate()).isEqualTo(friday.plusDays(4));
+        assertThat(service.auditEvents(ADMIN,bank.id(),100,0).items()).anyMatch(a->a.action().equals("BUSINESS_DAY_CLOSED"));
+    }
+    @Test void dayCloseBlocksPendingWorkAndRechecksAtApproval() throws Exception {
+        Tenant bank=provision(register("day-guards"));var accounts=journalLedgers(bank);
+        String path="/api/v1/admin/tenants/"+bank.id()+"/business-day";
+        mvc.perform(get(path)).andExpect(status().isUnauthorized());mvc.perform(get(path).header("Authorization","Bearer "+TestIdentity.token("operator",false))).andExpect(status().isForbidden());
+        var pending=approvals.journal(ADMIN,UUID.randomUUID(),bank.id(),journalChange(bank,accounts,"5"));
+        assertCode(()->approvals.closeDay(ADMIN,UUID.randomUUID(),bank.id(),closeChange(bank)),"DAY_CLOSE_PENDING_APPROVALS");
+        approveHttp(pending.id());assertCode(()->approvals.closeDay(ADMIN,UUID.randomUUID(),bank.id(),closeChange(bank)),"DAY_CLOSE_PENDING_DELIVERIES");journals.deliver(pending.id());
+        var input=closeChange(bank);var closing=approvals.closeDay(ADMIN,UUID.randomUUID(),bank.id(),input);
+        var late=approvals.journal(ADMIN,UUID.randomUUID(),bank.id(),journalChange(bank,accounts,"1"));
+        assertCode(()->approvals.decide(CHECKER,closing.id(),com.cbs.approvals.ApprovalModels.Decision.APPROVE,"Check current work"),"DAY_CLOSE_PENDING_APPROVALS");
+        approvals.decide(ADMIN,late.id(),com.cbs.approvals.ApprovalModels.Decision.CANCEL,"Defer posting");
+        approveHttp(closing.id());
+        assertCode(()->days.retry(ADMIN,ledgerOther().id(),closing.id()),"APPROVAL_NOT_FOUND");days.deliver(closing.id());
+        var settings=reference.get(ADMIN,bank.id());var advance=new com.cbs.reference.ReferenceModels.Change(settings.version(),settings.currencies(),settings.languages(),settings.defaultLanguage(),settings.businessTimezone(),com.cbs.reference.ReferenceDataService.nextWorkingDay(settings.businessDate(),settings.weekendDays(),settings.holidays()),settings.weekendDays(),settings.holidays(),"Attempt settings bypass");
+        assertCode(()->approvals.settings(ADMIN,UUID.randomUUID(),bank.id(),advance),"BUSINESS_DATE_REQUIRES_CLOSE");
+        mvc.perform(admin(get(path))).andExpect(status().isOk()).andExpect(jsonPath("$.history[0].status").value("CLOSED"));
+        var wrong=new com.cbs.accounting.DayCloseModels.Change(settings.version(),settings.businessDate(),settings.businessDate(),"Invalid next date");
+        mvc.perform(admin(post(path+"/close")).header("Idempotency-Key",UUID.randomUUID()).contentType("application/json").content(json.writeValueAsString(wrong))).andExpect(status().isBadRequest());
+    }
+    @Test void dayCloseRefusesBalanceDriftAndRetriesWithoutAdvancingEarly() throws Exception {
+        Tenant bank=provision(register("day-failure"));var accounts=journalLedgers(bank);var posting=approvals.journal(ADMIN,UUID.randomUUID(),bank.id(),journalChange(bank,accounts,"40"));approveHttp(posting.id());journals.deliver(posting.id());
+        try(var c=TestDatabases.bank("dayfailure");var st=c.prepareStatement("UPDATE bank.ledger_balance SET debit=debit+? WHERE ledger_id=?")){
+            st.setInt(1,1);st.setObject(2,accounts.getFirst().id());st.executeUpdate();
+            try{assertCode(()->approvals.closeDay(ADMIN,UUID.randomUUID(),bank.id(),closeChange(bank)),"DAY_CLOSE_UNRECONCILED");}
+            finally{st.setInt(1,-1);st.executeUpdate();}
+            var input=closeChange(bank);var closing=approvals.closeDay(ADMIN,UUID.randomUUID(),bank.id(),input);approveHttp(closing.id());
+            st.setInt(1,1);st.executeUpdate();
+            try{
+                days.deliver(closing.id());var state=days.dashboard(ADMIN,bank.id(),25,0);
+                assertThat(state.businessDate()).isEqualTo(input.businessDate());assertThat(state.closedThrough()).isNull();assertThat(state.history().getFirst().failureCode()).isEqualTo("DAY_CLOSE_UNRECONCILED");
+            }finally{st.setInt(1,-1);st.executeUpdate();}
+            days.retry(ADMIN,bank.id(),closing.id());assertThat(days.dashboard(ADMIN,bank.id(),25,0).businessDate()).isEqualTo(input.nextBusinessDate());
+        }
+    }
+
+
+    private com.cbs.accounting.ChartModels.Account productMapping(Tenant bank) throws Exception {
+        var input=new com.cbs.accounting.ChartModels.Change(service.get(ADMIN,bank.id()).version(),null,"2100","Customer deposits","",
+            com.cbs.accounting.ChartModels.Category.LIABILITY,com.cbs.accounting.ChartModels.Balance.CREDIT,com.cbs.accounting.ChartModels.Kind.POSTING,null,true,"Product mapping");
+        approveHttp(approvals.chart(ADMIN,UUID.randomUUID(),bank.id(),input).id());return chart.list(ADMIN,bank.id(),"2100",null,null,null,25,0).items().getFirst();
+    }
+    private com.cbs.products.ProductModels.Change productChange(Tenant bank,UUID id,UUID mapping,String code,String currency,String opening,String minimum,boolean active) {
+        return new com.cbs.products.ProductModels.Change(service.get(ADMIN,bank.id()).version(),id,code,"Everyday savings","Deposit product",
+            com.cbs.products.ProductModels.Type.SAVINGS,currency,opening,minimum,mapping,active,"Configure deposit product");
+    }
+    @Test void productApprovalPreservesExactAmountsAndImmutableRevisions() throws Exception {
+        Tenant bank=chartBank("product-main");var mapping=productMapping(bank);UUID key=UUID.randomUUID();
+        var input=productChange(bank,null,mapping.id(),"SAV_INR","INR","9007199254740993.25","10.25",true);
+        var pending=approvals.product(ADMIN,key,bank.id(),input);
+        assertThat(products.list(ADMIN,bank.id(),"",null,null,25,0).total()).isZero();
+        assertCode(()->approvals.decide(ADMIN,pending.id(),com.cbs.approvals.ApprovalModels.Decision.APPROVE,"Self review"),"SELF_APPROVAL_FORBIDDEN");
+        approveHttp(pending.id());var product=products.list(ADMIN,bank.id(),"SAV_",null,true,25,0).items().getFirst();
+        assertThat(product.minimumOpening()).isEqualTo("9007199254740993.25");assertThat(product.revision()).isEqualTo(1);
+        assertThat(approvals.product(ADMIN,key,bank.id(),input).id()).isEqualTo(pending.id());
+        assertCode(()->approvals.product(ADMIN,key,bank.id(),productChange(bank,product.id(),mapping.id(),"SAV_INR","INR","100","5",false)),"IDEMPOTENCY_CONFLICT");
+        var edit=approvals.product(ADMIN,UUID.randomUUID(),bank.id(),productChange(bank,product.id(),mapping.id(),"SAV_INR","INR","100","5",false));approveHttp(edit.id());
+        var history=products.history(ADMIN,bank.id(),product.id(),25,0).items();assertThat(history).hasSize(2);
+        assertThat(history.getFirst().definition()).containsEntry("minimumOpening","100").containsEntry("active",false);
+        assertThat(history.getLast().definition()).containsEntry("minimumOpening","9007199254740993.25");
+        assertThat(products.get(bank.id(),product.id()).active()).isFalse();
+        assertThatThrownBy(()->jdbc.update("UPDATE platform.deposit_product_revision SET reason='tamper' WHERE product_id=?",product.id())).isInstanceOf(DataAccessException.class);
+        assertThat(service.auditEvents(ADMIN,bank.id(),100,0).items()).filteredOn(a->a.action().equals("DEPOSIT_PRODUCT_CHANGED")).hasSize(2);
+    }
+    @Test void productRulesProtectBankMappingsCurrenciesAndPrecision() throws Exception {
+        Tenant bank=chartBank("product-guards"),other=chartBank("product-other");var mapping=productMapping(bank);var foreign=productMapping(other);
+        assertCode(()->approvals.product(ADMIN,UUID.randomUUID(),bank.id(),productChange(bank,null,foreign.id(),"BAD","INR","1","0",true)),"CHART_ACCOUNT_NOT_FOUND");
+        assertCode(()->approvals.product(ADMIN,UUID.randomUUID(),bank.id(),productChange(bank,null,mapping.id(),"BAD","USD","1","0",true)),"PRODUCT_CURRENCY_DISABLED");
+        assertCode(()->approvals.product(ADMIN,UUID.randomUUID(),bank.id(),productChange(bank,null,mapping.id(),"BAD","INR","1.001","0",true)),"PRODUCT_INVALID_AMOUNT");
+        assertCode(()->approvals.product(ADMIN,UUID.randomUUID(),bank.id(),productChange(bank,null,mapping.id(),"BAD","INR","1","2",true)),"PRODUCT_MINIMUM_ORDER");
+        var asset=chartChange(bank.id(),null,"1100","Cash",com.cbs.accounting.ChartModels.Category.ASSET,com.cbs.accounting.ChartModels.Kind.POSTING,null,true);
+        approveHttp(approvals.chart(ADMIN,UUID.randomUUID(),bank.id(),asset).id());UUID assetId=chart.list(ADMIN,bank.id(),"1100",null,null,null,25,0).items().getFirst().id();
+        assertCode(()->approvals.product(ADMIN,UUID.randomUUID(),bank.id(),productChange(bank,null,assetId,"BAD","INR","1","0",true)),"PRODUCT_INVALID_MAPPING");
+        var settings=reference.get(ADMIN,bank.id());var enable=new com.cbs.reference.ReferenceModels.Change(settings.version(),List.of(new com.cbs.reference.ReferenceModels.CurrencyRule("INR","HALF_EVEN",true),new com.cbs.reference.ReferenceModels.CurrencyRule("USD","HALF_EVEN",true)),settings.languages(),settings.defaultLanguage(),settings.businessTimezone(),settings.businessDate(),settings.weekendDays(),settings.holidays(),"Enable USD");
+        approveHttp(approvals.settings(ADMIN,UUID.randomUUID(),bank.id(),enable).id());
+        approveHttp(approvals.product(ADMIN,UUID.randomUUID(),bank.id(),productChange(bank,null,mapping.id(),"SAV_USD","USD","1","0",true)).id());
+        var product=products.list(ADMIN,bank.id(),"",null,null,25,0).items().getFirst();
+        assertCode(()->approvals.product(ADMIN,UUID.randomUUID(),bank.id(),productChange(bank,null,mapping.id(),"SAV_USD","USD","1","0",true)),"PRODUCT_CODE_IN_USE");
+        assertCode(()->approvals.product(ADMIN,UUID.randomUUID(),bank.id(),productChange(bank,product.id(),mapping.id(),"RENAMED","USD","1","0",true)),"PRODUCT_STRUCTURE_IMMUTABLE");
+        var disableMapping=new com.cbs.accounting.ChartModels.Change(service.get(ADMIN,bank.id()).version(),mapping.id(),mapping.code(),mapping.name(),"",mapping.category(),mapping.normalBalance(),mapping.kind(),null,false,"Deactivate mapping");
+        assertCode(()->approvals.chart(ADMIN,UUID.randomUUID(),bank.id(),disableMapping),"CHART_USED_BY_PRODUCT");
+        var now=reference.get(ADMIN,bank.id());var disableCurrency=new com.cbs.reference.ReferenceModels.Change(now.version(),settings.currencies(),now.languages(),now.defaultLanguage(),now.businessTimezone(),now.businessDate(),now.weekendDays(),now.holidays(),"Disable USD");
+        assertCode(()->approvals.settings(ADMIN,UUID.randomUUID(),bank.id(),disableCurrency),"CURRENCY_USED_BY_PRODUCT");
+        approveHttp(approvals.product(ADMIN,UUID.randomUUID(),bank.id(),productChange(bank,product.id(),mapping.id(),"SAV_USD","USD","1","0",false)).id());
+        now=reference.get(ADMIN,bank.id());approveHttp(approvals.settings(ADMIN,UUID.randomUUID(),bank.id(),new com.cbs.reference.ReferenceModels.Change(now.version(),settings.currencies(),now.languages(),now.defaultLanguage(),now.businessTimezone(),now.businessDate(),now.weekendDays(),now.holidays(),"Disable unused USD")).id());
+        assertCode(()->approvals.product(ADMIN,UUID.randomUUID(),bank.id(),productChange(bank,product.id(),mapping.id(),"SAV_USD","USD","1","0",true)),"PRODUCT_CURRENCY_DISABLED");
+        assertCode(()->products.get(other.id(),product.id()),"PRODUCT_NOT_FOUND");
+        approveHttp(approvals.product(ADMIN,UUID.randomUUID(),other.id(),productChange(other,null,foreign.id(),"SAV_USD","INR","1","0",true)).id());
+        assertThat(products.list(ADMIN,bank.id(),"SAV_USD",null,null,25,0).total()).isEqualTo(1);
+    }
+    @Test void productChangesAreAtomicRejectStaleAndReplayConcurrentSubmissions() throws Exception {
+        Tenant bank=chartBank("product-race");var mapping=productMapping(bank);UUID key=UUID.randomUUID();var input=productChange(bank,null,mapping.id(),"STANDARD","INR","10","0",true);
+        CyclicBarrier start=new CyclicBarrier(2);
+        try(var executor=Executors.newFixedThreadPool(2)){
+            Callable<UUID> task=()->{start.await();return approvals.product(ADMIN,key,bank.id(),input).id();};
+            var result=executor.invokeAll(List.of(task,task));assertThat(result.getFirst().get()).isEqualTo(result.getLast().get());
+        }
+        var request=approvals.product(ADMIN,key,bank.id(),input);
+        new TransactionTemplate(transactionManager).executeWithoutResult(t->{approvals.decide(CHECKER,request.id(),com.cbs.approvals.ApprovalModels.Decision.APPROVE,"Rollback test");t.setRollbackOnly();});
+        assertThat(products.list(ADMIN,bank.id(),"",null,null,25,0).total()).isZero();
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM platform.deposit_product_revision WHERE tenant_id=?",Integer.class,bank.id())).isZero();
+        var competing=approvals.product(ADMIN,UUID.randomUUID(),bank.id(),productChange(bank,null,mapping.id(),"ALTERNATIVE","INR","10","0",true));
+        approveHttp(request.id());approvals.decide(CHECKER,competing.id(),com.cbs.approvals.ApprovalModels.Decision.APPROVE,"Review stale request");
+        assertThat(approvals.details(ADMIN,competing.id()).request().status()).isEqualTo(com.cbs.approvals.ApprovalModels.Status.STALE);
+        assertThat(products.list(ADMIN,bank.id(),"",null,null,25,0).total()).isEqualTo(1);
+        var reject=approvals.product(ADMIN,UUID.randomUUID(),bank.id(),productChange(bank,null,mapping.id(),"REJECTED","INR","10","0",true));
+        approvals.decide(CHECKER,reject.id(),com.cbs.approvals.ApprovalModels.Decision.REJECT,"Not required");
+        assertThat(products.list(ADMIN,bank.id(),"REJECTED",null,null,25,0).total()).isZero();
+    }
+    @Test void productHttpValidationAccessAndRevisionPagingAreEnforced() throws Exception {
+        Tenant bank=chartBank("product-access");var mapping=productMapping(bank);String path="/api/v1/admin/tenants/"+bank.id()+"/products";
+        mvc.perform(get(path)).andExpect(status().isUnauthorized());
+        mvc.perform(get(path).header("Authorization","Bearer "+TestIdentity.token("operator",false))).andExpect(status().isForbidden());
+        mvc.perform(admin(post(path)).header("Idempotency-Key",UUID.randomUUID()).contentType("application/json").content("{}")).andExpect(status().isBadRequest());
+        mvc.perform(admin(get(path+"?limit=101"))).andExpect(status().isBadRequest());
+        var input=productChange(bank,null,mapping.id(),"CURRENT_INR","INR","10.00","0",false);
+        String body=json.writeValueAsString(input).replace("SAVINGS","CURRENT");
+        var response=mvc.perform(admin(post(path)).header("Idempotency-Key",UUID.randomUUID()).contentType("application/json").content(body)).andExpect(status().isAccepted()).andReturn().getResponse().getContentAsString();
+        approveHttp(json.readValue(response,com.cbs.approvals.ApprovalModels.Request.class).id());
+        var product=products.list(ADMIN,bank.id(),"",com.cbs.products.ProductModels.Type.CURRENT,false,25,0).items().getFirst();
+        mvc.perform(admin(get(path+"?type=CURRENT&active=false"))).andExpect(status().isOk()).andExpect(jsonPath("$.items[0].minimumOpening").value("10"));
+        mvc.perform(admin(get(path+"/"+product.id()+"/revisions?limit=1&offset=1"))).andExpect(status().isOk()).andExpect(jsonPath("$.items.length()").value(0));
+        mvc.perform(admin(get(path+"/"+UUID.randomUUID()+"/revisions"))).andExpect(status().isNotFound());
+    }
+
+
+    private com.cbs.customers.CustomerModels.Profile customerProfile(String name,String doc,com.cbs.customers.CustomerModels.State state,String review) {
+        return new com.cbs.customers.CustomerModels.Profile(name,java.time.LocalDate.of(1990,5,20),"KE","KE","Fictional test address","+254700000000","demo@example.test",com.cbs.customers.CustomerModels.DocumentType.NATIONAL_ID,"KE",doc,null,"DOC/TEST-001",state,review);
+    }
+    private com.cbs.customers.CustomerModels.Change customerChange(Tenant bank,UUID id,com.cbs.customers.CustomerModels.Profile profile,String duplicate) {
+        return new com.cbs.customers.CustomerModels.Change(service.get(ADMIN,bank.id()).version(),id,profile,duplicate,"Review fictional customer");
+    }
+    @Test void customerOnboardingRequiresApprovalAndDeliversIsolatedProfile() throws Exception {
+        Tenant bank=provision(register("customer-main"));var p=customerProfile("Fictional Person","AB-12345",com.cbs.customers.CustomerModels.State.PROSPECT,"");
+        UUID key=UUID.randomUUID();var input=customerChange(bank,null,p,"");var request=approvals.customer(ADMIN,key,bank.id(),input);
+        assertThat(request.proposedValues().get("documentNumber")).isEqualTo("••••45");
+        assertThat(customers.list(ADMIN,bank.id(),"",null,25,0).total()).isZero();
+        assertCode(()->approvals.decide(ADMIN,request.id(),com.cbs.approvals.ApprovalModels.Decision.APPROVE,"Self review"),"SELF_APPROVAL_FORBIDDEN");
+        approveHttp(request.id());var summary=customers.list(ADMIN,bank.id(),"Fictional",null,25,0).items().getFirst();assertThat(summary.delivery()).isEqualTo("PENDING");
+        assertCode(()->approvals.customer(ADMIN,UUID.randomUUID(),bank.id(),customerChange(bank,summary.id(),p,"")),"CUSTOMER_DELIVERY_PENDING");
+        customers.deliver(request.id());var detail=customers.detail(ADMIN,bank.id(),summary.id());assertThat(detail.delivery()).isEqualTo("APPLIED");assertThat(detail.definition().profile()).isEqualTo(p);
+        assertThat(approvals.customer(ADMIN,key,bank.id(),input).id()).isEqualTo(request.id());
+        var active=customerProfile("Fictional Person","AB-12345",com.cbs.customers.CustomerModels.State.ACTIVE,"REVIEW/001");
+        var change=approvals.customer(ADMIN,UUID.randomUUID(),bank.id(),customerChange(bank,summary.id(),active,""));approveHttp(change.id());customers.deliver(change.id());
+        assertThat(customers.detail(ADMIN,bank.id(),summary.id()).definition().version()).isEqualTo(1);
+        assertThat(customers.list(ADMIN,bank.id(),"",com.cbs.customers.CustomerModels.State.ACTIVE,25,0).total()).isEqualTo(1);
+        var blocked=customerProfile("Fictional Person","AB-12345",com.cbs.customers.CustomerModels.State.BLOCKED,"REVIEW/002");
+        var block=approvals.customer(ADMIN,UUID.randomUUID(),bank.id(),customerChange(bank,summary.id(),blocked,""));approveHttp(block.id());customers.deliver(block.id());
+        assertThat(customers.detail(ADMIN,bank.id(),summary.id()).definition().profile().state()).isEqualTo(com.cbs.customers.CustomerModels.State.BLOCKED);
+        try(var c=TestDatabases.bank("customer");var st=c.createStatement()){
+            try(var r=st.executeQuery("SELECT count(*) FROM bank.customer_event")){r.next();assertThat(r.getInt(1)).isEqualTo(3);}
+            assertThatThrownBy(()->st.executeUpdate("DELETE FROM bank.customer_event")).isInstanceOf(SQLException.class);
+        }
+        assertThat(service.auditEvents(ADMIN,bank.id(),100,0).items()).anyMatch(a->a.action().equals("CUSTOMER_PROFILE_VIEWED"));
+    }
+    @Test void customerDuplicateReviewAndHttpAccessAreEnforced() throws Exception {
+        Tenant bank=provision(register("customer-guards"));var p=customerProfile("Duplicate Example","AA001",com.cbs.customers.CustomerModels.State.PROSPECT,"");String path="/api/v1/admin/tenants/"+bank.id()+"/customers";
+        mvc.perform(get(path)).andExpect(status().isUnauthorized());mvc.perform(get(path).header("Authorization","Bearer "+TestIdentity.token("operator",false))).andExpect(status().isForbidden());
+        mvc.perform(admin(post(path)).header("Idempotency-Key",UUID.randomUUID()).contentType("application/json").content("{}")).andExpect(status().isBadRequest());
+        var invalid=customerChange(bank,null,customerProfile("Invalid","ABC1",com.cbs.customers.CustomerModels.State.ACTIVE,""),"");
+        assertCode(()->approvals.customer(ADMIN,UUID.randomUUID(),bank.id(),invalid),"CUSTOMER_REVIEW_REQUIRED");
+        String body=json.writeValueAsString(customerChange(bank,null,p,""));
+        mvc.perform(admin(post(path)).header("Idempotency-Key",UUID.randomUUID()).contentType("application/json").content(body.replace("1990-05-20","2990-05-20"))).andExpect(status().isBadRequest());
+        var approved=approvals.customer(ADMIN,UUID.randomUUID(),bank.id(),customerChange(bank,null,p,""));approveHttp(approved.id());customers.deliver(approved.id());
+        assertCode(()->approvals.customer(ADMIN,UUID.randomUUID(),bank.id(),customerChange(bank,null,customerProfile("Other Name","aa 001",com.cbs.customers.CustomerModels.State.PROSPECT,""),"Different person")),"CUSTOMER_DOCUMENT_DUPLICATE");
+        var sameName=customerProfile("  duplicate   example  ","BB002",com.cbs.customers.CustomerModels.State.PROSPECT,"");
+        assertCode(()->approvals.customer(ADMIN,UUID.randomUUID(),bank.id(),customerChange(bank,null,sameName,"")),"CUSTOMER_DUPLICATE_REVIEW_REQUIRED");
+        var reviewed=approvals.customer(ADMIN,UUID.randomUUID(),bank.id(),customerChange(bank,null,sameName,"Reviewed source documents; distinct test people"));approveHttp(reviewed.id());customers.deliver(reviewed.id());
+        assertThat(customers.list(ADMIN,bank.id(),"",null,25,0).total()).isEqualTo(2);
+        mvc.perform(admin(get(path))).andExpect(status().isOk()).andExpect(jsonPath("$.items[0].documentNumber").doesNotExist());
+        mvc.perform(admin(get(path+"/"+UUID.randomUUID()))).andExpect(status().isNotFound());
+        UUID customer=customers.list(ADMIN,bank.id(),"",null,25,0).items().getFirst().id();Tenant another=register("product-rollback");
+        assertCode(()->customers.detail(ADMIN,another.id(),customer),"CUSTOMER_NOT_FOUND");
+        assertCode(()->customers.retry(ADMIN,another.id(),approved.id()),"APPROVAL_NOT_FOUND");
+    }
+    @Test void customerDeliveryRecoversAfterBankCommitAndRejectedChangesStayAbsent() throws Exception {
+        Tenant bank=provision(register("customer-recovery"));var p=customerProfile("Recovery Example","REC001",com.cbs.customers.CustomerModels.State.PROSPECT,"");var input=customerChange(bank,null,p,"");UUID key=UUID.randomUUID();
+        CyclicBarrier start=new CyclicBarrier(2);UUID request;
+        try(var pool=Executors.newFixedThreadPool(2)){Callable<UUID> task=()->{start.await();return approvals.customer(ADMIN,key,bank.id(),input).id();};var results=pool.invokeAll(List.of(task,task));request=results.getFirst().get();assertThat(request).isEqualTo(results.getLast().get());}
+        UUID requestId=request;
+        new TransactionTemplate(transactionManager).executeWithoutResult(t->{approvals.decide(CHECKER,requestId,com.cbs.approvals.ApprovalModels.Decision.APPROVE,"Rollback approval");t.setRollbackOnly();});
+        assertThat(customers.list(ADMIN,bank.id(),"",null,25,0).total()).isZero();approveHttp(request);
+        new TransactionTemplate(transactionManager).executeWithoutResult(t->{customers.deliver(requestId);t.setRollbackOnly();});
+        var summary=customers.list(ADMIN,bank.id(),"",null,25,0).items().getFirst();assertThat(summary.delivery()).isEqualTo("PENDING");
+        try(var pool=Executors.newFixedThreadPool(2)){var results=pool.invokeAll(List.of(()->{customers.retry(CHECKER,bank.id(),requestId);return true;},()->{customers.retry(CHECKER,bank.id(),requestId);return true;}));for(var result:results)result.get();}
+        assertThat(customers.detail(ADMIN,bank.id(),summary.id()).delivery()).isEqualTo("APPLIED");
+        try(var c=TestDatabases.bank("customerfail");var st=c.createStatement();var r=st.executeQuery("SELECT count(*) FROM bank.customer_event")){r.next();assertThat(r.getInt(1)).isEqualTo(1);}
+        var rejected=approvals.customer(ADMIN,UUID.randomUUID(),bank.id(),customerChange(bank,null,customerProfile("Rejected Example","REC002",com.cbs.customers.CustomerModels.State.PROSPECT,""),""));
+        approvals.decide(CHECKER,rejected.id(),com.cbs.approvals.ApprovalModels.Decision.REJECT,"Incomplete evidence");assertThat(customers.list(ADMIN,bank.id(),"Rejected",null,25,0).total()).isZero();
+    }
+
+
+    private record AccountFixture(Tenant bank,UUID customer,com.cbs.products.ProductModels.Product product) {}
+    private AccountFixture accountFixture(String binding) throws Exception {
+        var bank=provision(register(binding));var mapping=productMapping(bank);
+        var productRequest=approvals.product(ADMIN,UUID.randomUUID(),bank.id(),productChange(bank,null,mapping.id(),"SAV_INR","INR","100","10",true));approveHttp(productRequest.id());
+        var customerRequest=approvals.customer(ADMIN,UUID.randomUUID(),bank.id(),customerChange(bank,null,customerProfile("Account Example","ACC001",com.cbs.customers.CustomerModels.State.ACTIVE,"REVIEW/1"),""));approveHttp(customerRequest.id());customers.deliver(customerRequest.id());
+        return new AccountFixture(bank,customers.list(ADMIN,bank.id(),"",null,25,0).items().getFirst().id(),products.list(ADMIN,bank.id(),"",null,null,25,0).items().getFirst());
+    }
+    private com.cbs.accounts.AccountModels.Change accountChange(AccountFixture f,UUID id,com.cbs.accounts.AccountModels.State state){
+        return new com.cbs.accounts.AccountModels.Change(service.get(ADMIN,f.bank().id()).version(),id,f.customer(),f.product().id(),f.product().revision(),f.bank().legalEntities().getFirst().id(),"Personal savings",state,"Open or manage test account");
+    }
+    @Test void depositAccountPinsTermsAndControlsLifecycle() throws Exception {
+        var f=accountFixture("account-main");var bank=f.bank();var waiting=com.cbs.accounts.AccountModels.State.AWAITING_FUNDING;
+        var input=accountChange(f,null,waiting);UUID key=UUID.randomUUID();var r=approvals.account(ADMIN,key,bank.id(),input);
+        assertCode(()->approvals.decide(ADMIN,r.id(),com.cbs.approvals.ApprovalModels.Decision.APPROVE,"Own request"),"SELF_APPROVAL_FORBIDDEN");
+        assertThat(accounts.list(ADMIN,bank.id(),"",null,25,0).total()).isZero();approveHttp(r.id());
+        var a=accounts.list(ADMIN,bank.id(),"",null,25,0).items().getFirst();assertThat(a.delivery()).isEqualTo("PENDING");
+        assertCode(()->approvals.account(ADMIN,UUID.randomUUID(),bank.id(),accountChange(f,a.id(),waiting)),"ACCOUNT_DELIVERY_PENDING");
+        accounts.deliver(r.id());assertThat(accounts.detail(ADMIN,bank.id(),a.id()).delivery()).isEqualTo("APPLIED");
+        assertThat(approvals.account(ADMIN,key,bank.id(),input).id()).isEqualTo(r.id());
+        var productEdit=approvals.product(ADMIN,UUID.randomUUID(),bank.id(),productChange(bank,f.product().id(),f.product().liabilityAccountId(),"SAV_INR","INR","200","20",false));approveHttp(productEdit.id());
+        var disableMapping=new com.cbs.accounting.ChartModels.Change(service.get(ADMIN,bank.id()).version(),f.product().liabilityAccountId(),"2100","Customer deposits","",com.cbs.accounting.ChartModels.Category.LIABILITY,com.cbs.accounting.ChartModels.Balance.CREDIT,com.cbs.accounting.ChartModels.Kind.POSTING,null,false,"Disable mapped chart");
+        assertCode(()->approvals.chart(ADMIN,UUID.randomUUID(),bank.id(),disableMapping),"CHART_USED_BY_ACCOUNT");
+        assertCode(()->approvals.account(ADMIN,UUID.randomUUID(),bank.id(),accountChange(f,null,waiting)),"ACCOUNT_PRODUCT_NOT_READY");
+        assertThat(accounts.detail(ADMIN,bank.id(),a.id()).definition().terms().revision()).isEqualTo(1);
+        assertThat(accounts.detail(ADMIN,bank.id(),a.id()).definition().terms().minimumOpening()).isEqualTo("100");
+        for(var state:List.of(com.cbs.accounts.AccountModels.State.FROZEN,waiting,com.cbs.accounts.AccountModels.State.CLOSED)){
+            var change=approvals.account(ADMIN,UUID.randomUUID(),bank.id(),accountChange(f,a.id(),state));approveHttp(change.id());accounts.deliver(change.id());
+            assertThat(accounts.detail(ADMIN,bank.id(),a.id()).definition().state()).isEqualTo(state);
+        }
+        assertCode(()->approvals.account(ADMIN,UUID.randomUUID(),bank.id(),accountChange(f,a.id(),waiting)),"ACCOUNT_ALREADY_CLOSED");
+        try(var c=TestDatabases.bank("account");var st=c.createStatement()){
+            try(var rs=st.executeQuery("SELECT count(*) FROM bank.account_event")){rs.next();assertThat(rs.getInt(1)).isEqualTo(4);}
+            try(var rs=st.executeQuery("SELECT count(*) FROM bank.journal")){rs.next();assertThat(rs.getInt(1)).isZero();}
+            assertThatThrownBy(()->st.executeUpdate("DELETE FROM bank.account_event")).isInstanceOf(SQLException.class);
+        }
+    }
+    @Test void depositAccountEligibilityScopeStaleAndHttpValidation() throws Exception {
+        var f=accountFixture("account-guards");var bank=f.bank();var waiting=com.cbs.accounts.AccountModels.State.AWAITING_FUNDING;String path="/api/v1/admin/tenants/"+bank.id()+"/accounts";
+        mvc.perform(get(path)).andExpect(status().isUnauthorized());mvc.perform(get(path).header("Authorization","Bearer "+TestIdentity.token("operator",false))).andExpect(status().isForbidden());
+        mvc.perform(admin(post(path)).header("Idempotency-Key",UUID.randomUUID()).contentType("application/json").content("{}")).andExpect(status().isBadRequest());
+        assertCode(()->approvals.account(ADMIN,UUID.randomUUID(),bank.id(),accountChange(f,null,com.cbs.accounts.AccountModels.State.FROZEN)),"ACCOUNT_INITIAL_STATE");
+        var expired=new com.cbs.customers.CustomerModels.Profile("Expired",java.time.LocalDate.of(1990,1,1),"KE","KE","Test","+254700000000","",com.cbs.customers.CustomerModels.DocumentType.PASSPORT,"KE","EXP001",java.time.LocalDate.now(java.time.ZoneOffset.UTC).minusDays(1),"DOC/EXP",com.cbs.customers.CustomerModels.State.ACTIVE,"REVIEW/EXP");
+        assertCode(()->com.cbs.customers.CustomerService.checkEligible(new com.cbs.customers.CustomerModels.Definition(UUID.randomUUID(),bank.id(),"TEST",0,expired)),"ACCOUNT_CUSTOMER_NOT_READY");
+        var stale=approvals.account(ADMIN,UUID.randomUUID(),bank.id(),accountChange(f,null,waiting));
+        var block=approvals.customer(ADMIN,UUID.randomUUID(),bank.id(),customerChange(bank,f.customer(),customerProfile("Account Example","ACC001",com.cbs.customers.CustomerModels.State.BLOCKED,"REVIEW/2"),""));approveHttp(block.id());
+        assertCode(()->approvals.account(ADMIN,UUID.randomUUID(),bank.id(),accountChange(f,null,waiting)),"ACCOUNT_CUSTOMER_NOT_READY");customers.deliver(block.id());
+        assertThat(approvals.decide(CHECKER,stale.id(),com.cbs.approvals.ApprovalModels.Decision.APPROVE,"Review stale request").status()).isEqualTo(com.cbs.approvals.ApprovalModels.Status.STALE);
+        assertCode(()->approvals.account(ADMIN,UUID.randomUUID(),bank.id(),accountChange(f,null,waiting)),"ACCOUNT_CUSTOMER_NOT_READY");
+        var active=approvals.customer(ADMIN,UUID.randomUUID(),bank.id(),customerChange(bank,f.customer(),customerProfile("Account Example","ACC001",com.cbs.customers.CustomerModels.State.ACTIVE,"REVIEW/3"),""));approveHttp(active.id());customers.deliver(active.id());
+        var r=approvals.account(ADMIN,UUID.randomUUID(),bank.id(),accountChange(f,null,waiting));approveHttp(r.id());accounts.deliver(r.id());var a=accounts.list(ADMIN,bank.id(),"",waiting,25,0).items().getFirst();
+        mvc.perform(admin(get(path+"/"+a.id()))).andExpect(status().isOk()).andExpect(jsonPath("$.definition.terms.currency").value("INR"));
+        var another=register("account-isolation");assertCode(()->accounts.detail(ADMIN,another.id(),a.id()),"ACCOUNT_NOT_FOUND");assertCode(()->accounts.retry(ADMIN,another.id(),r.id()),"APPROVAL_NOT_FOUND");
+        var wrong=new com.cbs.accounts.AccountModels.Change(service.get(ADMIN,bank.id()).version(),a.id(),f.customer(),f.product().id(),2,bank.legalEntities().getFirst().id(),"Invalid",waiting,"Wrong revision");
+        assertCode(()->approvals.account(ADMIN,UUID.randomUUID(),bank.id(),wrong),"ACCOUNT_STRUCTURE_IMMUTABLE");
+    }
+    @Test void depositAccountDeliveryRecoversWithoutDuplicatingAccount() throws Exception {
+        var f=accountFixture("account-recovery");var bank=f.bank();var input=accountChange(f,null,com.cbs.accounts.AccountModels.State.AWAITING_FUNDING);UUID key=UUID.randomUUID();
+        CyclicBarrier start=new CyclicBarrier(2);UUID request;
+        try(var pool=Executors.newFixedThreadPool(2)){Callable<UUID> task=()->{start.await();return approvals.account(ADMIN,key,bank.id(),input).id();};var results=pool.invokeAll(List.of(task,task));request=results.getFirst().get();assertThat(request).isEqualTo(results.getLast().get());}
+        UUID id=request;new TransactionTemplate(transactionManager).executeWithoutResult(t->{approvals.decide(CHECKER,id,com.cbs.approvals.ApprovalModels.Decision.APPROVE,"Rollback approval");t.setRollbackOnly();});
+        assertThat(accounts.list(ADMIN,bank.id(),"",null,25,0).total()).isZero();approveHttp(id);
+        new TransactionTemplate(transactionManager).executeWithoutResult(t->{accounts.deliver(id);t.setRollbackOnly();});
+        var a=accounts.list(ADMIN,bank.id(),"",null,25,0).items().getFirst();assertThat(a.delivery()).isEqualTo("PENDING");
+        try(var pool=Executors.newFixedThreadPool(2)){var results=pool.invokeAll(List.of(()->{accounts.retry(CHECKER,bank.id(),id);return true;},()->{accounts.retry(CHECKER,bank.id(),id);return true;}));for(var result:results)result.get();}
+        assertThat(accounts.detail(ADMIN,bank.id(),a.id()).delivery()).isEqualTo("APPLIED");
+        try(var c=TestDatabases.bank("accountrecovery");var st=c.createStatement();var rs=st.executeQuery("SELECT count(*) FROM bank.account_event")){rs.next();assertThat(rs.getInt(1)).isEqualTo(1);}
+        var rejected=approvals.account(ADMIN,UUID.randomUUID(),bank.id(),accountChange(f,null,com.cbs.accounts.AccountModels.State.AWAITING_FUNDING));approvals.decide(CHECKER,rejected.id(),com.cbs.approvals.ApprovalModels.Decision.REJECT,"Reject test");assertThat(accounts.list(ADMIN,bank.id(),"",null,25,0).total()).isEqualTo(1);
+    }
+
+    private record FundingFixture(AccountFixture f,UUID account,com.cbs.accounting.LedgerModels.Definition source,com.cbs.accounting.LedgerModels.Definition liability) {}
+    private FundingFixture fundingFixture(String binding)throws Exception{
+        var f=accountFixture(binding);var bank=f.bank();var opening=approvals.account(ADMIN,UUID.randomUUID(),bank.id(),accountChange(f,null,com.cbs.accounts.AccountModels.State.AWAITING_FUNDING));approveHttp(opening.id());accounts.deliver(opening.id());
+        UUID account=accounts.list(ADMIN,bank.id(),"",null,25,0).items().getFirst().id();
+        var chartRequest=approvals.chart(ADMIN,UUID.randomUUID(),bank.id(),chartChange(bank.id(),null,"1100","Settlement asset",com.cbs.accounting.ChartModels.Category.ASSET,com.cbs.accounting.ChartModels.Kind.POSTING,null,true));approveHttp(chartRequest.id());
+        var asset=chart.list(ADMIN,bank.id(),"1100",null,null,null,25,0).items().getFirst();
+        var sourceRequest=approvals.ledger(ADMIN,UUID.randomUUID(),bank.id(),ledgerChange(bank,null,"SETTLEMENT",asset.id(),"Received funds",true));approveHttp(sourceRequest.id());ledger.deliver(sourceRequest.id());
+        var liabilityRequest=approvals.ledger(ADMIN,UUID.randomUUID(),bank.id(),ledgerChange(bank,null,"CUSTOMER_001",f.product().liabilityAccountId(),"Customer liability",true));approveHttp(liabilityRequest.id());ledger.deliver(liabilityRequest.id());
+        var list=ledger.list(ADMIN,bank.id(),"",null,null,25,0).items();
+        // Explicit, independently approved test-only policies; never copied to a live bank.
+        for(String operation:List.of("FUNDING","TRANSFER","WITHDRAWAL","FUNDING_REVERSAL","HOLD")){
+            assertCode(()->com.cbs.access.TransactionLimits.check(jdbc,bank.id(),f.product().currency(),operation,reference.get(ADMIN,bank.id()).businessDate(),java.math.BigDecimal.ONE),"TRANSACTION_LIMIT_REQUIRED");
+            var policy=new com.cbs.access.TransactionLimits.Change(service.get(ADMIN,bank.id()).version(),f.product().currency(),operation,"999999999999999999","999999999999999999","Fictional integration test limit");
+            var request=approvals.limits(ADMIN,UUID.randomUUID(),bank.id(),policy);
+            assertCode(()->com.cbs.access.TransactionLimits.check(jdbc,bank.id(),f.product().currency(),operation,reference.get(ADMIN,bank.id()).businessDate(),java.math.BigDecimal.ONE),"TRANSACTION_LIMIT_REQUIRED");
+            approveHttp(request.id());
+        }
+        return new FundingFixture(f,account,list.stream().filter(x->x.definition().code().equals("SETTLEMENT")).findFirst().orElseThrow().definition(),list.stream().filter(x->x.definition().code().equals("CUSTOMER_001")).findFirst().orElseThrow().definition());
+    }
+    private com.cbs.accounts.FundingModels.Change fundingChange(FundingFixture f,String amount,String ref){var bank=f.f().bank();return new com.cbs.accounts.FundingModels.Change(service.get(ADMIN,bank.id()).version(),f.account(),f.source().id(),f.liability().id(),amount,reference.get(ADMIN,bank.id()).businessDate(),ref,"Verified fictional receipt");}
+    @Test void fundingPostsExactCustomerAndGeneralLedgerBalances()throws Exception{
+        var f=fundingFixture("funding-main");var bank=f.f().bank();var input=fundingChange(f,"9007199254740993.17","RECEIPT-001");UUID key=UUID.randomUUID();var r=approvals.funding(ADMIN,key,bank.id(),input);
+        assertThat(funding.dashboard(ADMIN,bank.id(),f.account(),25,0).balance().postedBalance()).isEqualTo("0");
+        assertCode(()->approvals.decide(ADMIN,r.id(),com.cbs.approvals.ApprovalModels.Decision.APPROVE,"Own"),"SELF_APPROVAL_FORBIDDEN");approveHttp(r.id());
+        assertThat(funding.dashboard(ADMIN,bank.id(),f.account(),25,0).balance().postedBalance()).isEqualTo("0");
+        assertCode(()->accounts.deliver(r.id()),"FUNDING_MANAGED");assertCode(()->journals.deliver(r.id()),"FUNDING_MANAGED");
+        funding.deliver(r.id());var balance=funding.dashboard(ADMIN,bank.id(),f.account(),25,0).balance();assertThat(balance.postedBalance()).isEqualTo("9007199254740993.17");assertThat(balance.reconciled()).isTrue();assertThat(balance.ledgerBalance()).isEqualTo(balance.postedBalance());
+        assertThat(accounts.detail(ADMIN,bank.id(),f.account()).definition().state()).isEqualTo(com.cbs.accounts.AccountModels.State.ACTIVE);
+        assertThat(approvals.funding(ADMIN,key,bank.id(),input).id()).isEqualTo(r.id());
+        var topup=approvals.funding(ADMIN,UUID.randomUUID(),bank.id(),fundingChange(f,"0.10","RECEIPT-002"));approveHttp(topup.id());funding.deliver(topup.id());assertThat(funding.dashboard(ADMIN,bank.id(),f.account(),25,0).balance().postedBalance()).isEqualTo("9007199254740993.27");
+        var balances=journals.balances(ADMIN,bank.id(),25,0).items();assertThat(balances.stream().filter(b->b.ledgerId().equals(f.source().id())).findFirst().orElseThrow().debit()).isEqualTo("9007199254740993.27");
+        assertThat(journals.list(ADMIN,bank.id(),25,0).items().getFirst().funding()).isTrue();
+        var bypass=new com.cbs.accounting.JournalModels.Entry(UUID.randomUUID(),bank.id(),"DIRECT-BYPASS","Must require subledger",input.businessDate(),bank.legalEntities().getFirst().id(),"INR",List.of(new com.cbs.accounting.JournalModels.Line(f.source().id(),com.cbs.accounting.JournalModels.Side.DEBIT,"1"),new com.cbs.accounting.JournalModels.Line(f.liability().id(),com.cbs.accounting.JournalModels.Side.CREDIT,"1")),null);
+        assertCode(()->bankJournals.post(bank,new com.cbs.accounting.JournalModels.Dispatch(bypass,ADMIN.subject(),CHECKER.issuer(),CHECKER.subject(),UUID.randomUUID())),"JOURNAL_DATABASE_UNAVAILABLE");
+        assertThat(funding.dashboard(ADMIN,bank.id(),f.account(),25,0).balance().postedBalance()).isEqualTo("9007199254740993.27");
+        assertCode(()->approvals.funding(ADMIN,key,bank.id(),fundingChange(f,"101","RECEIPT-001")),"IDEMPOTENCY_CONFLICT");
+        assertCode(()->approvals.reverseJournal(ADMIN,UUID.randomUUID(),bank.id(),r.id(),new com.cbs.accounting.JournalModels.Reversal(service.get(ADMIN,bank.id()).version(),"REV-FUND","Must not bypass subledger")),"FUNDING_MANAGED");
+        assertCode(()->approvals.journal(ADMIN,UUID.randomUUID(),bank.id(),journalChange(bank,List.of(f.source(),f.liability()),"1")),"FUNDING_MANAGED");
+        assertCode(()->approvals.ledger(ADMIN,UUID.randomUUID(),bank.id(),ledgerChange(bank,f.liability().id(),f.liability().code(),f.liability().chartAccountId(),"Rename",true)),"FUNDING_MANAGED");
+        assertCode(()->approvals.account(ADMIN,UUID.randomUUID(),bank.id(),accountChange(f.f(),f.account(),com.cbs.accounts.AccountModels.State.CLOSED)),"FUNDING_BALANCE_NOT_ZERO");
+        try(var c=TestDatabases.bank("funding");var st=c.createStatement()){
+            assertThatThrownBy(()->st.executeUpdate("DELETE FROM bank.funding")).isInstanceOf(SQLException.class);
+            try(var rs=st.executeQuery("SELECT count(*) FROM bank.journal")){rs.next();assertThat(rs.getInt(1)).isEqualTo(2);}
+        }
+    }
+    @Test void fundingValidatesMinimumScopeDatesStatusAndApprovalStaleness()throws Exception{
+        var f=fundingFixture("funding-guards");var bank=f.f().bank();String path="/api/v1/admin/tenants/"+bank.id()+"/funding";
+        mvc.perform(get(path+"/"+f.account())).andExpect(status().isUnauthorized());mvc.perform(get(path+"/"+f.account()).header("Authorization","Bearer "+TestIdentity.token("operator",false))).andExpect(status().isForbidden());
+        mvc.perform(admin(post(path)).header("Idempotency-Key",UUID.randomUUID()).contentType("application/json").content("{}")).andExpect(status().isBadRequest());
+        jdbc.update("DELETE FROM platform.transaction_limit WHERE tenant_id=? AND operation='FUNDING'",bank.id());
+        mvc.perform(admin(get("/api/v1/admin/tenants/"+bank.id()+"/transaction-limits"))).andExpect(status().isOk()).andExpect(jsonPath("$.missing[?(@.operation == 'FUNDING')].currency").value(org.hamcrest.Matchers.hasItem("INR")));
+        assertCode(()->approvals.funding(ADMIN,UUID.randomUUID(),bank.id(),fundingChange(f,"100","NO-POLICY")),"TRANSACTION_LIMIT_REQUIRED");
+        var limitRequest=approvals.limits(ADMIN,UUID.randomUUID(),bank.id(),new com.cbs.access.TransactionLimits.Change(service.get(ADMIN,bank.id()).version(),f.f().product().currency(),"FUNDING","1000","10000","Fictional funding policy"));
+        assertCode(()->approvals.funding(ADMIN,UUID.randomUUID(),bank.id(),fundingChange(f,"100","PENDING-POLICY")),"TRANSACTION_LIMIT_REQUIRED");
+        approveHttp(limitRequest.id());
+        mvc.perform(admin(get("/api/v1/admin/tenants/"+bank.id()+"/transaction-limits"))).andExpect(status().isOk()).andExpect(jsonPath("$.missing[?(@.operation == 'FUNDING')]").isEmpty());
+        assertCode(()->approvals.funding(ADMIN,UUID.randomUUID(),bank.id(),fundingChange(f,"99.99","SMALL")),"FUNDING_OPENING_MINIMUM");
+        assertCode(()->approvals.funding(ADMIN,UUID.randomUUID(),bank.id(),fundingChange(f,"100.001","SCALE")),"JOURNAL_AMOUNT_INVALID");
+        assertCode(()->approvals.funding(ADMIN,UUID.randomUUID(),bank.id(),fundingChange(f,"0","ZERO")),"JOURNAL_AMOUNT_INVALID");
+        var base=fundingChange(f,"100","DATE");var wrongDate=new com.cbs.accounts.FundingModels.Change(base.expectedVersion(),base.accountId(),base.sourceLedgerId(),base.liabilityLedgerId(),base.amount(),base.businessDate().minusDays(1),base.reference(),base.reason());
+        assertCode(()->approvals.funding(ADMIN,UUID.randomUUID(),bank.id(),wrongDate),"JOURNAL_BUSINESS_DATE_INVALID");
+        var stale=approvals.funding(ADMIN,UUID.randomUUID(),bank.id(),fundingChange(f,"100","STALE"));
+        var freeze=approvals.account(ADMIN,UUID.randomUUID(),bank.id(),accountChange(f.f(),f.account(),com.cbs.accounts.AccountModels.State.FROZEN));approveHttp(freeze.id());accounts.deliver(freeze.id());
+        assertThat(approvals.decide(CHECKER,stale.id(),com.cbs.approvals.ApprovalModels.Decision.APPROVE,"Stale").status()).isEqualTo(com.cbs.approvals.ApprovalModels.Status.STALE);
+        assertCode(()->approvals.funding(ADMIN,UUID.randomUUID(),bank.id(),fundingChange(f,"100","FROZEN")),"FUNDING_ACCOUNT_NOT_READY");
+        var unfreeze=approvals.account(ADMIN,UUID.randomUUID(),bank.id(),accountChange(f.f(),f.account(),com.cbs.accounts.AccountModels.State.AWAITING_FUNDING));approveHttp(unfreeze.id());accounts.deliver(unfreeze.id());
+        var r=approvals.funding(ADMIN,UUID.randomUUID(),bank.id(),fundingChange(f,"100","GOOD"));approveHttp(r.id());
+        assertCode(()->approvals.funding(ADMIN,UUID.randomUUID(),bank.id(),fundingChange(f,"100","PENDING")),"FUNDING_ACCOUNT_NOT_READY");
+        var day=days.dashboard(ADMIN,bank.id(),25,0);assertThat(day.blockers()).contains("DAY_CLOSE_PENDING_DELIVERIES");
+        funding.deliver(r.id());assertCode(()->approvals.funding(ADMIN,UUID.randomUUID(),bank.id(),fundingChange(f,"100","GOOD")),"JOURNAL_REFERENCE_IN_USE");
+        var foreign=register("funding-isolation");assertCode(()->funding.dashboard(ADMIN,foreign.id(),f.account(),25,0),"ACCOUNT_NOT_FOUND");assertCode(()->funding.retry(ADMIN,foreign.id(),r.id()),"APPROVAL_NOT_FOUND");
+    }
+    @Test void fundingRecoversLostAcknowledgementAndConcurrentRetries()throws Exception{
+        var f=fundingFixture("funding-recovery");var bank=f.f().bank();var input=fundingChange(f,"123.45","RECOVERY");UUID key=UUID.randomUUID();CyclicBarrier start=new CyclicBarrier(2);UUID id;
+        try(var pool=Executors.newFixedThreadPool(2)){Callable<UUID> task=()->{start.await();return approvals.funding(ADMIN,key,bank.id(),input).id();};var results=pool.invokeAll(List.of(task,task));id=results.getFirst().get();assertThat(id).isEqualTo(results.getLast().get());}
+        new TransactionTemplate(transactionManager).executeWithoutResult(t->{approvals.decide(CHECKER,id,com.cbs.approvals.ApprovalModels.Decision.APPROVE,"Rollback approval");t.setRollbackOnly();});
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM platform.funding_delivery WHERE tenant_id=?",Long.class,bank.id())).isZero();approveHttp(id);
+        new TransactionTemplate(transactionManager).executeWithoutResult(t->{funding.deliver(id);t.setRollbackOnly();});
+        assertThat(funding.dashboard(ADMIN,bank.id(),f.account(),25,0).items().getFirst().status()).isEqualTo("AWAITING_POSTING");
+        assertThat(funding.dashboard(ADMIN,bank.id(),f.account(),25,0).balance().postedBalance()).isEqualTo("123.45");
+        try(var pool=Executors.newFixedThreadPool(2)){var results=pool.invokeAll(List.of(()->{funding.retry(CHECKER,bank.id(),id);return true;},()->{funding.retry(CHECKER,bank.id(),id);return true;}));for(var result:results)result.get();}
+        assertThat(funding.dashboard(ADMIN,bank.id(),f.account(),25,0).items().getFirst().status()).isEqualTo("POSTED");
+        try(var c=TestDatabases.bank("fundrecovery");var st=c.createStatement();var rs=st.executeQuery("SELECT (SELECT count(*) FROM bank.funding) f,(SELECT count(*) FROM bank.journal) j")){rs.next();assertThat(rs.getInt("f")).isEqualTo(1);assertThat(rs.getInt("j")).isEqualTo(1);}
+    }
+    @Test void fundingBankFailureRollsBackJournalBalanceAndActivation()throws Exception{
+        var f=fundingFixture("funding-failure");var bank=f.f().bank();var r=approvals.funding(ADMIN,UUID.randomUUID(),bank.id(),fundingChange(f,"150","FAILURE"));approveHttp(r.id());
+        try(var c=TestDatabases.bank("fundfailure");var st=c.createStatement()){st.execute("CREATE TRIGGER fail_funding BEFORE INSERT ON bank.funding FOR EACH ROW EXECUTE FUNCTION bank.reject_ledger_event_change()");}
+        funding.deliver(r.id());assertThat(funding.dashboard(ADMIN,bank.id(),f.account(),25,0).items().getFirst().failureCode()).isEqualTo("FUNDING_DATABASE_UNAVAILABLE");
+        try(var c=TestDatabases.bank("fundfailure");var st=c.createStatement()){
+            try(var rs=st.executeQuery("SELECT (SELECT count(*) FROM bank.journal) j,(SELECT count(*) FROM bank.ledger_balance) b,(SELECT payload->>'state' FROM bank.account LIMIT 1) state")){rs.next();assertThat(rs.getInt("j")).isZero();assertThat(rs.getInt("b")).isZero();assertThat(rs.getString("state")).isEqualTo("AWAITING_FUNDING");}
+            st.execute("DROP TRIGGER fail_funding ON bank.funding");
+        }
+        funding.retry(CHECKER,bank.id(),r.id());assertThat(funding.dashboard(ADMIN,bank.id(),f.account(),25,0).balance().postedBalance()).isEqualTo("150");
+        try(var c=TestDatabases.bank("fundfailure");var st=c.createStatement()){st.executeUpdate("UPDATE bank.ledger_balance SET credit=credit+1 WHERE ledger_id='"+f.liability().id()+"'");}
+        assertThat(funding.dashboard(ADMIN,bank.id(),f.account(),25,0).balance().reconciled()).isFalse();
+        assertCode(()->approvals.funding(ADMIN,UUID.randomUUID(),bank.id(),fundingChange(f,"1","DRIFT")),"FUNDING_UNRECONCILED");assertThat(days.dashboard(ADMIN,bank.id(),25,0).blockers()).contains("DAY_CLOSE_UNRECONCILED");
+    }
+
+    private com.cbs.accounts.OperationModels.Change operationChange(FundingFixture f,com.cbs.accounts.OperationModels.Kind kind,String amount,UUID target,UUID original){return new com.cbs.accounts.OperationModels.Change(service.get(ADMIN,f.f().bank().id()).version(),kind,f.account(),target,kind==com.cbs.accounts.OperationModels.Kind.WITHDRAWAL?f.source().id():null,original,amount,reference.get(ADMIN,f.f().bank().id()).businessDate(),"OP-"+UUID.randomUUID(),"Fictional operation evidence");}
+    private UUID postOperation(FundingFixture f,com.cbs.accounts.OperationModels.Change input)throws Exception{var r=approvals.operation(ADMIN,UUID.randomUUID(),f.f().bank().id(),input);approveHttp(r.id());operations.deliver(r.id());assertThat(operations.dashboard(ADMIN,f.f().bank().id(),f.account(),25,0).items().getFirst().failureCode()).isNull();return r.id();}
+    private UUID fund(FundingFixture f,String amount)throws Exception{var r=approvals.funding(ADMIN,UUID.randomUUID(),f.f().bank().id(),fundingChange(f,amount,"F-"+UUID.randomUUID()));approveHttp(r.id());funding.deliver(r.id());return r.id();}
+    private com.cbs.access.AccessModels.Staff branchStaff(UUID bank,UUID branch,String subject,com.cbs.access.AccessModels.BranchRole role){
+        var staff=access.create(ADMIN,new com.cbs.access.AccessModels.StaffInput(subject,subject,null,"Test branch onboarding"));
+        service.setMembership(ADMIN,bank,new MembershipRequest(service.get(ADMIN,bank).version(),subject,BankRole.BANK_OPERATOR,true,"Assign bank"));
+        var b=branchService.list(ADMIN,bank,100,0).items().stream().filter(x->x.id().equals(branch)).findFirst().orElseThrow();
+        branchService.grant(ADMIN,bank,branch,new com.cbs.access.AccessModels.BranchGrant(b.version(),staff.id(),role,true,"Assign branch"));return staff;
+    }
+    @Test void branchOperationsRequireScopedRolesMfaAndApprovedLimits()throws Exception{
+        var f=fundingFixture("branch-operations");var bank=f.f().bank();fund(f,"1000");
+        var branch=branchService.create(ADMIN,bank.id(),new com.cbs.access.AccessModels.BranchInput(bank.legalEntities().getFirst().id(),"OPS","Operations branch","Open branch"));
+        var teller=branchStaff(bank.id(),branch.id(),"ops-teller",com.cbs.access.AccessModels.BranchRole.TELLER);
+        var manager=branchStaff(bank.id(),branch.id(),"ops-manager",com.cbs.access.AccessModels.BranchRole.BRANCH_MANAGER);
+        var assignment=approvals.assignment(ADMIN,UUID.randomUUID(),bank.id(),new com.cbs.access.BranchOperations.Assignment(service.get(ADMIN,bank.id()).version(),f.account(),branch.id(),"Assign operational ownership"));approveHttp(assignment.id());
+        var actor=new Actor(TestIdentity.ISSUER,teller.subject(),false,UUID.randomUUID());var reviewer=new Actor(TestIdentity.ISSUER,manager.subject(),false,UUID.randomUUID());
+        var kind=com.cbs.accounts.OperationModels.Kind.HOLD;
+        assertCode(()->approvals.operation(actor,UUID.randomUUID(),bank.id(),operationChange(f,kind,"100",null,null)),"BRANCH_LIMIT_REQUIRED");
+        assertCode(()->approvals.operation(ADMIN,UUID.randomUUID(),bank.id(),operationChange(f,kind,"100",null,null)),"BANK_ACCESS_DENIED");
+        for(UUID staff:java.util.Arrays.asList(null,teller.id())){
+            var policy=new com.cbs.access.BranchOperations.Limit(service.get(ADMIN,bank.id()).version(),branch.id(),staff,"INR","HOLD",staff==null?"500":"300",staff==null?"600":"350","Approve fixture caps");
+            var request=approvals.branchLimit(ADMIN,UUID.randomUUID(),bank.id(),policy);approveHttp(request.id());
+        }
+        String path="/api/v1/banks/"+bank.id()+"/branches/"+branch.id()+"/operations";
+        String token=TestIdentity.token(teller.subject(),false);String managerToken=TestIdentity.token(manager.subject(),false);
+        mvc.perform(get(path+"/accounts").header("Authorization","Bearer "+token)).andExpect(status().isOk()).andExpect(jsonPath("$.items[0].id").value(f.account().toString()));
+        String weak=TestIdentity.token(TestIdentity.KEY,TestIdentity.ISSUER,TestIdentity.AUDIENCE,teller.subject(),false,Instant.now().plusSeconds(300),Instant.now(),Instant.now(),UUID.randomUUID().toString(),false);
+        mvc.perform(get(path+"/accounts").header("Authorization","Bearer "+weak)).andExpect(status().isForbidden()).andExpect(jsonPath("$.code").value("MFA_REQUIRED"));
+        assertCode(()->approvals.operation(actor,UUID.randomUUID(),bank.id(),operationChange(f,kind,"301",null,null)),"TRANSACTION_LIMIT_EXCEEDED");
+        var input=operationChange(f,kind,"100",null,null);UUID key=UUID.randomUUID();
+        var result=mvc.perform(post(path+"/requests").header("Authorization","Bearer "+token).header("Idempotency-Key",key).contentType("application/json").content(json.writeValueAsString(input))).andExpect(status().isAccepted()).andReturn().getResponse().getContentAsString();
+        var request=json.readValue(result,com.cbs.approvals.ApprovalModels.Request.class);
+        mvc.perform(post(path+"/requests/"+request.id()+"/approve").header("Authorization","Bearer "+token).contentType("application/json").content("{\"reason\":\"Own approval\"}")).andExpect(status().isForbidden());
+        mvc.perform(post(path+"/requests/"+request.id()+"/approve").header("Authorization","Bearer "+managerToken).contentType("application/json").content("{\"reason\":\"Independent review\"}")).andExpect(status().isOk()).andExpect(jsonPath("$.status").value("APPROVED"));
+        operations.deliver(request.id());
+        assertThat(operations.dashboard(ADMIN,bank.id(),f.account(),25,0).position().held()).isEqualTo("100");
+        assertThat(approvals.operation(actor,key,bank.id(),input).id()).isEqualTo(request.id());
+        var release=approvals.operation(actor,UUID.randomUUID(),bank.id(),operationChange(f,com.cbs.accounts.OperationModels.Kind.RELEASE,"100",null,request.id()));
+        approvals.decide(reviewer,release.id(),com.cbs.approvals.ApprovalModels.Decision.APPROVE,"Release reviewed");operations.deliver(release.id());
+        assertCode(()->approvals.operation(actor,UUID.randomUUID(),bank.id(),operationChange(f,kind,"251",null,null)),"DAILY_LIMIT_EXCEEDED");
+        assertThatThrownBy(()->jdbc.update("UPDATE platform.operation_scope SET staff_id=? WHERE request_id=?",manager.id(),request.id())).isInstanceOf(DataAccessException.class);
+        mvc.perform(get("/api/v1/banks/"+bank.id()+"/branches/"+UUID.randomUUID()+"/operations/requests/"+request.id()).header("Authorization","Bearer "+managerToken)).andExpect(status().isForbidden());
+        var current=branchService.list(ADMIN,bank.id(),100,0).items().getFirst();branchService.grant(ADMIN,bank.id(),branch.id(),new com.cbs.access.AccessModels.BranchGrant(current.version(),teller.id(),com.cbs.access.AccessModels.BranchRole.TELLER,false,"Revoke teller"));
+        mvc.perform(get(path+"/accounts").header("Authorization","Bearer "+token)).andExpect(status().isForbidden());
+        assertCode(()->approvals.operation(actor,key,bank.id(),input),"BRANCH_ACCESS_DENIED");
+    }
+    @Test void operationsProtectHoldsMinimumAndRecoverWithdrawals()throws Exception{
+        var f=fundingFixture("operations-main");var bank=f.f().bank();fund(f,"1000.17");
+        String path="/api/v1/admin/tenants/"+bank.id()+"/account-operations";
+        mvc.perform(get(path+"/"+f.account())).andExpect(status().isUnauthorized());mvc.perform(get(path+"/"+f.account()).header("Authorization","Bearer "+TestIdentity.token("operator",false))).andExpect(status().isForbidden());
+        mvc.perform(admin(post(path)).header("Idempotency-Key",UUID.randomUUID()).contentType("application/json").content("{}")).andExpect(status().isBadRequest());
+        var kind=com.cbs.accounts.OperationModels.Kind.HOLD;var hold=postOperation(f,operationChange(f,kind,"700",null,null));
+        var p=operations.dashboard(ADMIN,bank.id(),f.account(),25,0).position();assertThat(p.posted()).isEqualTo("1000.17");assertThat(p.held()).isEqualTo("700");assertThat(p.available()).isEqualTo("300.17");assertThat(p.withdrawable()).isEqualTo("290.17");
+        assertCode(()->approvals.operation(ADMIN,UUID.randomUUID(),bank.id(),operationChange(f,com.cbs.accounts.OperationModels.Kind.WITHDRAWAL,"290.18",null,null)),"INSUFFICIENT_AVAILABLE_BALANCE");
+        assertCode(()->approvals.operation(ADMIN,UUID.randomUUID(),bank.id(),operationChange(f,kind,"0.001",null,null)),"JOURNAL_AMOUNT_INVALID");
+        var policy=new com.cbs.access.TransactionLimits.Change(service.get(ADMIN,bank.id()).version(),f.f().product().currency(),"WITHDRAWAL","290.17","300","Set approved withdrawal caps");
+        var limitRequest=approvals.limits(ADMIN,UUID.randomUUID(),bank.id(),policy);
+        assertCode(()->approvals.decide(ADMIN,limitRequest.id(),com.cbs.approvals.ApprovalModels.Decision.APPROVE,"Own policy"),"SELF_APPROVAL_FORBIDDEN");
+        approveHttp(limitRequest.id());
+        assertCode(()->approvals.operation(ADMIN,UUID.randomUUID(),bank.id(),operationChange(f,com.cbs.accounts.OperationModels.Kind.WITHDRAWAL,"290.18",null,null)),"TRANSACTION_LIMIT_EXCEEDED");
+        var input=operationChange(f,com.cbs.accounts.OperationModels.Kind.WITHDRAWAL,"290.17",null,null);UUID key=UUID.randomUUID();var request=approvals.operation(ADMIN,key,bank.id(),input);
+        assertCode(()->approvals.decide(ADMIN,request.id(),com.cbs.approvals.ApprovalModels.Decision.APPROVE,"Own"),"SELF_APPROVAL_FORBIDDEN");approveHttp(request.id());
+        assertCode(()->com.cbs.access.TransactionLimits.check(jdbc,bank.id(),f.f().product().currency(),"WITHDRAWAL",input.businessDate(),new java.math.BigDecimal("9.84")),"DAILY_LIMIT_EXCEEDED");
+        assertCode(()->journals.deliver(request.id()),"FUNDING_MANAGED");assertCode(()->approvals.funding(ADMIN,UUID.randomUUID(),bank.id(),fundingChange(f,"1","PENDING")),"ACCOUNT_OPERATION_PENDING");
+        assertCode(()->approvals.account(ADMIN,UUID.randomUUID(),bank.id(),accountChange(f.f(),f.account(),com.cbs.accounts.AccountModels.State.FROZEN)),"ACCOUNT_OPERATION_PENDING");
+        assertThat(days.dashboard(ADMIN,bank.id(),25,0).blockers()).contains("DAY_CLOSE_PENDING_DELIVERIES");
+        new TransactionTemplate(transactionManager).executeWithoutResult(t->{operations.deliver(request.id());t.setRollbackOnly();});
+        assertThat(operations.dashboard(ADMIN,bank.id(),f.account(),25,0).position().posted()).isEqualTo("710");
+        try(var pool=Executors.newFixedThreadPool(2)){var results=pool.invokeAll(List.of(()->{operations.retry(CHECKER,bank.id(),request.id());return true;},()->{operations.retry(CHECKER,bank.id(),request.id());return true;}));for(var result:results)result.get();}
+        assertThat(approvals.operation(ADMIN,key,bank.id(),input).id()).isEqualTo(request.id());
+        var release=operationChange(f,com.cbs.accounts.OperationModels.Kind.RELEASE,"700",null,hold);postOperation(f,release);
+        assertThat(operations.dashboard(ADMIN,bank.id(),f.account(),25,0).position().held()).isEqualTo("0");
+        assertCode(()->approvals.operation(ADMIN,UUID.randomUUID(),bank.id(),operationChange(f,com.cbs.accounts.OperationModels.Kind.RELEASE,"700",null,hold)),"HOLD_NOT_ACTIVE");
+        assertThat(funding.dashboard(ADMIN,bank.id(),f.account(),25,0).balance().postedBalance()).isEqualTo("710");assertThat(days.dashboard(ADMIN,bank.id(),25,0).blockers()).doesNotContain("DAY_CLOSE_UNRECONCILED");
+        try(var c=TestDatabases.bank("operations");var st=c.createStatement()){
+            try(var r=st.executeQuery("SELECT count(*) FROM bank.customer_entry")){r.next();assertThat(r.getInt(1)).isEqualTo(1);}
+            assertThatThrownBy(()->st.executeUpdate("DELETE FROM bank.customer_entry")).isInstanceOf(SQLException.class);
+        }
+    }
+    @Test void operationsTransferAndReverseFundingWithAtomicRecovery()throws Exception{
+        var f=fundingFixture("operations-transfer");var bank=f.f().bank();fund(f,"1000");var reversible=fund(f,"200");
+        var opening=approvals.account(ADMIN,UUID.randomUUID(),bank.id(),accountChange(f.f(),null,com.cbs.accounts.AccountModels.State.AWAITING_FUNDING));approveHttp(opening.id());accounts.deliver(opening.id());
+        var target=accounts.list(ADMIN,bank.id(),"",null,25,0).items().stream().filter(x->!x.id().equals(f.account())).findFirst().orElseThrow().id();
+        var lr=approvals.ledger(ADMIN,UUID.randomUUID(),bank.id(),ledgerChange(bank,null,"CUSTOMER_002",f.f().product().liabilityAccountId(),"Second customer",true));approveHttp(lr.id());ledger.deliver(lr.id());var liability=ledger.list(ADMIN,bank.id(),"CUSTOMER_002",null,null,25,0).items().getFirst().definition();var second=new FundingFixture(f.f(),target,f.source(),liability);fund(second,"100");
+        var input=operationChange(f,com.cbs.accounts.OperationModels.Kind.TRANSFER,"300.11",target,null);var r=approvals.operation(ADMIN,UUID.randomUUID(),bank.id(),input);approveHttp(r.id());
+        try(var c=TestDatabases.bank("optransfer");var st=c.createStatement()){st.execute("CREATE TRIGGER fail_operation BEFORE INSERT ON bank.customer_entry FOR EACH ROW EXECUTE FUNCTION bank.reject_ledger_event_change()");}
+        operations.deliver(r.id());assertThat(operations.dashboard(ADMIN,bank.id(),f.account(),25,0).items().getFirst().failureCode()).isEqualTo("OPERATION_DATABASE_UNAVAILABLE");
+        assertThat(operations.dashboard(ADMIN,bank.id(),f.account(),25,0).position().posted()).isEqualTo("1200");assertThat(operations.dashboard(ADMIN,bank.id(),target,25,0).position().posted()).isEqualTo("100");
+        try(var c=TestDatabases.bank("optransfer");var st=c.createStatement()){st.execute("DROP TRIGGER fail_operation ON bank.customer_entry");}
+        operations.retry(CHECKER,bank.id(),r.id());assertThat(operations.dashboard(ADMIN,bank.id(),f.account(),25,0).position().posted()).isEqualTo("899.89");assertThat(operations.dashboard(ADMIN,bank.id(),target,25,0).position().posted()).isEqualTo("400.11");
+        postOperation(f,operationChange(f,com.cbs.accounts.OperationModels.Kind.FUNDING_REVERSAL,"200",null,reversible));
+        assertThat(operations.dashboard(ADMIN,bank.id(),f.account(),25,0).position().posted()).isEqualTo("699.89");
+        var date=reference.get(ADMIN,bank.id()).businessDate();var statement=statements.read(ADMIN,bank.id(),f.account(),date,date,2,2);assertThat(statement.openingBalance()).isEqualTo("0");assertThat(statement.closingBalance()).isEqualTo("699.89");assertThat(statement.total()).isEqualTo(4);assertThat(statement.items()).hasSize(2);assertThat(statement.items().getLast().balance()).isEqualTo("699.89");
+        String exportPath="/api/v1/admin/tenants/"+bank.id()+"/accounts/"+f.account()+"/statement/export?from="+date+"&to="+date;
+        mvc.perform(get(exportPath)).andExpect(status().isUnauthorized());
+        mvc.perform(admin(get(exportPath))).andExpect(status().isOk()).andExpect(header().string("Cache-Control","no-store")).andExpect(content().string(org.hamcrest.Matchers.containsString("699.89")));
+        var empty=statements.read(ADMIN,bank.id(),f.account(),date.plusDays(1),date.plusDays(1),25,0);assertThat(empty.items()).isEmpty();assertThat(empty.openingBalance()).isEqualTo("699.89");assertThat(empty.closingBalance()).isEqualTo("699.89");
+        assertCode(()->statements.read(ADMIN,bank.id(),f.account(),date,date.plusDays(367),25,0),"STATEMENT_DATE_RANGE");
+        assertCode(()->approvals.operation(ADMIN,UUID.randomUUID(),bank.id(),operationChange(f,com.cbs.accounts.OperationModels.Kind.FUNDING_REVERSAL,"200",null,reversible)),"JOURNAL_ALREADY_REVERSED");
+        assertCode(()->approvals.operation(ADMIN,UUID.randomUUID(),bank.id(),operationChange(f,com.cbs.accounts.OperationModels.Kind.TRANSFER,"1",f.account(),null)),"OPERATION_FIELDS_INVALID");
+        assertThat(days.dashboard(ADMIN,bank.id(),25,0).blockers()).doesNotContain("DAY_CLOSE_UNRECONCILED");
+    }
+
+    private Tenant chartBank(String binding) {
+        Tenant bank=register(binding);
+        // Chart definitions live in the control store; no bank database is accessed by these tests.
+        jdbc.update("UPDATE platform.tenant SET status='ACTIVE' WHERE id=?",bank.id());
+        return service.get(ADMIN,bank.id());
+    }
+    private com.cbs.accounting.ChartModels.Change chartChange(UUID bank,UUID id,String code,String name,
+            com.cbs.accounting.ChartModels.Category category,com.cbs.accounting.ChartModels.Kind kind,UUID parent,boolean active) {
+        return new com.cbs.accounting.ChartModels.Change(service.get(ADMIN,bank).version(),id,code,name,"",category,
+                com.cbs.accounting.ChartModels.Balance.DEBIT,kind,parent,active,"Configure chart account");
+    }
+
+    private com.cbs.reference.ReferenceModels.Change settingsChange(com.cbs.reference.ReferenceModels.Settings s) {
+        return new com.cbs.reference.ReferenceModels.Change(s.version(),s.currencies(),s.languages(),s.defaultLanguage(),s.businessTimezone(),s.businessDate(),s.weekendDays(),s.holidays(),"Review bank settings");
+    }
+    private com.cbs.access.AccessModels.Staff approvalStaff() {
+        return access.create(ADMIN,new com.cbs.access.AccessModels.StaffInput("approval-"+UUID.randomUUID(),"Approval test staff",null,"Test onboarding"));
+    }
+    private com.cbs.access.AccessModels.StaffUpdate approvalUpdate(com.cbs.access.AccessModels.Staff staff,String name) {
+        return new com.cbs.access.AccessModels.StaffUpdate(staff.version(),name,staff.email(),true,"Correct staff profile");
+    }
     private Tenant register(String reference) { return service.register(ADMIN, UUID.randomUUID(), request(reference)).tenant(); }
     private Tenant provision(Tenant tenant) { return service.provision(ADMIN, tenant.id(), new ChangeRequest(tenant.version(), "Provision bank database")); }
     private static RegisterRequest request(String reference) {
@@ -446,9 +1575,21 @@ class TenantAdministrationIntegrationTest {
         return request.header("Authorization", "Bearer " + TestIdentity.token("administrator", true));
     }
     private Tenant invokeTenant(MockHttpServletRequestBuilder request, Object body) throws Exception {
-        String response = mvc.perform(admin(request).contentType("application/json").content(json.writeValueAsString(body)))
-                .andExpect(status().isOk()).andReturn().getResponse().getContentAsString();
-        return json.readValue(response, Tenant.class);
+        var response = mvc.perform(admin(request).header("Idempotency-Key",UUID.randomUUID()).contentType("application/json").content(json.writeValueAsString(body)))
+                .andReturn().getResponse();
+        if(response.getStatus()==202) {
+            var pending=json.readValue(response.getContentAsString(),com.cbs.approvals.ApprovalModels.Request.class);
+            assertThat(pending.status()).isEqualTo(com.cbs.approvals.ApprovalModels.Status.PENDING);
+            approveHttp(pending.id());
+            return service.get(ADMIN,pending.targetId());
+        }
+        assertThat(response.getStatus()).isEqualTo(200);
+        return json.readValue(response.getContentAsString(), Tenant.class);
+    }
+    private void approveHttp(UUID id) throws Exception {
+        mvc.perform(post("/api/v1/admin/approvals/"+id+"/approve").header("Authorization","Bearer "+TestIdentity.token("checker",true))
+                .contentType("application/json").content("{\"reason\":\"Verified supporting information\"}"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.status").value("APPROVED"));
     }
     private org.springframework.test.web.servlet.ResultActions bankGet(UUID id, String subject, boolean operational) throws Exception {
         return mvc.perform(get("/api/v1/banks/" + id + (operational ? "/operational-context" : ""))
@@ -456,5 +1597,186 @@ class TenantAdministrationIntegrationTest {
     }
     private static void assertCode(org.assertj.core.api.ThrowableAssert.ThrowingCallable action, String code) {
         assertThatThrownBy(action).isInstanceOfSatisfying(TenantException.class, exception -> assertThat(exception.code()).isEqualTo(code));
+    }
+
+    @Autowired com.cbs.cash.CashService cash;
+    @Autowired com.cbs.cash.BankCashStore bankCash;
+    private com.cbs.cash.CashModels.Change cashChange(Tenant bank,UUID branch,com.cbs.cash.CashModels.Kind kind,UUID location,UUID destination,UUID ledger,String amount,List<com.cbs.cash.CashModels.Count> counts){
+        return new com.cbs.cash.CashModels.Change(service.get(ADMIN,bank.id()).version(),kind,branch,location,destination,ledger,null,null,null,null,amount,reference.get(ADMIN,bank.id()).businessDate(),"CASH-"+UUID.randomUUID(),counts,"Verified fictional physical cash evidence");
+    }
+    private UUID cashLocation(Tenant bank,UUID branch,com.cbs.accounting.LedgerModels.Definition source,String code,com.cbs.cash.CashModels.Type type)throws Exception{
+        var request=approvals.ledger(ADMIN,UUID.randomUUID(),bank.id(),ledgerChange(bank,null,code,source.chartAccountId(),code,true));approveHttp(request.id());ledger.deliver(request.id());
+        var account=ledger.list(ADMIN,bank.id(),code,null,null,25,0).items().getFirst().definition();
+        var input=new com.cbs.cash.CashModels.Change(service.get(ADMIN,bank.id()).version(),com.cbs.cash.CashModels.Kind.REGISTER,branch,null,null,account.id(),code,code,account.currency(),type,null,reference.get(ADMIN,bank.id()).businessDate(),code,null,"Register fictional cash custody");
+        var registration=approvals.cash(ADMIN,UUID.randomUUID(),bank.id(),input);approveHttp(registration.id());cash.deliver(registration.id());
+        assertThat(jdbc.queryForObject("SELECT failure_code FROM platform.cash_delivery WHERE request_id=?",String.class,registration.id())).isNull();return registration.id();
+    }
+    private UUID postCash(Actor maker,Actor checker,Tenant bank,com.cbs.cash.CashModels.Change change){
+        var request=approvals.cash(maker,UUID.randomUUID(),bank.id(),change);
+        assertThat(approvals.decide(checker,request.id(),com.cbs.approvals.ApprovalModels.Decision.APPROVE,"Verified cash evidence").status()).isEqualTo(com.cbs.approvals.ApprovalModels.Status.APPROVED);
+        cash.deliver(request.id());assertThat(jdbc.queryForObject("SELECT failure_code FROM platform.cash_delivery WHERE request_id=?",String.class,request.id())).isNull();return request.id();
+    }
+    @Test void cashCustodyEnforcesApprovalsCountsLimitsAndAtomicPosting()throws Exception{
+        var f=fundingFixture("cash-main");var bank=f.f().bank();
+        var branch=branchService.create(ADMIN,bank.id(),new com.cbs.access.AccessModels.BranchInput(bank.legalEntities().getFirst().id(),"CASH","Cash branch","Open branch"));
+        var teller=branchStaff(bank.id(),branch.id(),"cash-teller",com.cbs.access.AccessModels.BranchRole.TELLER);
+        var manager=branchStaff(bank.id(),branch.id(),"cash-manager",com.cbs.access.AccessModels.BranchRole.BRANCH_MANAGER);
+        var checker=branchStaff(bank.id(),branch.id(),"cash-checker",com.cbs.access.AccessModels.BranchRole.BRANCH_MANAGER);
+        var owner=new Actor(TestIdentity.ISSUER,teller.subject(),false,UUID.randomUUID());var maker=new Actor(TestIdentity.ISSUER,manager.subject(),false,UUID.randomUUID());var reviewer=new Actor(TestIdentity.ISSUER,checker.subject(),false,UUID.randomUUID());
+        var assignment=approvals.assignment(ADMIN,UUID.randomUUID(),bank.id(),new com.cbs.access.BranchOperations.Assignment(service.get(ADMIN,bank.id()).version(),f.account(),branch.id(),"Assign teller customer"));approveHttp(assignment.id());
+        var vault=cashLocation(bank,branch.id(),f.source(),"VAULT",com.cbs.cash.CashModels.Type.VAULT);
+        var till=cashLocation(bank,branch.id(),f.source(),"TILL",com.cbs.cash.CashModels.Type.TILL);
+        var receive=com.cbs.cash.CashModels.Kind.RECEIVE;var transfer=com.cbs.cash.CashModels.Kind.TRANSFER;
+        assertCode(()->approvals.cash(maker,UUID.randomUUID(),bank.id(),cashChange(bank,branch.id(),receive,vault,null,f.source().id(),"1000",null)),"TRANSACTION_LIMIT_REQUIRED");
+        for(String operation:List.of("CASH_RECEIVE","CASH_DISPATCH","CASH_TRANSFER","CASH_DEPOSIT","CASH_WITHDRAWAL")){
+            var r=approvals.limits(ADMIN,UUID.randomUUID(),bank.id(),new com.cbs.access.TransactionLimits.Change(service.get(ADMIN,bank.id()).version(),"INR",operation,"2000","5000","Fictional cash limits"));approveHttp(r.id());
+            for(UUID staff:java.util.Arrays.asList(null,teller.id(),manager.id())){
+                var policy=approvals.branchLimit(ADMIN,UUID.randomUUID(),bank.id(),new com.cbs.access.BranchOperations.Limit(service.get(ADMIN,bank.id()).version(),branch.id(),staff,"INR",operation,"2000","5000","Fictional scoped cash limits"));approveHttp(policy.id());
+            }
+        }
+        assertCode(()->approvals.cash(owner,UUID.randomUUID(),bank.id(),cashChange(bank,branch.id(),receive,vault,null,f.source().id(),"1000",null)),"BRANCH_PERMISSION_DENIED");
+        var incoming=cashChange(bank,branch.id(),receive,vault,null,f.source().id(),"1000",null);var key=UUID.randomUUID();var request=approvals.cash(maker,key,bank.id(),incoming);
+        assertCode(()->approvals.decide(maker,request.id(),com.cbs.approvals.ApprovalModels.Decision.APPROVE,"Own approval"),"SELF_APPROVAL_FORBIDDEN");
+        assertCode(()->approvals.decide(owner,request.id(),com.cbs.approvals.ApprovalModels.Decision.APPROVE,"Teller approval"),"BRANCH_PERMISSION_DENIED");
+        approvals.decide(reviewer,request.id(),com.cbs.approvals.ApprovalModels.Decision.APPROVE,"Cash counted independently");
+        assertCode(()->journals.deliver(request.id()),"FUNDING_MANAGED");
+        try(var c=TestDatabases.bank("cash");var st=c.createStatement()){st.execute("CREATE TRIGGER fail_cash BEFORE INSERT ON bank.cash_entry FOR EACH ROW EXECUTE FUNCTION bank.reject_ledger_event_change()");}
+        cash.deliver(request.id());assertThat(jdbc.queryForObject("SELECT failure_code FROM platform.cash_delivery WHERE request_id=?",String.class,request.id())).isEqualTo("CASH_DATABASE_UNAVAILABLE");
+        assertThat(new java.math.BigDecimal(bankCash.position(bank,cash.location(bank.id(),vault)).balance())).isZero();
+        try(var c=TestDatabases.bank("cash");var st=c.createStatement()){try(var rs=st.executeQuery("SELECT count(*) FROM bank.journal")){rs.next();assertThat(rs.getInt(1)).isZero();}st.execute("DROP TRIGGER fail_cash ON bank.cash_entry");}
+        cash.deliver(request.id());assertThat(approvals.cash(maker,key,bank.id(),incoming).id()).isEqualTo(request.id());
+        assertThat(new java.math.BigDecimal(bankCash.position(bank,cash.location(bank.id(),vault)).balance())).isEqualByComparingTo("1000");
+        assertCode(()->approvals.cash(owner,UUID.randomUUID(),bank.id(),cashChange(bank,branch.id(),transfer,vault,till,null,"100",null)),"CASH_SESSION_REQUIRED");
+        postCash(owner,reviewer,bank,cashChange(bank,branch.id(),com.cbs.cash.CashModels.Kind.OPEN,till,null,null,null,List.of()));
+        assertThat(days.dashboard(ADMIN,bank.id(),25,0).blockers()).contains("CASH_SESSION_OPEN");
+        assertCode(()->approvals.cash(maker,UUID.randomUUID(),bank.id(),cashChange(bank,branch.id(),transfer,vault,till,null,"100",null)),"CASH_CUSTODIAN_REQUIRED");
+        assertCode(()->approvals.cash(owner,UUID.randomUUID(),bank.id(),cashChange(bank,branch.id(),transfer,vault,till,null,"2001",null)),"TRANSACTION_LIMIT_EXCEEDED");
+        var movement=approvals.cash(owner,UUID.randomUUID(),bank.id(),cashChange(bank,branch.id(),transfer,vault,till,null,"100",null));approvals.decide(reviewer,movement.id(),com.cbs.approvals.ApprovalModels.Decision.APPROVE,"Counted transfer");
+        new TransactionTemplate(transactionManager).executeWithoutResult(t->{cash.deliver(movement.id());t.setRollbackOnly();});
+        assertThat(jdbc.queryForObject("SELECT completed FROM platform.cash_delivery WHERE request_id=?",Boolean.class,movement.id())).isFalse();
+        cash.deliver(movement.id());cash.deliver(movement.id());
+        assertThat(new java.math.BigDecimal(bankCash.position(bank,cash.location(bank.id(),till)).balance())).isEqualByComparingTo("100");
+        assertThat(new java.math.BigDecimal(bankCash.position(bank,cash.location(bank.id(),vault)).balance())).isEqualByComparingTo("900");
+        assertCode(()->approvals.cash(owner,UUID.randomUUID(),bank.id(),cashChange(bank,branch.id(),transfer,till,vault,null,"101",null)),"CASH_INSUFFICIENT");
+        for(UUID staff:java.util.Arrays.asList(null,teller.id())){var policy=approvals.branchLimit(ADMIN,UUID.randomUUID(),bank.id(),new com.cbs.access.BranchOperations.Limit(service.get(ADMIN,bank.id()).version(),branch.id(),staff,"INR","WITHDRAWAL","2000","5000","Fictional customer withdrawal limits"));approveHttp(policy.id());}
+        var depositChange=customerCashChange(bank,branch.id(),till,com.cbs.cash.CashModels.Kind.DEPOSIT,f.account(),f.liability().id(),"200");
+        var depositResponse=mvc.perform(post("/api/v1/banks/"+bank.id()+"/branches/"+branch.id()+"/operations/cash").header("Authorization","Bearer "+TestIdentity.token(teller.subject(),false)).header("Idempotency-Key",UUID.randomUUID()).contentType("application/json").content(json.writeValueAsString(depositChange))).andExpect(status().isAccepted()).andReturn().getResponse().getContentAsString();
+        var depositRequest=json.readValue(depositResponse,com.cbs.approvals.ApprovalModels.Request.class);approvals.decide(reviewer,depositRequest.id(),com.cbs.approvals.ApprovalModels.Decision.APPROVE,"Cash deposit checked");
+        assertCode(()->funding.deliver(depositRequest.id()),"CASH_MANAGED");
+        try(var c=TestDatabases.bank("cash");var st=c.createStatement()){st.execute("CREATE TRIGGER fail_customer_cash BEFORE INSERT ON bank.cash_entry FOR EACH ROW EXECUTE FUNCTION bank.reject_ledger_event_change()");}
+        cash.deliver(depositRequest.id());assertThat(funding.dashboard(ADMIN,bank.id(),f.account(),25,0).balance().postedBalance()).isEqualTo("0");
+        assertThat(new java.math.BigDecimal(bankCash.position(bank,cash.location(bank.id(),till)).balance())).isEqualByComparingTo("100");
+        try(var c=TestDatabases.bank("cash");var st=c.createStatement()){st.execute("DROP TRIGGER fail_customer_cash ON bank.cash_entry");}
+        new TransactionTemplate(transactionManager).executeWithoutResult(t->{cash.deliver(depositRequest.id());t.setRollbackOnly();});cash.deliver(depositRequest.id());
+        assertThat(funding.dashboard(ADMIN,bank.id(),f.account(),25,0).balance().postedBalance()).isEqualTo("200");
+        assertThat(new java.math.BigDecimal(bankCash.position(bank,cash.location(bank.id(),till)).balance())).isEqualByComparingTo("300");
+        assertCode(()->approvals.cash(owner,UUID.randomUUID(),bank.id(),customerCashChange(bank,branch.id(),till,com.cbs.cash.CashModels.Kind.WITHDRAWAL,f.account(),null,"201")),"INSUFFICIENT_AVAILABLE_BALANCE");
+        var withdrawal=postCash(owner,reviewer,bank,customerCashChange(bank,branch.id(),till,com.cbs.cash.CashModels.Kind.WITHDRAWAL,f.account(),null,"100"));
+        assertCode(()->operations.deliver(withdrawal),"CASH_MANAGED");
+        assertThat(funding.dashboard(ADMIN,bank.id(),f.account(),25,0).balance().postedBalance()).isEqualTo("100");
+        assertThat(new java.math.BigDecimal(bankCash.position(bank,cash.location(bank.id(),till)).balance())).isEqualByComparingTo("200");
+
+        assertCode(()->approvals.cash(owner,UUID.randomUUID(),bank.id(),cashChange(bank,branch.id(),com.cbs.cash.CashModels.Kind.CLOSE,till,null,null,null,List.of(new com.cbs.cash.CashModels.Count("50",1)))),"CASH_COUNT_MISMATCH");
+        String exceptionsPath="/api/v1/banks/"+bank.id()+"/branches/"+branch.id()+"/operations/cash/exceptions";
+        var incidentKey=UUID.randomUUID();
+        var discrepancy=new com.cbs.cash.CashExceptionInput(service.get(ADMIN,bank.id()).version(),till,incoming.businessDate(),List.of(new com.cbs.cash.CashModels.Count("50",3)),"Fictional shortage investigation");
+        mvc.perform(post(exceptionsPath).header("Authorization","Bearer "+TestIdentity.token(manager.subject(),false)).header("Idempotency-Key",incidentKey).contentType("application/json").content(json.writeValueAsString(discrepancy))).andExpect(status().isCreated()).andExpect(jsonPath("$.id").value(incidentKey.toString()));
+        assertThat(cash.reportException(maker,bank.id(),branch.id(),incidentKey,discrepancy)).isEqualTo(incidentKey);
+        assertThat(days.dashboard(ADMIN,bank.id(),25,0).blockers()).contains("CASH_EXCEPTION_OPEN");
+        assertCode(()->approvals.cash(owner,UUID.randomUUID(),bank.id(),cashChange(bank,branch.id(),transfer,vault,till,null,"1",null)),"CASH_EXCEPTION_OPEN");
+        assertCode(()->approvals.cash(owner,UUID.randomUUID(),bank.id(),customerCashChange(bank,branch.id(),till,com.cbs.cash.CashModels.Kind.WITHDRAWAL,f.account(),null,"1")),"CASH_EXCEPTION_OPEN");
+        var badRecount=new com.cbs.cash.CashExceptionInput(service.get(ADMIN,bank.id()).version(),till,incoming.businessDate(),List.of(new com.cbs.cash.CashModels.Count("50",3)),"Still short");
+        assertCode(()->cash.resolveException(reviewer,bank.id(),branch.id(),incidentKey,badRecount),"CASH_COUNT_MISMATCH");
+        var recount=new com.cbs.cash.CashExceptionInput(service.get(ADMIN,bank.id()).version(),till,incoming.businessDate(),List.of(new com.cbs.cash.CashModels.Count("50",4)),"Independent recount found the missing note");
+        assertCode(()->cash.resolveException(maker,bank.id(),branch.id(),incidentKey,recount),"SELF_APPROVAL_FORBIDDEN");
+        assertCode(()->cash.resolveException(owner,bank.id(),branch.id(),incidentKey,recount),"BRANCH_PERMISSION_DENIED");
+        mvc.perform(get(exceptionsPath).header("Authorization","Bearer "+TestIdentity.token("operator",false))).andExpect(status().isForbidden());
+        mvc.perform(post(exceptionsPath+"/"+incidentKey+"/resolve").header("Authorization","Bearer "+TestIdentity.token(checker.subject(),false)).contentType("application/json").content(json.writeValueAsString(recount))).andExpect(status().isOk());
+        assertThat(cash.resolveException(reviewer,bank.id(),branch.id(),incidentKey,recount)).isEqualTo(incidentKey);
+        assertThat(days.dashboard(ADMIN,bank.id(),25,0).blockers()).doesNotContain("CASH_EXCEPTION_OPEN");
+        assertThat(funding.dashboard(ADMIN,bank.id(),f.account(),25,0).balance().postedBalance()).isEqualTo("100");
+        assertThat(new java.math.BigDecimal(bankCash.position(bank,cash.location(bank.id(),till)).balance())).isEqualByComparingTo("200");
+        assertThatThrownBy(()->jdbc.update("DELETE FROM platform.cash_exception WHERE id=?",incidentKey)).isInstanceOf(org.springframework.dao.DataAccessException.class);
+        assertThatThrownBy(()->jdbc.update("DELETE FROM platform.cash_exception_resolution WHERE case_id=?",incidentKey)).isInstanceOf(org.springframework.dao.DataAccessException.class);
+        var close=postCash(owner,reviewer,bank,cashChange(bank,branch.id(),com.cbs.cash.CashModels.Kind.CLOSE,till,null,null,null,List.of(new com.cbs.cash.CashModels.Count("50",4))));
+        assertThat(bankCash.position(bank,cash.location(bank.id(),till)).sessionOpen()).isFalse();assertThat(days.dashboard(ADMIN,bank.id(),25,0).blockers()).doesNotContain("CASH_SESSION_OPEN");
+        assertThat(days.dashboard(ADMIN,bank.id(),25,0).blockers()).contains("CASH_COUNT_REQUIRED");
+        postCash(maker,reviewer,bank,cashChange(bank,branch.id(),com.cbs.cash.CashModels.Kind.COUNT,vault,null,null,null,List.of(new com.cbs.cash.CashModels.Count("100",9))));
+        assertThat(days.dashboard(ADMIN,bank.id(),25,0).blockers()).doesNotContain("CASH_COUNT_REQUIRED");
+        postCash(maker,reviewer,bank,cashChange(bank,branch.id(),com.cbs.cash.CashModels.Kind.DISPATCH,vault,null,f.source().id(),"100",null));
+        assertThat(days.dashboard(ADMIN,bank.id(),25,0).blockers()).contains("CASH_COUNT_REQUIRED");
+        postCash(maker,reviewer,bank,cashChange(bank,branch.id(),com.cbs.cash.CashModels.Kind.COUNT,vault,null,null,null,List.of(new com.cbs.cash.CashModels.Count("100",8))));
+        assertThat(days.dashboard(ADMIN,bank.id(),25,0).blockers()).doesNotContain("CASH_COUNT_REQUIRED");
+        var cashLedger=cash.location(bank.id(),vault).ledgerId();
+        var bypass=new com.cbs.accounting.JournalModels.Entry(UUID.randomUUID(),bank.id(),"CASH-BYPASS","Unreceipted cash",incoming.businessDate(),bank.legalEntities().getFirst().id(),"INR",List.of(new com.cbs.accounting.JournalModels.Line(cashLedger,com.cbs.accounting.JournalModels.Side.DEBIT,"1"),new com.cbs.accounting.JournalModels.Line(f.source().id(),com.cbs.accounting.JournalModels.Side.CREDIT,"1")),null);
+        assertCode(()->bankJournals.post(bank,new com.cbs.accounting.JournalModels.Dispatch(bypass,ADMIN.subject(),CHECKER.issuer(),CHECKER.subject(),UUID.randomUUID())),"JOURNAL_DATABASE_UNAVAILABLE");
+        String path="/api/v1/banks/"+bank.id()+"/branches/"+branch.id()+"/operations/cash";
+        mvc.perform(get(path).header("Authorization","Bearer "+TestIdentity.token(teller.subject(),false))).andExpect(status().isOk()).andExpect(jsonPath("$.items.length()").value(2));
+        mvc.perform(get(path+"/"+close).header("Authorization","Bearer "+TestIdentity.token(teller.subject(),false))).andExpect(status().isOk());
+        mvc.perform(get(path).header("Authorization","Bearer "+TestIdentity.token("operator",false))).andExpect(status().isForbidden());
+        try(var c=TestDatabases.bank("cash");var st=c.createStatement()){
+            assertThatThrownBy(()->st.executeUpdate("DELETE FROM bank.cash_entry")).isInstanceOf(SQLException.class);
+            try(var rs=st.executeQuery("SELECT count(*) FROM bank.cash_entry")){rs.next();assertThat(rs.getInt(1)).isEqualTo(6);}
+        }
+        verifyCashAdjustments(bank,branch.id(),vault,f.source().id(),owner,maker,reviewer);
+        assertThat(funding.dashboard(ADMIN,bank.id(),f.account(),25,0).balance().postedBalance()).isEqualTo("100");
+    }
+    private UUID adjustmentLedger(Tenant bank,String code,com.cbs.accounting.ChartModels.Category category)throws Exception{
+        var chartInput=new com.cbs.accounting.ChartModels.Change(service.get(ADMIN,bank.id()).version(),null,code,code,"Fictional adjustment mapping",category,category==com.cbs.accounting.ChartModels.Category.EXPENSE?com.cbs.accounting.ChartModels.Balance.DEBIT:com.cbs.accounting.ChartModels.Balance.CREDIT,com.cbs.accounting.ChartModels.Kind.POSTING,null,true,"Test adjustment ledger");
+        approveHttp(approvals.chart(ADMIN,UUID.randomUUID(),bank.id(),chartInput).id());
+        var posting=chart.list(ADMIN,bank.id(),code,null,null,null,25,0).items().getFirst();
+        var request=approvals.ledger(ADMIN,UUID.randomUUID(),bank.id(),ledgerChange(bank,null,code,posting.id(),code,true));approveHttp(request.id());ledger.deliver(request.id());
+        return ledger.list(ADMIN,bank.id(),code,null,null,25,0).items().getFirst().definition().id();
+    }
+    private com.cbs.cash.CashModels.Change adjustmentChange(Tenant bank,UUID branch,UUID location,UUID incident,UUID counter,com.cbs.cash.CashModels.Kind kind,String amount,List<com.cbs.cash.CashModels.Count> counts){
+        return new com.cbs.cash.CashModels.Change(service.get(ADMIN,bank.id()).version(),kind,branch,location,null,counter,null,null,null,null,amount,reference.get(ADMIN,bank.id()).businessDate(),"ADJUST-"+UUID.randomUUID(),counts,"Fictional independently investigated adjustment",null,null,incident);
+    }
+    private void verifyCashAdjustments(Tenant bank,UUID branch,UUID vault,UUID wrongLedger,Actor reporter,Actor maker,Actor reviewer)throws Exception{
+        var expense=adjustmentLedger(bank,"CASH_LOSS",com.cbs.accounting.ChartModels.Category.EXPENSE);
+        var income=adjustmentLedger(bank,"CASH_GAIN",com.cbs.accounting.ChartModels.Category.INCOME);
+        var shortage=com.cbs.cash.CashModels.Kind.SHORTAGE;var overage=com.cbs.cash.CashModels.Kind.OVERAGE;
+        var physical=List.of(new com.cbs.cash.CashModels.Count("50",15));var incident=UUID.randomUUID();
+        cash.reportException(reporter,bank.id(),branch,incident,new com.cbs.cash.CashExceptionInput(service.get(ADMIN,bank.id()).version(),vault,reference.get(ADMIN,bank.id()).businessDate(),physical,"Fictional shortage of 50"));
+        assertCode(()->approvals.cash(maker,UUID.randomUUID(),bank.id(),adjustmentChange(bank,branch,vault,incident,wrongLedger,shortage,"50",physical)),"CASH_ADJUSTMENT_LEDGER_INVALID");
+        assertCode(()->approvals.cash(maker,UUID.randomUUID(),bank.id(),adjustmentChange(bank,branch,vault,incident,expense,shortage,"49",physical)),"CASH_ADJUSTMENT_MISMATCH");
+        assertCode(()->approvals.cash(maker,UUID.randomUUID(),bank.id(),adjustmentChange(bank,branch,vault,incident,expense,shortage,"50",physical)),"TRANSACTION_LIMIT_REQUIRED");
+        for(String op:List.of("CASH_SHORTAGE","CASH_OVERAGE")){
+            approveHttp(approvals.limits(ADMIN,UUID.randomUUID(),bank.id(),new com.cbs.access.TransactionLimits.Change(service.get(ADMIN,bank.id()).version(),"INR",op,"100","200","Fictional adjustment caps")).id());
+            UUID staff=jdbc.queryForObject("SELECT id FROM platform.staff_identity WHERE issuer=? AND subject=?",UUID.class,maker.issuer(),maker.subject());
+            for(UUID scope:java.util.Arrays.asList(null,staff))approveHttp(approvals.branchLimit(ADMIN,UUID.randomUUID(),bank.id(),new com.cbs.access.BranchOperations.Limit(service.get(ADMIN,bank.id()).version(),branch,scope,"INR",op,"100","200","Fictional branch adjustment caps")).id());
+        }
+        var input=adjustmentChange(bank,branch,vault,incident,expense,shortage,"50",physical);var key=UUID.randomUUID();
+        assertCode(()->approvals.cash(reporter,key,bank.id(),input),"BRANCH_PERMISSION_DENIED");
+        String path="/api/v1/banks/"+bank.id()+"/branches/"+branch+"/operations/cash";
+        mvc.perform(get(path+"/adjustment-ledgers?locationId="+vault).header("Authorization","Bearer "+TestIdentity.token(maker.subject(),false))).andExpect(status().isOk()).andExpect(jsonPath("$.length()").value(2));
+        var response=mvc.perform(post(path).header("Authorization","Bearer "+TestIdentity.token(maker.subject(),false)).header("Idempotency-Key",key).contentType("application/json").content(json.writeValueAsString(input))).andExpect(status().isAccepted()).andReturn().getResponse().getContentAsString();
+        var request=json.readValue(response,com.cbs.approvals.ApprovalModels.Request.class);
+        assertThat(approvals.cash(maker,key,bank.id(),input).id()).isEqualTo(request.id());
+        assertCode(()->approvals.decide(maker,request.id(),com.cbs.approvals.ApprovalModels.Decision.APPROVE,"Own adjustment"),"SELF_APPROVAL_FORBIDDEN");
+        approvals.decide(reviewer,request.id(),com.cbs.approvals.ApprovalModels.Decision.APPROVE,"Independent investigation");
+        assertThat(days.dashboard(ADMIN,bank.id(),25,0).blockers()).contains("CASH_EXCEPTION_OPEN","CASH_DELIVERY_PENDING");
+        try(var c=TestDatabases.bank("cash");var st=c.createStatement()){st.execute("CREATE TRIGGER fail_adjustment BEFORE INSERT ON bank.cash_entry FOR EACH ROW EXECUTE FUNCTION bank.reject_ledger_event_change()");}
+        cash.deliver(request.id());assertThat(jdbc.queryForObject("SELECT failure_code FROM platform.cash_delivery WHERE request_id=?",String.class,request.id())).isEqualTo("CASH_DATABASE_UNAVAILABLE");
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM platform.cash_exception_resolution WHERE case_id=?",Integer.class,incident)).isZero();
+        assertThat(new java.math.BigDecimal(bankCash.position(bank,cash.location(bank.id(),vault)).balance())).isEqualByComparingTo("800");
+        try(var c=TestDatabases.bank("cash");var st=c.createStatement()){st.execute("DROP TRIGGER fail_adjustment ON bank.cash_entry");}
+        new TransactionTemplate(transactionManager).executeWithoutResult(t->{cash.deliver(request.id());t.setRollbackOnly();});cash.deliver(request.id());cash.deliver(request.id());
+        assertThat(new java.math.BigDecimal(bankCash.position(bank,cash.location(bank.id(),vault)).balance())).isEqualByComparingTo("750");
+        assertThat(jdbc.queryForObject("SELECT adjustment_request_id FROM platform.cash_exception_resolution WHERE case_id=?",UUID.class,incident)).isEqualTo(request.id());
+        assertCode(()->approvals.cash(maker,UUID.randomUUID(),bank.id(),adjustmentChange(bank,branch,vault,incident,expense,shortage,"50",physical)),"CASH_ADJUSTMENT_UNAVAILABLE");
+        assertThat(days.dashboard(ADMIN,bank.id(),25,0).blockers()).doesNotContain("CASH_EXCEPTION_OPEN").contains("CASH_COUNT_REQUIRED");
+        var independent=branchStaff(bank.id(),branch,"cash-adjustment-checker",com.cbs.access.AccessModels.BranchRole.BRANCH_MANAGER);
+        var finalChecker=new Actor(TestIdentity.ISSUER,independent.subject(),false,UUID.randomUUID());
+        var extra=List.of(new com.cbs.cash.CashModels.Count("25",31));var overCase=UUID.randomUUID();
+        cash.reportException(reviewer,bank.id(),branch,overCase,new com.cbs.cash.CashExceptionInput(service.get(ADMIN,bank.id()).version(),vault,reference.get(ADMIN,bank.id()).businessDate(),extra,"Fictional overage of 25"));
+        var gain=approvals.cash(maker,UUID.randomUUID(),bank.id(),adjustmentChange(bank,branch,vault,overCase,income,overage,"25",extra));
+        assertCode(()->approvals.decide(reviewer,gain.id(),com.cbs.approvals.ApprovalModels.Decision.APPROVE,"Reporter cannot review"),"SELF_APPROVAL_FORBIDDEN");
+        approvals.decide(finalChecker,gain.id(),com.cbs.approvals.ApprovalModels.Decision.APPROVE,"Independent overage review");cash.deliver(gain.id());
+        assertThat(new java.math.BigDecimal(bankCash.position(bank,cash.location(bank.id(),vault)).balance())).isEqualByComparingTo("775");
+        assertThat(bankCash.position(bank,cash.location(bank.id(),vault)).reconciled()).isTrue();
+        assertThat(jdbc.queryForObject("SELECT completed FROM platform.cash_delivery WHERE request_id=?",Boolean.class,gain.id())).isTrue();
+    }
+    private com.cbs.cash.CashModels.Change customerCashChange(Tenant bank,UUID branch,UUID till,com.cbs.cash.CashModels.Kind kind,UUID account,UUID liability,String amount){
+        return new com.cbs.cash.CashModels.Change(service.get(ADMIN,bank.id()).version(),kind,branch,till,null,null,null,null,null,null,amount,reference.get(ADMIN,bank.id()).businessDate(),"CUSTOMER-CASH-"+UUID.randomUUID(),null,"Fictional customer cash receipt",account,liability);
     }
 }

@@ -18,7 +18,8 @@ import org.springframework.web.bind.annotation.*;
 @ConditionalOnProperty(name="cbs.tenancy.enabled",havingValue="true",matchIfMissing=true)
 public class AccessController {
     private final AccessService service;
-    public AccessController(AccessService service) { this.service=service; }
+    private final com.cbs.approvals.ApprovalService approvals;
+    public AccessController(AccessService service,com.cbs.approvals.ApprovalService approvals) { this.service=service; this.approvals=approvals; }
     @GetMapping("/access/me") Me me(HttpServletRequest request) { return (Me)request.getAttribute(AccessPolicyFilter.ME); }
     @GetMapping("/access/sessions") List<Session> sessions(HttpServletRequest request) { return service.sessions(me(request)); }
     @DeleteMapping("/access/sessions/{id}") @ResponseStatus(HttpStatus.NO_CONTENT)
@@ -29,8 +30,10 @@ public class AccessController {
     Staff create(JwtAuthenticationToken identity,@Valid @RequestBody StaffInput input) { return service.create(actor(identity),input); }
     @GetMapping("/admin/staff") Page<Staff> list(JwtAuthenticationToken identity,
             @RequestParam(defaultValue="25") int limit,@RequestParam(defaultValue="0") int offset) { return service.list(actor(identity),limit,offset); }
-    @PatchMapping("/admin/staff/{id}") Staff update(JwtAuthenticationToken identity,@PathVariable UUID id,@Valid @RequestBody StaffUpdate input) {
-        return service.update(actor(identity),id,input);
+    @PatchMapping("/admin/staff/{id}") @ResponseStatus(HttpStatus.ACCEPTED)
+    com.cbs.approvals.ApprovalModels.Request update(JwtAuthenticationToken identity,@PathVariable UUID id,
+            @RequestHeader("Idempotency-Key") UUID key,@Valid @RequestBody StaffUpdate input) {
+        return approvals.staff(actor(identity),key,id,input);
     }
     @PostMapping("/admin/staff/{id}/revoke-sessions") Staff revoke(JwtAuthenticationToken identity,@PathVariable UUID id,@Valid @RequestBody ChangeRequest input) {
         return service.revokeSessions(actor(identity),id,input);

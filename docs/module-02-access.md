@@ -194,3 +194,7 @@ branch isolation and the existing tenant guarantees. UI tests cover escaping,
 lifecycle action availability and actionable conflict messages. Connecting to an
 actual provider and completing its MFA flow require the operator's configuration;
 they are not implied by local test results.
+
+## Module 03 approval changes
+
+Staff profile and activation updates now require another administrator's approval. PATCH /admin/staff/{id} requires an Idempotency-Key UUID header and returns HTTP 202 with an approval request. Session revocation remains immediate. See [Module 03](module-03-approvals.md) for scope and API details.

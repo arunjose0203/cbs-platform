@@ -17,7 +17,7 @@ final class TestDatabases {
         if (DATABASES.isEmpty()) {
             String prefix = "cbs_m01_" + UUID.randomUUID().toString().replace("-", "");
             try (Connection admin = adminConnection()) {
-                for (String suffix : new String[] {"control", "a", "b", "failure", "recovery"}) {
+                for (String suffix : new String[] {"control", "a", "b", "failure", "recovery", "ledger", "ledgerother", "ledgerupgrade", "dayclose", "dayfailure", "dayguards", "customer", "customerother", "customerfail", "account", "accountguards", "accountrecovery", "funding", "fundguards", "fundrecovery", "fundfailure", "operations", "optransfer", "branchops", "cash"}) {
                     String name = prefix + "_" + suffix;
                     String password = UUID.randomUUID().toString().replace("-", "");
                     try (var statement = admin.createStatement()) {
@@ -43,8 +43,18 @@ final class TestDatabases {
         bind(registry, "migration-failure", "failure");
         bind(registry, "control-target", "control");
         bind(registry, "recovery-one", "recovery");
-        for (String reference : new String[] {"registration-one", "race-one", "code-first", "code-second",
-                "binding-one", "invalid-first", "race-state", "audit-only", "entity-one","branch-bank-a","branch-bank-b"}) {
+        bind(registry,"ledger-main","ledger");
+        bind(registry,"ledger-other","ledgerother");
+        bind(registry,"ledger-upgrade","ledgerupgrade");
+        bind(registry,"cash-main","cash");bind(registry,"branch-operations","branchops");bind(registry,"operations-main","operations");bind(registry,"operations-transfer","optransfer");
+        bind(registry,"funding-main","funding");bind(registry,"funding-guards","fundguards");bind(registry,"funding-recovery","fundrecovery");bind(registry,"funding-failure","fundfailure");
+        bind(registry,"account-main","account");bind(registry,"account-guards","accountguards");bind(registry,"account-recovery","accountrecovery");
+        bind(registry,"customer-main","customer");bind(registry,"customer-guards","customerother");bind(registry,"customer-recovery","customerfail");
+        bind(registry,"day-main","dayclose");bind(registry,"day-failure","dayfailure");bind(registry,"day-guards","dayguards");
+        for (String reference : new String[] {"funding-isolation","account-isolation","registration-one", "race-one", "code-first", "code-second",
+                "binding-one", "invalid-first", "race-state", "audit-only", "entity-one","branch-bank-a","branch-bank-b",
+                "reference-main","reference-guards","reference-isolation","reference-other","reference-stale","reference-calendar",
+                "product-main","product-guards","product-other","product-race","product-access","product-rollback","chart-main","chart-guards","chart-other","chart-access","chart-race","chart-rollback"}) {
             bind(registry, reference, "a");
         }
     }
@@ -70,7 +80,7 @@ final class TestDatabases {
     static void close() throws SQLException {
         try (Connection admin = adminConnection(); var statement = admin.createStatement()) {
             for (Database target : DATABASES.values()) {
-                if (!target.name().matches("cbs_m01_[0-9a-f]{32}_(control|a|b|failure|recovery)")) { throw new IllegalStateException("Unsafe fixture name"); }
+                if (!target.name().matches("cbs_m01_[0-9a-f]{32}_(control|a|b|failure|recovery|ledger|ledgerother|ledgerupgrade|dayclose|dayfailure|dayguards|customer|customerother|customerfail|account|accountguards|accountrecovery|funding|fundguards|fundrecovery|fundfailure|operations|optransfer|branchops|cash)")) { throw new IllegalStateException("Unsafe fixture name"); }
                 statement.execute("DROP DATABASE IF EXISTS " + target.name() + " WITH (FORCE)");
                 statement.execute("DROP ROLE IF EXISTS " + target.name());
             }

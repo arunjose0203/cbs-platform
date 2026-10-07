@@ -219,3 +219,7 @@ to create databases and roles. It creates uniquely named test control/bank datab
 with separate roles and removes those fixtures on completion. Never point this
 suite at a production cluster. Tests use generated RSA signatures, not bypassed
 authentication. No real identity-provider account or bank data is required.
+
+## Module 03 approval changes
+
+Bank suspension and resumption now require an Idempotency-Key UUID header and return HTTP 202 with a pending approval request. A different platform administrator must approve before the tenant changes. See [Module 03](module-03-approvals.md).

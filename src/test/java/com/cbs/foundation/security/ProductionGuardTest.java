@@ -1,0 +1,14 @@
+package com.cbs.foundation.security;
+import com.cbs.tenancy.BankDatabaseProvisioner;
+import java.util.Map;
+import org.junit.jupiter.api.Test;
+import org.springframework.mock.env.MockEnvironment;
+import static org.assertj.core.api.Assertions.*;
+class ProductionGuardTest {
+ private MockEnvironment environment(){return new MockEnvironment().withProperty("cbs.security.enabled","true").withProperty("cbs.security.issuer","https://identity.example.test/realms/bank").withProperty("cbs.security.jwk-set-uri","https://identity.example.test/keys").withProperty("cbs.portal.redirect-uri","https://bank.example.test/admin/index.html").withProperty("cbs.security.audience","cbs").withProperty("cbs.portal.client-id","portal").withProperty("spring.datasource.url","jdbc:postgresql://database.example.test/cbs?sslmode=verify-full").withProperty("spring.datasource.password","test-only-not-real").withProperty("spring.flyway.clean-disabled","true").withProperty("spring.flyway.validate-on-migrate","true");}
+ private final BankDatabaseProvisioner.Settings banks=new BankDatabaseProvisioner.Settings(Map.of());
+ @Test void acceptsExplicitSecureConfiguration(){assertThatCode(()->new ProductionGuard(environment(),banks)).doesNotThrowAnyException();}
+ @Test void refusesMfaExceptionAndLocalIdentity(){assertThatThrownBy(()->new ProductionGuard(environment().withProperty("cbs.access.local-mfa-bypass-until","2000-01-01T00:00:00Z"),banks)).hasMessageContaining("MFA exceptions");assertThatThrownBy(()->new ProductionGuard(environment().withProperty("cbs.security.issuer","http://127.0.0.1:8180"),banks)).hasMessageContaining("HTTPS");}
+ @Test void refusesUnsafeDatabaseAndBootstrap(){for(String url:java.util.List.of("jdbc:postgresql://db/cbs?sslmode=require","jdbc:postgresql://db/cbs?sslmode=verify-full&sslmode=disable","jdbc:postgresql://db/cbs?sslmode=verify-full&sslfactory=unsafe"))assertThatThrownBy(()->new ProductionGuard(environment().withProperty("spring.datasource.url",url),banks)).hasMessageContaining("verify-full");assertThatThrownBy(()->new ProductionGuard(environment().withProperty("cbs.access.bootstrap-admin-subject","admin"),banks)).hasMessageContaining("bootstrap");}
+ @Test void validatesEveryBankAndNeverLeaksSecrets(){var unsafe=new BankDatabaseProvisioner.Settings(Map.of("demo",new BankDatabaseProvisioner.Target("jdbc:postgresql://db/bank?sslmode=disable","owner","do-not-print")));assertThatThrownBy(()->new ProductionGuard(environment(),unsafe)).hasMessageContaining("bank database").hasMessageNotContaining("do-not-print");}
+}

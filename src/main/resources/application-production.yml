@@ -1,0 +1,19 @@
+# Required secrets and URLs are supplied by the deployment secret store.
+# ProductionGuard rejects overrides that would enable development authentication.
+cbs:
+  security:
+    enabled: true
+    allow-local-http: false
+spring:
+  flyway:
+    clean-disabled: true
+    validate-on-migrate: true
+  datasource:
+    hikari:
+      maximum-pool-size: ${CBS_DB_POOL_SIZE:10}
+      connection-timeout: 5000
+      validation-timeout: 3000
+server:
+  shutdown: graceful
+  forward-headers-strategy: none
+spring.lifecycle.timeout-per-shutdown-phase: 30s

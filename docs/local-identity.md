@@ -81,3 +81,36 @@ The saved local identity file is then bypassed.
 
 References: [Keycloak development server](https://www.keycloak.org/getting-started/getting-started-zip)
 and [protocol mappers](https://www.keycloak.org/admin-api/protocol-mappers).
+
+## Temporary password-only development login
+
+At the user's request, a temporary exception was enabled on 2026-09-22 because
+the domain-managed computer clock was approximately 67 seconds behind network
+time. This does not correct the clock; the domain time issue still needs attention.
+
+The local CBS client can temporarily use a separate required-password-only flow.
+The original MFA flow and any enrolled OTP credentials are preserved. Only
+`CONFIGURE_TOTP` is removed from the initial administrator's pending actions;
+password change and other requirements remain. No token is given fake MFA claims.
+
+CBS accepts this exception only for the exact configured bootstrap administrator
+and local issuer, with local HTTP explicitly enabled and the application bound to
+loopback. The deadline is checked on every API request. It is saved in ignored
+`.local/development-mfa-exception.json`, expires eight hours after activation and
+does not extend on restart. A configured deadline more than 24 hours ahead is
+rejected. Signature, audience, role, active-staff, session and bank authorization
+checks continue to apply.
+
+To restore MFA before expiry, stop CBS, then run:
+
+```powershell
+./scripts/set-local-mfa.ps1 -Mode Mfa
+./scripts/run.ps1
+```
+
+After the deadline, CBS automatically rejects administrator requests without MFA,
+including previously issued password-only tokens. The provider's original MFA
+flow must still be restored with the commands above to resume MFA sign-in.
+Password-only mode can be explicitly enabled for another development session with
+`./scripts/set-local-mfa.ps1 -Mode PasswordOnly`, followed by a CBS restart.
+The script defaults to restoring MFA when no mode is supplied.

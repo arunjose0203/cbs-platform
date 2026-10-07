@@ -1,0 +1,11 @@
+.chart-summary{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:15px;margin-bottom:24px}
+.chart-summary article{padding:20px 23px}.chart-summary span{color:var(--muted);font-size:11px}.chart-summary strong{display:block;font-size:27px;font-weight:500;margin-top:12px;color:var(--ink)}
+.chart-filters{gap:14px;align-items:end;flex-wrap:wrap}.chart-search{flex:1;min-width:180px}.chart-filters select{min-width:135px}
+.chart-warning{background:#fff6e5;border:1px solid #eed7a4;border-radius:6px;padding:16px;color:#795c20;font-size:12px;line-height:1.7}
+.chart-table td>small,.chart-table td>span:not(.status){display:block;overflow-wrap:anywhere}.chart-table td{max-width:280px}
+@media(max-width:760px){.chart-summary{grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.chart-summary article{padding:16px}.chart-filters .field{min-width:0;flex:1}.chart-filters .chart-search{flex-basis:100%}.reference-bank{flex-wrap:wrap}.reference-bank select{max-width:100%}}
+
+.journal-line{display:grid;grid-template-columns:minmax(150px,2fr) 1fr 1fr auto;gap:10px;align-items:end;padding:12px 0;border-bottom:1px solid #dbe5ea}.journal-line .button{margin-bottom:2px}#journal-totals{font-weight:600}dialog:has(#journal-lines){max-width:860px;width:calc(100vw - 48px)}
+@media(max-width:640px){.journal-line{grid-template-columns:1fr 1fr}.journal-line>label:first-child{grid-column:1/-1}}
+
+.report-filters{display:flex;flex-wrap:wrap;align-items:end;gap:16px}.report-filters .field{min-width:160px;flex:1}.report-filters [hidden]{display:none}

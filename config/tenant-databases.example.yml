@@ -1,5 +1,8 @@
 # Copy to an operator-managed path and load via SPRING_CONFIG_ADDITIONAL_LOCATION.
 # This file contains references to environment-injected secrets, not credentials.
+# Use direct connections for bank provisioning; it holds a session advisory lock.
+# Neon example: jdbc:postgresql://YOUR-DIRECT-ENDPOINT:5432/YOUR_BANK_DB?sslmode=require&channelBinding=require
+# The Windows run script also loads ignored .local/bank-databases.yml when present.
 cbs:
   banking:
     databases:

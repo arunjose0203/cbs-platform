@@ -28,6 +28,7 @@ cbs:
     audience: ${CBS_JWT_AUDIENCE:}
     allow-local-http: ${CBS_ALLOW_LOCAL_IDENTITY_HTTP:false}
   access:
+    local-mfa-bypass-until: ${CBS_LOCAL_MFA_BYPASS_UNTIL:}
     bootstrap-admin-subject: ${CBS_BOOTSTRAP_ADMIN_SUBJECT:}
     idle-timeout: PT15M
     maximum-session-age: PT8H

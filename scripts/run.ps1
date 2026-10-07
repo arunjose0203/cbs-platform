@@ -17,6 +17,13 @@ if (-not $UseEnvironmentIdentity -and (Test-Path -LiteralPath $cbsIdentityConfig
     $env:CBS_PORTAL_CLIENT_ID = $cbsIdentity.clientId
     $env:CBS_PORTAL_REDIRECT_URI = $cbsIdentity.redirectUri
     $env:CBS_BOOTSTRAP_ADMIN_SUBJECT = $cbsIdentity.bootstrapAdminSubject
+    $cbsMfaExceptionFile = Join-Path $cbsRoot '.local\development-mfa-exception.json'
+    $env:CBS_LOCAL_MFA_BYPASS_UNTIL = ''
+    if (Test-Path -LiteralPath $cbsMfaExceptionFile) {
+        $cbsMfaException = Get-Content $cbsMfaExceptionFile -Raw | ConvertFrom-Json
+        $env:CBS_LOCAL_MFA_BYPASS_UNTIL = ([DateTimeOffset]$cbsMfaException.until).ToUniversalTime().ToString('o')
+        Write-Output "Temporary development MFA exception expires at $env:CBS_LOCAL_MFA_BYPASS_UNTIL."
+    }
     Write-Output 'Using the saved local development identity configuration.'
 }
 $cbsDatabaseConfig = Join-Path $cbsRoot '.local\development-database.json'
@@ -37,6 +44,14 @@ if (-not $UseEnvironmentDatabase -and (Test-Path -LiteralPath $cbsDatabaseConfig
     Write-Output 'Using the saved local development database configuration.'
 }
 $cbsJar = Join-Path $cbsRoot 'target\cbs-platform-0.1.0-SNAPSHOT.jar'
+$cbsBankConfig = Join-Path $cbsRoot '.local\bank-databases.yml'
+if (-not $UseEnvironmentDatabase -and (Test-Path -LiteralPath $cbsBankConfig)) {
+    $cbsBankLocation = ([Uri]$cbsBankConfig).AbsoluteUri
+    $cbsLocations = @($env:SPRING_CONFIG_ADDITIONAL_LOCATION -split ',' | Where-Object { $_ })
+    if ($cbsLocations -notcontains $cbsBankLocation) { $cbsLocations += $cbsBankLocation }
+    $env:SPRING_CONFIG_ADDITIONAL_LOCATION = $cbsLocations -join ','
+    Write-Output 'Loading approved development bank database bindings.'
+}
 if (-not (Test-Path -LiteralPath $cbsJar)) { throw 'Build first: ./scripts/mvn.ps1 verify' }
 if (-not $env:CBS_DB_PASSWORD) { throw 'Configure .local/development-database.json or set CBS_DB_PASSWORD before running the application.' }
 $cbsJdk = Get-ChildItem -LiteralPath (Join-Path $cbsRoot '.tools') -Directory -Filter 'jdk-*' -ErrorAction SilentlyContinue | Select-Object -First 1

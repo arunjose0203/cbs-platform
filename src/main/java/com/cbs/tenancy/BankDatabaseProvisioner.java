@@ -27,6 +27,34 @@ public class BankDatabaseProvisioner {
 
     public void requireApproved(String reference) { target(reference); }
 
+    /** Route only to a database whose ownership has already been reserved for this tenant. */
+    public Connection openOwned(UUID tenantId,String reference) {
+        Connection connection=null;
+        try {
+            connection=dataSource(target(reference)).getConnection();
+            refuseControlPlane(connection);verifyIdentity(connection,tenantId);
+            try(var statement=connection.createStatement();var rows=statement.executeQuery("SELECT singleton FROM bank.installation WHERE singleton")) {
+                if(!rows.next())throw failure("DATABASE_NOT_READY");
+            }
+            return connection;
+        } catch(Exception exception) {
+            if(connection!=null)try{connection.close();}catch(SQLException ignored){}
+            if(exception instanceof TenantException problem)throw problem;
+            throw failure("DATABASE_UNAVAILABLE");
+        }
+    }
+
+    public String upgradeOwned(UUID tenantId,String reference) {
+        try(Connection lock=openOwned(tenantId,reference)) {
+            try(var statement=lock.createStatement();var rows=statement.executeQuery("SELECT pg_try_advisory_lock(1128420179)")) {
+                rows.next();if(!rows.getBoolean(1))throw failure("DATABASE_BUSY");
+            }
+            var flyway=Flyway.configure().dataSource(dataSource(target(reference))).locations("classpath:db/bank-migration")
+                    .defaultSchema("bank").schemas("bank").cleanDisabled(true).validateOnMigrate(true).load();
+            flyway.migrate();return flyway.info().current().getVersion().toString();
+        }catch(TenantException problem){throw problem;}catch(Exception exception){throw failure("DATABASE_PROVISIONING_FAILED");}
+    }
+
     public String provision(UUID tenantId, String reference) {
         DriverManagerDataSource dataSource = dataSource(target(reference));
         // The session lock spans ownership reservation and all Flyway connections.
@@ -113,7 +141,7 @@ public class BankDatabaseProvisioner {
         Target target = settings.databases().get(reference);
         if (target == null) { throw new TenantException(422, "DATABASE_REFERENCE_NOT_APPROVED", "Select an operator-approved database reference"); }
         if (target.url() == null || !target.url().matches(
-                "jdbc:postgresql://[a-zA-Z0-9.-]+:[0-9]{1,5}/[a-zA-Z0-9_]+(?:\\?sslmode=(?:disable|require|verify-ca|verify-full))?")
+                "jdbc:postgresql://[a-zA-Z0-9.-]+(?::[0-9]{1,5})?/[a-zA-Z0-9_]+(?:\\?sslmode=(?:disable|(?:require|verify-ca|verify-full)(?:&channelBinding=require)?))?")
                 || target.username() == null || target.username().isBlank()
                 || target.password() == null || target.password().isBlank()) {
             throw new TenantException(503, "DATABASE_CONFIGURATION_INVALID", "The database reference requires operator configuration");
