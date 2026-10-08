@@ -6,7 +6,7 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken;
 import org.springframework.web.bind.annotation.*;
 @RestController
-@RequestMapping("/api/v1/admin/tenants/{bank}/loan-collections")
+@RequestMapping({"/api/v1/admin/tenants/{bank}/loan-collections","/api/v1/banks/{bank}/lending-operations/loan-collections"})
 @ConditionalOnProperty(name="cbs.tenancy.enabled",havingValue="true",matchIfMissing=true)
 public class LoanCollectionsController {
  private final LoanCollectionsService service;

@@ -1,3 +1,4 @@
+import {createLendingAccessUi} from './lending-access-ui.js';
 import {createCollectionsUi} from './collections-ui.js';
 import {createCreditUi} from './credit-ui.js';
 import {createContractsUi} from './contracts-ui.js';
@@ -26,12 +27,14 @@ let manager, user, me, configuration, view='banks', selectedBank, submitForm, la
 let rows=[], offset=0, busy=false, noticeTimer, renderVersion=0;
 let approvalScope='INBOX', approvalAction='', approvalBank='', selectedApproval;
 const pageSize=25;
-const labels={collections:"Loan arrears & collections",credit:'Loan applications & credit review',term:'Term deposits',loan:'Lending',fx:'FX & exchange rates',paymentcases:'Payment exceptions',statements:'M-Pesa statements',payments:'Payments & reconciliation',compliance:'Compliance cases',servicing:'Deposit servicing',branchwork:'Branch workspace',banks:'Bank directory',staff:'Staff & access',approvals:'Approval Inbox',settings:'Bank settings',chart:'Chart of Accounts',ledgers:'Ledger Accounts',journals:'Journals & balances',reports:'Accounting reports',dayclose:'Business Day Close',products:'Product Factory',accounts:'Deposit accounts',customers:'Customers',sessions:'My sessions',audit:'Audit trail'};
+const labels={lendingaccess:"Lending permissions",lendingapprovals:"Lending approval inbox",collections:"Loan arrears & collections",credit:'Loan applications & credit review',term:'Term deposits',loan:'Lending',fx:'FX & exchange rates',paymentcases:'Payment exceptions',statements:'M-Pesa statements',payments:'Payments & reconciliation',compliance:'Compliance cases',servicing:'Deposit servicing',branchwork:'Branch workspace',banks:'Bank directory',staff:'Staff & access',approvals:'Approval Inbox',settings:'Bank settings',chart:'Chart of Accounts',ledgers:'Ledger Accounts',journals:'Journals & balances',reports:'Accounting reports',dayclose:'Business Day Close',products:'Product Factory',accounts:'Deposit accounts',customers:'Customers',sessions:'My sessions',audit:'Audit trail'};
+const lendingAccessUi=createLendingAccessUi({api,form,field,refresh:render,subject:()=>me?.staff.subject});
+const lendingApi=(path,options)=>{if(path==='/admin/tenants?limit=100')return api('/banks/lending-operations/banks',options);return api(path.replace(/^\/admin\/tenants\/([^/?]+)/,'/banks/$1/lending-operations'),options);};
 const statementImportUi=createStatementImportUi({api,form,field,refresh:render});
-const collectionsUi=createCollectionsUi({api,form,field,refresh:render});
-const creditUi=createCreditUi({api,form,field,refresh:render});
+const collectionsUi=createCollectionsUi({api:lendingApi,form,field,refresh:render,isAdmin:()=>me?.platformAdmin});
+const creditUi=createCreditUi({api:lendingApi,form,field,refresh:render,isAdmin:()=>me?.platformAdmin});
 const termUi=createContractsUi({api,form,field,refresh:render,type:'TERM_DEPOSIT'});
-const loanUi=createContractsUi({api,form,field,refresh:render,type:'LOAN'});
+const loanUi=createContractsUi({api:lendingApi,form,field,refresh:render,type:'LOAN',isAdmin:()=>me?.platformAdmin});
 const fxUi=createFxUi({api,form,field,refresh:render});
 const paymentCasesUi=createPaymentCasesUi({api,form,field,refresh:render});
 const paymentsUi=createPaymentsUi({api,form,field,refresh:render});
@@ -91,9 +94,10 @@ async function render(){
   document.querySelector('#breadcrumb').textContent=t(labels[view]);
   document.querySelectorAll('[data-view]').forEach(b=>{b.classList.toggle('active',b.dataset.view===view);b.setAttribute('aria-current',b.dataset.view===view?'page':'false');});
   if(!me){signedOut();return;}
-  if(!me.platformAdmin&&['collections','credit','term','loan','fx','banks','staff','audit','approvals','settings','chart','ledgers','journals','reports','dayclose','products','customers','accounts','servicing','compliance'].includes(view)){content.innerHTML=heading(labels[view],'Platform administrator access is required for this section.')+`<div class="card empty"><h3>You are signed in as ${e(me.staff.displayName)}</h3><p>Your current identity can manage its own sessions.</p>${button('View my sessions','my-sessions')}</div>`;return;}
+  if(!me.platformAdmin&&['lendingaccess','term','fx','banks','staff','audit','approvals','settings','chart','ledgers','journals','reports','dayclose','products','customers','accounts','servicing','compliance'].includes(view)){content.innerHTML=heading(labels[view],'Platform administrator access is required for this section.')+`<div class="card empty"><h3>You are signed in as ${e(me.staff.displayName)}</h3><p>Your current identity can manage its own sessions.</p>${button('View my sessions','my-sessions')}</div>`;return;}
   content.innerHTML='<div class="loading">Loading workspace…</div>';
   try{
+    if(view==='lendingaccess'||view==='lendingapprovals'){await lendingAccessUi.render(content,()=>revision===renderVersion,view==='lendingaccess'?'grants':'approvals');return;}
     if(view==='collections'){await collectionsUi.render(content,()=>revision===renderVersion);return;}
     if(view==='credit'){await creditUi.render(content,()=>revision===renderVersion);return;}
     if(view==='term'){await termUi.render(content,()=>revision===renderVersion);return;}
@@ -118,7 +122,7 @@ async function render(){
     if(selectedBank&&view==='banks'){await bankDetail(selectedBank,revision);return;}
     if(view==='banks'||view==='staff'){
       const result=await api(`/admin/${view==='banks'?'tenants':'staff'}?limit=${pageSize}&offset=${offset}`);if(revision!==renderVersion)return;rows=result.items;
-      content.innerHTML=heading(labels[view],view==='banks'?'Manage bank workspaces and their operational status.':'Manage the people who can access your banking platform.',button(view==='banks'?'+ Register bank':'+ Register staff',view==='banks'?'new-bank':'new-staff'))+
+      content.innerHTML=heading(labels[view],view==='banks'?'Manage bank workspaces and their operational status.':'Manage the people who can access your banking platform.',button(view==='banks'?'+ Register bank':'+ Register staff',view==='banks'?'new-bank':'new-staff')+(view==='staff'?button('Lending permissions','lending-permissions'):''))+
         `<section class="card"><div class="toolbar"><input id="search" class="search" type="search" placeholder="Search this page…" aria-label="Search this page"><span class="tag">${rows.length} on this page</span></div><div id="directory-table"></div>${pagination()}</section>`;
       directory();return;
     }
@@ -153,7 +157,7 @@ async function approvalDirectory(revision){
     `<button class="button ${approvalScope===value?'':'secondary'}" data-action="approval-scope" data-id="${value}" aria-pressed="${approvalScope===value}">${label}</button>`).join('');
   content.innerHTML=heading('Approval Inbox','Review proposed changes before they take effect. Every decision is recorded.')+
     `<div class="approval-tabs actions">${tabs}</div><section class="card"><div class="toolbar approval-filters">
-    <label class="field">Request type<select id="approval-type"><option value="">All types</option>${['BANK_SUSPEND','BANK_RESUME','STAFF_UPDATE','BANK_SETTINGS','CHART_ACCOUNT','LEDGER_ACCOUNT','JOURNAL_POST','DAY_CLOSE','DEPOSIT_PRODUCT','CUSTOMER_CHANGE','DEPOSIT_ACCOUNT','ACCOUNT_FUNDING','ACCOUNT_OPERATION','TRANSACTION_LIMIT','ACCOUNT_BRANCH','BRANCH_LIMIT','CASH_OPERATION','CASH_DENOMINATIONS','SERVICING_POLICY','SERVICING_RUN','COMPLIANCE_REVIEW','PAYMENT_ORDER','PAYMENT_RECONCILE','STATEMENT_ACTION','PAYMENT_CASE','PAYMENT_ACCESS','FX_RATE','FX_RATE_WITHDRAW','FX_TRADE','FX_REVERSAL','FX_BOOK','FX_CLOSING_RATE','FX_VALUATION','CONTRACT_OPEN','CONTRACT_EVENT','CONTRACT_CORRECTION','TERM_SERVICING','CREDIT_POLICY','CREDIT_REVIEW','CREDIT_RELEASE','LOAN_SERVICING','LOAN_FEE'].map(a=>`<option value="${a}" ${a===approvalAction?'selected':''}>${e(titleCase(a))}</option>`).join('')}</select></label>
+    <label class="field">Request type<select id="approval-type"><option value="">All types</option>${['BANK_SUSPEND','BANK_RESUME','STAFF_UPDATE','BANK_SETTINGS','CHART_ACCOUNT','LEDGER_ACCOUNT','JOURNAL_POST','DAY_CLOSE','DEPOSIT_PRODUCT','CUSTOMER_CHANGE','DEPOSIT_ACCOUNT','ACCOUNT_FUNDING','ACCOUNT_OPERATION','TRANSACTION_LIMIT','ACCOUNT_BRANCH','BRANCH_LIMIT','CASH_OPERATION','CASH_DENOMINATIONS','SERVICING_POLICY','SERVICING_RUN','COMPLIANCE_REVIEW','PAYMENT_ORDER','PAYMENT_RECONCILE','STATEMENT_ACTION','PAYMENT_CASE','PAYMENT_ACCESS','FX_RATE','FX_RATE_WITHDRAW','FX_TRADE','FX_REVERSAL','FX_BOOK','FX_CLOSING_RATE','FX_VALUATION','CONTRACT_OPEN','CONTRACT_EVENT','CONTRACT_CORRECTION','TERM_SERVICING','CREDIT_POLICY','CREDIT_REVIEW','CREDIT_RELEASE','LOAN_SERVICING','LOAN_FEE','LENDING_ACCESS'].map(a=>`<option value="${a}" ${a===approvalAction?'selected':''}>${e(titleCase(a))}</option>`).join('')}</select></label>
     <label class="field">Bank<select id="approval-bank"><option value="">All banks and staff</option>${banks.items.map(b=>`<option value="${b.id}" ${b.id===approvalBank?'selected':''}>${e(b.displayName)}</option>`).join('')}</select></label>
     <span class="tag">${rows.length} on this page</span></div>`+
     table(['Request / target','Status','Submitted by','Submitted',''],rows.map(r=>`<tr><td><strong>${e(titleCase(r.action))}</strong><small>${e(r.targetLabel)}</small></td><td>${badge(r.status)}</td><td>${e(r.makerSubject)}${r.makerSubject===me.staff.subject?'<small>Your request</small>':''}</td><td>${e(date(r.createdAt))}</td><td><button class="link-button" data-action="open-approval" data-id="${r.id}">View request →</button></td></tr>`).join(''),approvalScope==='INBOX'?'No pending approvals. Changes submitted for review will appear here.':'No requests match these filters.')+pagination()+
@@ -188,6 +192,8 @@ function form(title,fields,submit,label='Save changes'){
 function closeDialog(){if(busy)return;dialog.close();lastFocus?.focus();}
 async function action(name,id){
   if(name.startsWith('statement-import-')){await statementImportUi.action(name.slice(17),id);return;}
+  if(name==='lending-permissions'){view='lendingaccess';await render();return;}
+  if(name.startsWith('lendingaccess-')){await lendingAccessUi.action(name.slice(14),id);return;}
   if(name.startsWith('collections-')){await collectionsUi.action(name.slice(12),id);return;}
   if(name.startsWith('credit-')){await creditUi.action(name.slice(7),id);return;}
   if(name.startsWith('term-')){await termUi.action(name.slice(5),id);return;}

@@ -22,6 +22,7 @@ import tools.jackson.databind.json.JsonMapper;
 @ConditionalOnProperty(name="cbs.tenancy.enabled",havingValue="true",matchIfMissing=true)
 public class ApprovalService {
     private static final JsonMapper JSON=JsonMapper.builder().build();
+    private final com.cbs.access.LendingAccess lending;
     private final com.cbs.contracts.LoanFeeService loanFees;
     private final com.cbs.contracts.LoanServicingService loans;
     private final com.cbs.credit.CreditService credit;
@@ -54,9 +55,9 @@ public class ApprovalService {
     private final com.cbs.accounts.AccountService accounts;
     private final com.cbs.accounts.FundingService funding;
     private final com.cbs.accounts.OperationService operations;
-    public ApprovalService(com.cbs.contracts.LoanFeeService loanFees,com.cbs.contracts.LoanServicingService loans,com.cbs.credit.CreditService credit,com.cbs.contracts.TermServicingService termServicing,com.cbs.fx.FxValuationService valuations,com.cbs.contracts.ContractService contracts,com.cbs.fx.FxService fx,com.cbs.fx.FxTradeService fxTrades,com.cbs.payments.PaymentCaseService paymentCases,com.cbs.payments.PaymentAccess paymentAccess,com.cbs.payments.StatementImportService statements,com.cbs.payments.PaymentService payments,com.cbs.compliance.ComplianceService compliance,com.cbs.servicing.ServicingService servicing,com.cbs.cash.DenominationService denominations,com.cbs.cash.CashService cash,com.cbs.access.BranchOperations branchOperations,JdbcTemplate jdbc, PlatformTransactionManager manager, TenantService tenants,
+    public ApprovalService(com.cbs.access.LendingAccess lending,com.cbs.contracts.LoanFeeService loanFees,com.cbs.contracts.LoanServicingService loans,com.cbs.credit.CreditService credit,com.cbs.contracts.TermServicingService termServicing,com.cbs.fx.FxValuationService valuations,com.cbs.contracts.ContractService contracts,com.cbs.fx.FxService fx,com.cbs.fx.FxTradeService fxTrades,com.cbs.payments.PaymentCaseService paymentCases,com.cbs.payments.PaymentAccess paymentAccess,com.cbs.payments.StatementImportService statements,com.cbs.payments.PaymentService payments,com.cbs.compliance.ComplianceService compliance,com.cbs.servicing.ServicingService servicing,com.cbs.cash.DenominationService denominations,com.cbs.cash.CashService cash,com.cbs.access.BranchOperations branchOperations,JdbcTemplate jdbc, PlatformTransactionManager manager, TenantService tenants,
             TenantRepository tenantRepository, AccessService access,com.cbs.reference.ReferenceDataService reference,
-            com.cbs.accounting.ChartService chart,com.cbs.accounting.LedgerService ledger,com.cbs.accounting.JournalService journals,com.cbs.accounting.DayCloseService days,com.cbs.products.ProductService products,com.cbs.customers.CustomerService customers,com.cbs.accounts.AccountService accounts,com.cbs.accounts.FundingService funding,com.cbs.accounts.OperationService operations) {this.loanFees=loanFees;this.loans=loans;this.credit=credit;this.termServicing=termServicing;this.valuations=valuations;this.contracts=contracts;this.fx=fx;this.fxTrades=fxTrades;this.paymentCases=paymentCases;this.paymentAccess=paymentAccess;this.statements=statements;this.payments=payments;this.compliance=compliance;this.servicing=servicing;this.denominations=denominations;this.cash=cash;this.branchOperations=branchOperations;this.operations=operations;this.funding=funding;
+            com.cbs.accounting.ChartService chart,com.cbs.accounting.LedgerService ledger,com.cbs.accounting.JournalService journals,com.cbs.accounting.DayCloseService days,com.cbs.products.ProductService products,com.cbs.customers.CustomerService customers,com.cbs.accounts.AccountService accounts,com.cbs.accounts.FundingService funding,com.cbs.accounts.OperationService operations) {this.lending=lending;this.loanFees=loanFees;this.loans=loans;this.credit=credit;this.termServicing=termServicing;this.valuations=valuations;this.contracts=contracts;this.fx=fx;this.fxTrades=fxTrades;this.paymentCases=paymentCases;this.paymentAccess=paymentAccess;this.statements=statements;this.payments=payments;this.compliance=compliance;this.servicing=servicing;this.denominations=denominations;this.cash=cash;this.branchOperations=branchOperations;this.operations=operations;this.funding=funding;
         this.accounts=accounts;
         this.jdbc=jdbc; this.tx=new TransactionTemplate(manager); this.tenants=tenants;
         this.tenantRepository=tenantRepository; this.access=access;
@@ -82,6 +83,7 @@ public class ApprovalService {
     public Request ledger(Actor actor,UUID key,UUID bankId,com.cbs.accounting.LedgerModels.Change input) {
         return submit(actor,key,bankId,Action.LEDGER_ACCOUNT,input.expectedVersion(),input.reason(),input);
     }
+    public Request lendingGrant(Actor actor,UUID key,UUID bank,com.cbs.access.LendingAccess.Grant input){return submit(actor,key,bank,Action.LENDING_ACCESS,input.expectedVersion(),input.reason(),input);}
     public Request loanFee(Actor actor,UUID key,UUID bank,com.cbs.contracts.LoanFeeModels.Change input){return submit(actor,key,bank,Action.LOAN_FEE,input.expectedVersion(),input.reason(),input);}
     public Request loanServicing(Actor actor,UUID key,UUID bank,com.cbs.contracts.LoanServicingModels.Instruction input){return submit(actor,key,bank,Action.LOAN_SERVICING,input.expectedVersion(),input.reason(),input);}
     public Request creditPolicy(Actor actor,UUID key,UUID bank,com.cbs.credit.CreditModels.Policy input){return submit(actor,key,bank,Action.CREDIT_POLICY,input.expectedVersion(),input.reason(),input);}
@@ -155,9 +157,11 @@ public class ApprovalService {
         });
     }
     private Request submit(Actor actor, UUID key, UUID id, Action action, long version, String reason, Object input) {
-        if(paymentScoped(action))paymentAccess.require(actor,id,com.cbs.payments.PaymentAccess.Capability.MAKE);else if(action!=Action.ACCOUNT_OPERATION&&action!=Action.CASH_OPERATION)AccessService.admin(actor);
+        boolean scopedLoan=lending.scoped(action,id,input);
+        if(!scopedLoan&&paymentScoped(action))paymentAccess.require(actor,id,com.cbs.payments.PaymentAccess.Capability.MAKE);else if(!scopedLoan&&action!=Action.ACCOUNT_OPERATION&&action!=Action.CASH_OPERATION)AccessService.admin(actor);
         return tx.execute(transaction->{
             access.requireAssignable(actor.issuer(),actor.subject());
+            if(scopedLoan){tenantRepository.get(id,true);lending.maker(actor,id,lending.scope(id,action,input));}
             // Serialize retries before checking the target, including retries after the request was approved.
             jdbc.query("SELECT pg_advisory_xact_lock(hashtextextended(?,0))",rs->{},actor.issuer()+":"+actor.subject()+":"+key);
             var existing=jdbc.query("SELECT * FROM platform.approval_request WHERE issuer=? AND maker_subject=? AND idempotency_key=?",
@@ -175,7 +179,8 @@ public class ApprovalService {
             Map<String,Object> before,after;
             String label;
             UUID bankId=null;
-            if(action==Action.LOAN_FEE){var bank=tenantRepository.get(id,true);before=Map.of();after=contracts.values(loanFees.validate(bank,(com.cbs.contracts.LoanFeeModels.Change)input,UUID.randomUUID()));label=bank.displayName();bankId=id;
+            if(action==Action.LENDING_ACCESS){var bank=tenantRepository.get(id,true);lending.validateGrant(actor,bank,(com.cbs.access.LendingAccess.Grant)input);before=Map.of();after=Map.of("grant",input);label=bank.displayName();bankId=id;
+            } else if(action==Action.LOAN_FEE){var bank=tenantRepository.get(id,true);before=Map.of();after=contracts.values(loanFees.validate(bank,(com.cbs.contracts.LoanFeeModels.Change)input,UUID.randomUUID()));label=bank.displayName();bankId=id;
             } else if(action==Action.LOAN_SERVICING){var bank=tenantRepository.get(id,true);before=Map.of();after=contracts.values(loans.validate(bank,(com.cbs.contracts.LoanServicingModels.Instruction)input,UUID.randomUUID()));label=bank.displayName();bankId=id;
             } else if(action==Action.CREDIT_POLICY){var bank=tenantRepository.get(id,true);credit.validatePolicy(actor,bank,(com.cbs.credit.CreditModels.Policy)input);before=Map.of();after=Map.of("policy",input);label=bank.displayName();bankId=id;
             } else if(action==Action.CREDIT_REVIEW){var bank=tenantRepository.get(id,true);before=Map.of();after=credit.validateReview(actor,bank,(com.cbs.credit.CreditModels.Review)input,false);label=bank.displayName();bankId=id;
@@ -293,6 +298,7 @@ public class ApprovalService {
                     VALUES (?,?,?,?,?,?,?,?,?,?,?::jsonb,?::jsonb,?::jsonb)
                     """,requestId,actor.issuer(),actor.subject(),key,action.name(),id,bankId,label,version,reason,payload,
                     JSON.writeValueAsString(before),JSON.writeValueAsString(after));
+            if(scopedLoan)lending.record(requestId,id,lending.scope(id,action,input));
             if(paymentScoped(action))jdbc.update("INSERT INTO platform.payment_approval_scope VALUES (?,?,?)",requestId,id,actor.platformAdmin());
             if(action==Action.PAYMENT_ORDER)payments.record(actor,id,(com.cbs.payments.PaymentModels.Order)input,requestId);
             if(action==Action.PAYMENT_RECONCILE)payments.recordResolution(actor,tenantRepository.get(id,false),(com.cbs.payments.PaymentModels.Reconcile)input,requestId);
@@ -314,10 +320,14 @@ public class ApprovalService {
         if(scope==Scope.MINE) args.add(actor.subject());
         if(action!=null) { condition+=" AND action=?"; args.add(action.name()); }
         if(bankId!=null) { condition+=" AND bank_id=?"; args.add(bankId); }
+        condition+=" AND (NOT EXISTS(SELECT 1 FROM platform.lending_approval_scope ls WHERE ls.request_id=platform.approval_request.id) OR EXISTS(SELECT 1 FROM platform.lending_approval_scope ls JOIN platform.lending_access g ON g.tenant_id=ls.tenant_id JOIN platform.staff_identity si ON si.id=g.staff_id WHERE ls.request_id=platform.approval_request.id AND si.issuer=? AND si.subject=? AND si.active AND g.active AND ((g.payload->>'bankWide')::boolean OR EXISTS(SELECT 1 FROM platform.account_branch ab JOIN platform.branch b ON b.id=ab.branch_id AND b.active WHERE ab.account_id=ls.account_id AND ab.tenant_id=ls.tenant_id AND jsonb_exists(g.payload->'branches',ab.branch_id::text)))))";
+        args.add(actor.issuer());args.add(actor.subject());
         args.add(limit); args.add(offset);
         return new Page<>(jdbc.query("SELECT * FROM platform.approval_request WHERE issuer=?"+condition+
                 " ORDER BY created_at DESC,id LIMIT ? OFFSET ?",(row,n)->request(row),args.toArray()),limit,offset);
     }
+    public Page<Request> lendingInbox(Actor actor,UUID bank,int limit,int offset){AccessService.page(limit,offset);return tx.execute(t->{tenantRepository.get(bank,true);String filter=lending.filter(actor,bank,"s.account_id");return new Page<>(jdbc.query("SELECT a.* FROM platform.approval_request a JOIN platform.lending_approval_scope s ON s.request_id=a.id WHERE a.issuer=? AND a.bank_id=?"+filter+" ORDER BY (a.status='PENDING') DESC,a.created_at DESC,a.id LIMIT ? OFFSET ?",(r,n)->request(r),actor.issuer(),bank,limit,offset),limit,offset);});}
+    public void lendingRequestBank(Actor actor,UUID bank,UUID id){lending.read(actor,bank,null);if(!jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM platform.lending_approval_scope WHERE request_id=? AND tenant_id=?)",Boolean.class,id,bank))throw error(404,"APPROVAL_NOT_FOUND");lending.readRequest(actor,id);}
     public Page<Request> paymentInbox(Actor actor,UUID bank,int limit,int offset){paymentAccess.require(actor,bank,com.cbs.payments.PaymentAccess.Capability.READ);AccessService.page(limit,offset);return new Page<>(jdbc.query("SELECT * FROM platform.approval_request WHERE issuer=? AND bank_id=? AND action IN ('PAYMENT_CASE','STATEMENT_ACTION','PAYMENT_RECONCILE') ORDER BY (status='PENDING') DESC,created_at DESC,id LIMIT ? OFFSET ?",(r,n)->request(r),actor.issuer(),bank,limit,offset),limit,offset);}
     public void paymentRequestBank(Actor actor,UUID bank,UUID id){paymentAccess.require(actor,bank,com.cbs.payments.PaymentAccess.Capability.READ);if(!jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM platform.approval_request WHERE id=? AND issuer=? AND bank_id=? AND action IN ('PAYMENT_CASE','STATEMENT_ACTION','PAYMENT_RECONCILE'))",Boolean.class,id,actor.issuer(),bank))throw error(404,"APPROVAL_NOT_FOUND");}
     public Details details(Actor actor, UUID id) {
@@ -330,7 +340,9 @@ public class ApprovalService {
     public Request decide(Actor actor, UUID id, Decision decision, String reason) {
         return tx.execute(transaction->{
             Request request=get(actor,id,true);
-            if(paymentScoped(request.action()))paymentAccess.require(actor,request.bankId(),decision==Decision.CANCEL?com.cbs.payments.PaymentAccess.Capability.MAKE:com.cbs.payments.PaymentAccess.Capability.APPROVE);else if(request.action()==Action.ACCOUNT_OPERATION)branchOperations.review(actor,id,decision==Decision.CANCEL);else if(request.action()==Action.CASH_OPERATION)cash.readRequest(actor,id,true,decision==Decision.CANCEL);else AccessService.admin(actor);
+            var lendingScope=lending.request(id);
+            if(lendingScope!=null){tenantRepository.get(request.bankId(),true);if(decision==Decision.CANCEL)lending.maker(actor,request.bankId(),lendingScope);else lending.role(actor,request.bankId(),lendingScope.accountId(),com.cbs.access.LendingAccess.Role.CREDIT_APPROVER);}
+            else if(paymentScoped(request.action()))paymentAccess.require(actor,request.bankId(),decision==Decision.CANCEL?com.cbs.payments.PaymentAccess.Capability.MAKE:com.cbs.payments.PaymentAccess.Capability.APPROVE);else if(request.action()==Action.ACCOUNT_OPERATION)branchOperations.review(actor,id,decision==Decision.CANCEL);else if(request.action()==Action.CASH_OPERATION)cash.readRequest(actor,id,true,decision==Decision.CANCEL);else AccessService.admin(actor);
             boolean own=request.makerSubject().equals(actor.subject());
             if(decision==Decision.CANCEL && !own) throw error(403,"ONLY_MAKER_CAN_CANCEL");
             if(decision!=Decision.CANCEL && own) throw error(403,"SELF_APPROVAL_FORBIDDEN");
@@ -354,11 +366,13 @@ public class ApprovalService {
                 } else version=tenantRepository.get(request.targetId(),true).version();
                 if(version!=request.expectedVersion()) next=Status.STALE;
                 else {
+                    if(lendingScope!=null){lending.maker(new Actor(actor.issuer(),request.makerSubject(),false,actor.correlationId()),request.bankId(),lendingScope);lending.checker(actor,request.bankId(),lendingScope,id,true);}
                     String auditReason="Approved request "+request.id();
                     ChangeRequest change=new ChangeRequest(request.expectedVersion(),auditReason);
                     switch(request.action()) {
                         case BANK_SUSPEND -> tenants.suspend(actor,request.targetId(),change);
                         case BANK_RESUME -> tenants.resume(actor,request.targetId(),change);
+                        case LENDING_ACCESS -> lending.applyGrant(actor,request.targetId(),JSON.readValue(jdbc.queryForObject("SELECT payload::text FROM platform.approval_request WHERE id=?",String.class,id),com.cbs.access.LendingAccess.Grant.class),id);
                         case LOAN_FEE -> loanFees.apply(actor,request.targetId(),JSON.readValue(jdbc.queryForObject("SELECT payload::text FROM platform.approval_request WHERE id=?",String.class,id),com.cbs.contracts.LoanFeeModels.Change.class),id,request.makerSubject());
                         case LOAN_SERVICING -> loans.apply(actor,request.targetId(),JSON.readValue(jdbc.queryForObject("SELECT payload::text FROM platform.approval_request WHERE id=?",String.class,id),com.cbs.contracts.LoanServicingModels.Instruction.class),id,request.makerSubject());
                         case CREDIT_POLICY -> credit.policy(actor,request.targetId(),JSON.readValue(jdbc.queryForObject("SELECT payload::text FROM platform.approval_request WHERE id=?",String.class,id),com.cbs.credit.CreditModels.Policy.class),id);
@@ -458,7 +472,7 @@ public class ApprovalService {
         var rows=jdbc.query("SELECT * FROM platform.approval_request WHERE id=? AND issuer=?"+(lock?" FOR UPDATE":""),
                 (row,n)->request(row),id,actor.issuer());
         if(rows.isEmpty()) throw error(404,"APPROVAL_NOT_FOUND");
-        if(paymentScoped(rows.getFirst().action()))paymentAccess.require(actor,rows.getFirst().bankId(),com.cbs.payments.PaymentAccess.Capability.READ);else if(rows.getFirst().action()==Action.ACCOUNT_OPERATION)branchOperations.readRequest(actor,id);else if(rows.getFirst().action()==Action.CASH_OPERATION)cash.readRequest(actor,id,false,false);else AccessService.admin(actor);
+        if(lending.request(id)!=null)lending.readRequest(actor,id);else if(paymentScoped(rows.getFirst().action()))paymentAccess.require(actor,rows.getFirst().bankId(),com.cbs.payments.PaymentAccess.Capability.READ);else if(rows.getFirst().action()==Action.ACCOUNT_OPERATION)branchOperations.readRequest(actor,id);else if(rows.getFirst().action()==Action.CASH_OPERATION)cash.readRequest(actor,id,false,false);else AccessService.admin(actor);
         return rows.getFirst();
     }
     private void audit(Actor actor, UUID id, String action, String reason) {

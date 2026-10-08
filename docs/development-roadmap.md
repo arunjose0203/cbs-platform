@@ -93,3 +93,7 @@ The [lending controls guide](lending-controls.md) describes delivered applicatio
 ## Loan arrears and collections — 8 October 2026
 
 Implemented after isolated lending end-to-end validation. See [operator guide](loan-arrears-collections.md) for exact ageing, posted interest/fee accounting, assignments, promises, escalation and safe retries. Next acceptance work is bank-led lending UAT, scoped collections/credit roles, country product rules, fee tax/corrections and post-write-off recoveries. Security/load/restore/failover remain production gates. Earlier entries are historical rather than current completeness claims.
+
+## 8 October 2026 — lending access increment
+
+Implemented [Bank-Scoped Roles & Approval Limits](bank-scoped-lending-access.md). Next: Production Deployment, Backup & Disaster Recovery, then bank-led acceptance using Rwanda, Uganda and Kenya configurations approved by each bank. Do not treat module count or development test passes as production certification.

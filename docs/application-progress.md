@@ -5,7 +5,7 @@
 The application has an implemented administration and accounting foundation and an
 initial deposit-product catalogue, individual customer onboarding and deposit account opening/funding with customer balances. It is a development system, not a complete
 production CBS. Approved received-deposit credits are available. Holds/releases, recorded withdrawals, same-currency internal transfers, full funding reversals and customer statement views have now been added. Counting modules would give a misleading completion percentage:
-the remaining financial and operational modules differ greatly in size. The latest increment validates the lending lifecycle and adds [loan arrears and collections](loan-arrears-collections.md), posted interest/fee ageing, cash-backed promises, assignments and escalation tracking; see [lending controls](lending-controls.md), [contract corrections and term servicing](contract-corrections-servicing.md), and [FX valuation](fx-valuation.md).
+the remaining financial and operational modules differ greatly in size. The latest increment adds [bank-scoped lending roles and approval limits](bank-scoped-lending-access.md), scoped approval queues, permission reports and revocation enforcement. The preceding increment validates the lending lifecycle and adds [loan arrears and collections](loan-arrears-collections.md), posted interest/fee ageing, cash-backed promises, assignments and escalation tracking; see [lending controls](lending-controls.md), [contract corrections and term servicing](contract-corrections-servicing.md), and [FX valuation](fx-valuation.md).
 
 The stack is Java 21, Spring Boot, PostgreSQL on Neon for development, and a browser
 administration portal with local Keycloak identity integration. Shared bank
@@ -18,8 +18,8 @@ in each bank's dedicated database. Product definitions use the control database.
 | --- | --- | --- |
 | 00 Foundation | Build, packaging, health, migration infrastructure, CI workflow | GitHub CI execution, hosted deployment and recovery not verified |
 | 01 Bank administration | Bank registration, legal entities, database binding/provisioning, lifecycle and audit | Live operational acceptance and backup/restore drills |
-| 02 Staff and access | Staff identities, bank/branch grants, MFA checks, sessions, local identity provider | Restore working MFA for normal use; production identity setup and access review |
-| 03 Approval Inbox | Independent approval, rejection, cancellation, history, stale-request and retry protection | Broader role/limit-based approval policies |
+| 02 Staff and access | Staff identities, bank/branch grants, scoped lending roles and approval limits, immutable access review history, MFA checks and sessions | Restore working MFA for normal use; production identity setup and access review |
+| 03 Approval Inbox | Independent approval, rejection, cancellation, history, stale-request and retry protection | Extend scoped approval policy coverage to remaining administration modules |
 | 04 Reference data | Currency, language, rounding rules, business calendar and settings approval | Country-specific policy setup and acceptance |
 | 05.1 Chart of Accounts | Hierarchy, categories, posting definitions and approvals | Bank-specific accounting/regulatory chart setup |
 | 05.2 Ledger Accounts | Per-bank ledger storage, approval delivery and retry recovery; customer subledgers and holds integrated | Bank accounting acceptance and lifecycle extensions |

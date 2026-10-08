@@ -4,7 +4,7 @@ The lending lifecycle was exercised in isolated PostgreSQL databases with fictio
 
 ## Operator workflow
 
-1. Sign in with a registered active platform administrator and select the bank. Use **Lending → Prepare storage** or **Loan arrears & collections → Prepare storage** to apply bank migration V21. Control migration V36 is applied on application startup.
+1. An administrator prepares storage; operating staff require explicit bank/branch lending grants (see [roles and approval limits](bank-scoped-lending-access.md)). Use **Lending → Prepare storage** or **Loan arrears & collections → Prepare storage** to apply bank migration V21. Control migration V36 is applied on application startup.
 2. Complete credit policy, limits, application, independent assessment/conditions and disbursement in the existing lending workflow. Financial fees additionally require explicit per-currency limits for `LOAN_FEE_ASSESS`, `LOAN_FEE_PAY` and `LOAN_FEE_WAIVE`. No amounts or limits are seeded.
 3. Accrue loans through the current business date in Lending. The collections page marks incomplete accrual and pending financial delivery. Pending openings have no reconciled receivable yet.
 4. Open **Loan arrears & collections → Arrears & case**. Review unpaid due dates and separate principal, interest and fees in CURRENT, 1–30, 31–60, 61–90, 91–180 and 181+ calendar-day buckets. Each loan retains its own currency.

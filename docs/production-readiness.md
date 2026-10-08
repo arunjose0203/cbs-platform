@@ -1,6 +1,6 @@
 # Production release gates — African regional CBS
 
-Updated 7 October 2026. Release status: **NOT PRODUCTION READY**.
+Updated 8 October 2026. Release status: **NOT PRODUCTION READY**.
 
 The user authorized continued implementation of the full roadmap without per-module permission requests. Target markets are Rwanda, Uganda and Kenya. The first launch jurisdiction, licensed operator, payment providers, production infrastructure, transaction-volume targets and recovery objectives still require selection. Shared core implementation can continue; jurisdiction-specific acceptance and provider certification cannot be inferred from a regional target.
 
@@ -9,7 +9,7 @@ The user authorized continued implementation of the full roadmap without per-mod
 | Area | Current evidence | Release requirement |
 | --- | --- | --- |
 | Deposit posting | Local automated funding/debit/hold/transfer/reversal and recovery tests | Bank-approved business cases, limits and independent acceptance |
-| Access | Staff/session/MFA checks, scoped branch operations and mandatory limits | Finer bank-scoped administration/compliance roles, privileged access review, production MFA |
+| Access | Staff/session/MFA checks, scoped branch operations, bank/branch lending roles, immutable grant review history and currency/operation approval limits | Finer bank-scoped administration/compliance roles, privileged access review, production MFA |
 | Deployment | Packaged Spring Boot application, CI workflow | Hosted CI evidence, signed release baseline, staging rollout and rollback drill |
 | Production configuration | ProductionGuard rejects local HTTP identity, MFA exceptions, bootstrap admin and database URLs without verify-full | Deploy with production profile, real secret store, trusted database CA, TLS ingress and tested network isolation |
 | Backups | No restore drill demonstrated | Independent backups of control and every bank database, point-in-time recovery, coordinated consistency checks and measured restore |
@@ -50,3 +50,7 @@ The [statement reconciliation module](mpesa-statement-reconciliation.md) adds no
 ### Payment returns and exception readiness
 
 V27 implements bank-scoped payment roles, approved timing carries, investigations and full customer returns with retry recovery. Local automated evidence does not satisfy provider certification. Release gates still include actual export-format validation, Daraja sandbox acceptance, reconciliation policy/deadline approval, production provider credentials/contract, account restriction/suspense policy, remote reversal and partial-return scope, outbound escalation and bank finance sign-off. See [payment lifecycle](payment-lifecycle-exceptions.md).
+
+## Next implementation priority
+
+Production Deployment, Backup & Disaster Recovery follows the bank-scoped lending access increment. Build repeatable deployment and coordinated backup/restore tooling, then measure recovery in an isolated staging environment with bank-approved RPO/RTO. Acceptance remains open until actual restore/failover evidence and bank-led financial/security testing exist. See [lending access setup](bank-scoped-lending-access.md).

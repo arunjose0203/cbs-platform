@@ -548,3 +548,18 @@ Runtime check: the saved Neon development control database successfully applied 
 - Control V36 and bank V21 are the new migrations. See [operating guide and remaining scope](loan-arrears-collections.md). Bank-specific production acceptance, scoped collection roles, fee taxation/corrections, external notifications and recovery/scale gates remain outstanding.
 
 Runtime verification: packaging succeeded (.local/collections-package.log). The saved Neon development control database applied V36; CBS readiness is UP and configured identity discovery returned HTTP 200. The actual browser navigation shows Loan arrears & collections. Bank V21 remains an explicit Prepare storage upgrade after sign-in. The app was left running; temporary fictional preview and leftover test fixture were removed.
+
+## 8 October 2026 — bank-scoped lending access
+
+Implemented [Bank-Scoped Roles & Approval Limits](bank-scoped-lending-access.md): five explicit roles, bank/branch filtering, operation/currency per-transaction and daily authority, independent grant decisions, scoped lending approval inbox, immutable access history and immediate enforcement on subsequent requests and first financial posting.
+
+Verification:
+
+- Full backend regression: **153 tests passed**, no failures/errors/skips.
+- Final targeted migration and credit/collections lifecycle run: **5 tests passed**, including V37 validation and populated financial-request scope reconstruction.
+- Final two-bank security integration run: **1 test passed**, exercising non-admin HTTP approval, MFA denial, actual cross-bank denial, branch list/detail isolation, read-only auditors, self/beneficiary approval denial, missing operation/currency caps, transaction/daily boundaries, revoke-before-post, safe lost-acknowledgement recovery, inactive branches and immutable records.
+- UI suite: **96 tests passed**, including exact decimal strings, grant scope and idempotency, revocation targets, auditor controls and permission report escaping.
+- Isolated browser fixture verified Staff & Access → Lending permissions, grant scope/limit wizard, lending approval detail and disabled unauthorized loan actions. No real bank authority or financial transactions were created in browser verification.
+- Executable package built successfully after testing. Real authenticated bank-led UAT, production load, restore and failover acceptance remain outstanding.
+
+Development deployment: saved Neon control database migrated from V36 to **V37** successfully on 8 October 2026. CBS restarted on port 8080, readiness returned **UP**, identity discovery succeeded, and the released portal was reloaded in the browser with the new lending approval navigation. No real grants or financial limits were seeded. Live sign-in was not exercised: the saved temporary password-only exception expired on 6 October, and MFA enforcement was left unchanged.

@@ -1,11 +1,12 @@
 import {escapeHtml as e} from './model.js';
-export function createContractsUi({api,form,field,refresh,type}){
+export function createContractsUi({api,form,field,refresh,type,isAdmin=()=>true}){
  const term=type==='TERM_DEPOSIT',prefix=term?'term':'loan',title=term?'Term deposits':'Lending';
  let historyData,historyContract='',historyOffset=0;
  let bankId='',banks=[],bank,data,alerts,offset=0,current=()=>false;
  const base=()=>'/admin/tenants/'+bankId+'/contracts';
  const post=(path,body,key=crypto.randomUUID())=>api(path,{method:'POST',headers:{'Idempotency-Key':key},body});
- const button=(label,action,id='',disabled=false)=>`<button class="button secondary" type="button" data-action="${prefix}-${action}" data-id="${e(id)}" ${disabled?'disabled':''}>${e(label)}</button>`;
+ const allowed=action=>term?true:action==='prepare'?isAdmin():!bank?.grant||(!['open','accrue','settle','correct','impair','writeoff','retry','restructure'].includes(action))||bank.grant.roles.includes(action==='restructure'?'CREDIT_OFFICER':'FINANCE_OFFICER');
+ const button=(label,action,id='',disabled=false)=>`<button class="button secondary" type="button" data-action="${prefix}-${action}" data-id="${e(id)}" ${disabled||!allowed(action)?'disabled':''}>${e(label)}</button>`;
  async function render(host,isCurrent){
   current=isCurrent;banks=(await api('/admin/tenants?limit=100')).items;if(!isCurrent())return;if(!bankId)bankId=banks.find(x=>x.status==='ACTIVE')?.id||banks[0]?.id;
   if(!bankId){host.innerHTML=`<h1>${title}</h1><p>Register a bank first.</p>`;return;}
@@ -48,8 +49,8 @@ export function createContractsUi({api,form,field,refresh,type}){
   }
   const item=data.items.find(x=>x.definition.id===id);if(!item)return;
   if(!term&&name==='collections'){
-   const result=await api(route+'/'+id+'/collections');
-   form('Collections & follow-up',`<div class="field full"><p>Past-due contractual principal: ${e(item.principalArrears)}; ${e(item.principalDaysPastDue||0)} days past due. Interest arrears and contractual penalties need separate assessment.</p>${result.items.map(x=>`<p>${e(x.entry.note)}<small>${e(x.subject)} · owner ${e(x.entry.owner)} · follow up ${e(x.entry.followUpOn)} · evidence ${e(x.entry.evidenceReference)}</small></p>`).join('')||'<p>No collection notes.</p>'}</div>`+field('owner','Assigned staff identity subject','',{full:true,max:255})+field('followUpOn','Next follow-up date','',{type:'date'})+field('evidenceReference','Contact / investigation reference','',{full:true,max:160})+field('note','Collection note or promise to pay','',{full:true,max:500}),v=>post(route+'/collections',{...v,expectedVersion:result.version,contractId:id}),'Record follow-up');return;
+   const result=await api(route+'/'+id+'/collections');const canCollect=!bank?.grant||bank.grant.roles.includes('COLLECTIONS_OFFICER');
+   form('Collections & follow-up',`<div class="field full"><p>Past-due contractual principal: ${e(item.principalArrears)}; ${e(item.principalDaysPastDue||0)} days past due. Interest arrears and contractual penalties need separate assessment.</p>${result.items.map(x=>`<p>${e(x.entry.note)}<small>${e(x.subject)} · owner ${e(x.entry.owner)} · follow up ${e(x.entry.followUpOn)} · evidence ${e(x.entry.evidenceReference)}</small></p>`).join('')||'<p>No collection notes.</p>'}</div>`+(canCollect?field('owner','Assigned staff identity subject','',{full:true,max:255})+field('followUpOn','Next follow-up date','',{type:'date'})+field('evidenceReference','Contact / investigation reference','',{full:true,max:160})+field('note','Collection note or promise to pay','',{full:true,max:500}):''),v=>canCollect?post(route+'/collections',{...v,expectedVersion:result.version,contractId:id}):Promise.resolve(),canCollect?'Record follow-up':'Close');return;
   }
   if(!term&&['restructure','impair','writeoff'].includes(name)){
    const restructuring=name==='restructure',writeoff=name==='writeoff',risk=item.riskBook?.[0];

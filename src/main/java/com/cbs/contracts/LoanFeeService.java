@@ -17,12 +17,13 @@ import tools.jackson.databind.json.JsonMapper;
 @Service
 @ConditionalOnProperty(name="cbs.tenancy.enabled",havingValue="true",matchIfMissing=true)
 public class LoanFeeService {
+ private final LendingAccess lending;
  private static final JsonMapper JSON=JsonMapper.builder().build();
  private final JdbcTemplate jdbc;private final TenantRepository tenants;private final ContractService contracts;private final BankContractStore store;private final BankOperationStore customers;private final CreditService credit;private final TransactionTemplate tx;
- public LoanFeeService(JdbcTemplate jdbc,TenantRepository tenants,ContractService contracts,BankContractStore store,BankOperationStore customers,CreditService credit,PlatformTransactionManager manager){this.jdbc=jdbc;this.tenants=tenants;this.contracts=contracts;this.store=store;this.customers=customers;this.credit=credit;tx=new TransactionTemplate(manager);}
+ public LoanFeeService(LendingAccess lending,JdbcTemplate jdbc,TenantRepository tenants,ContractService contracts,BankContractStore store,BankOperationStore customers,CreditService credit,PlatformTransactionManager manager){this.lending=lending;this.jdbc=jdbc;this.tenants=tenants;this.contracts=contracts;this.store=store;this.customers=customers;this.credit=credit;tx=new TransactionTemplate(manager);}
  private static TenantException error(String code){return new TenantException(409,code,"Loan fee requires attention");}
  public static BigDecimal outstanding(JdbcTemplate jdbc,UUID contract){return jdbc.queryForObject("SELECT coalesce(sum((x.payload->'feeServicing'->>'after')::numeric),0) FROM (SELECT DISTINCT ON (payload->'feeServicing'->>'feeId') payload FROM platform.contract_delivery WHERE contract_id=? AND completed AND payload->'feeServicing' IS NOT NULL ORDER BY payload->'feeServicing'->>'feeId',created_at DESC,id DESC) x",BigDecimal.class,contract);}
- public Posting preview(Actor actor,UUID bank,LoanFeeModels.Change i){AccessService.admin(actor);return tx.execute(t->validate(tenants.get(bank,true),i,UUID.randomUUID()));}
+ public Posting preview(Actor actor,UUID bank,LoanFeeModels.Change i){return tx.execute(t->{var b=tenants.get(bank,true);lending.maker(actor,bank,lending.scope(bank,com.cbs.approvals.ApprovalModels.Action.LOAN_FEE,i));return validate(b,i,UUID.randomUUID());});}
  public Posting validate(Tenant b,LoanFeeModels.Change i,UUID id){
   contracts.ready(b,i.expectedVersion(),i.businessDate());var original=contracts.definition(b.id(),i.contractId());if(original.terms().type()!=Type.LOAN)throw error("LOAN_REQUIRED");
   if(jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM platform.contract_delivery WHERE contract_id=? AND NOT completed)",Boolean.class,i.contractId()))throw error("CONTRACT_PENDING");
@@ -48,5 +49,5 @@ public class LoanFeeService {
   TransactionLimits.check(jdbc,b.id(),a.terms().currency(),"LOAN_"+kind.name(),i.businessDate(),amount);
   var p=contracts.posting(b,id,d,kind,i.businessDate(),before,after,movement,"0",lines,i.reason());return new Posting(p.id(),p.contract(),p.kind(),p.businessDate(),p.before(),p.after(),p.customerMovement(),p.tax(),p.journal(),p.reason(),null,null,null,new LoanFeeModels.Details(i,feeId,due,receivable,income,text(old),text(next)));
  }
- public void apply(Actor actor,UUID bank,LoanFeeModels.Change input,UUID id,String maker){AccessService.admin(actor);var b=tenants.get(bank,true);var p=validate(b,input,id);credit.requireReviewer(actor,b,p.contract().account().terms().currency(),decimal(input.amount()));contracts.save(actor,b,p,maker);}
+ public void apply(Actor actor,UUID bank,LoanFeeModels.Change input,UUID id,String maker){var b=tenants.get(bank,true);lending.checker(actor,bank,lending.scope(bank,com.cbs.approvals.ApprovalModels.Action.LOAN_FEE,input),id,false);var p=validate(b,input,id);credit.requireReviewer(actor,b,p.contract().account().terms().currency(),decimal(input.amount()));contracts.save(actor,b,p,maker);}
 }

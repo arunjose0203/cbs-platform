@@ -9,7 +9,7 @@ import org.springframework.security.oauth2.server.resource.authentication.JwtAut
 import org.springframework.web.bind.annotation.*;
 
 @RestController
-@RequestMapping("/api/v1/admin/tenants/{bank}/contracts")
+@RequestMapping({"/api/v1/admin/tenants/{bank}/contracts","/api/v1/banks/{bank}/lending-operations/contracts"})
 @ConditionalOnProperty(name="cbs.tenancy.enabled",havingValue="true",matchIfMissing=true)
 public class ContractController {
     private final LoanFeeService fees;private final LoanServicingService loans;private final TermServicingService servicing;private final ContractService service;private final ApprovalService approvals;

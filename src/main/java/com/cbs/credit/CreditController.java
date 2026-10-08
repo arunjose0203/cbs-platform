@@ -7,7 +7,7 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken;
 import org.springframework.web.bind.annotation.*;
 @RestController
-@RequestMapping("/api/v1/admin/tenants/{bank}/credit")
+@RequestMapping({"/api/v1/admin/tenants/{bank}/credit","/api/v1/banks/{bank}/lending-operations/credit"})
 @ConditionalOnProperty(name="cbs.tenancy.enabled",havingValue="true",matchIfMissing=true)
 public class CreditController {
  private final CreditService service;private final ApprovalService approvals;
