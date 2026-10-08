@@ -23,7 +23,16 @@ public class BankDatabaseProvisioner {
         @Override public String toString() { return "BankDatabaseTarget[redacted]"; }
     }
     private final Settings settings;
-    public BankDatabaseProvisioner(Settings settings) { this.settings = settings; }
+    private final boolean migrationsEnabled;
+    public BankDatabaseProvisioner(Settings settings) { this.settings = settings; this.migrationsEnabled = true; }
+    @org.springframework.beans.factory.annotation.Autowired
+    public BankDatabaseProvisioner(Settings settings, org.springframework.core.env.Environment environment) {
+        this.settings = settings;
+        this.migrationsEnabled = environment.getProperty("cbs.banking.migrations-enabled", Boolean.class, true);
+    }
+    private void requireMigrationAuthority() {
+        if (!migrationsEnabled) throw new TenantException(503,"DATABASE_MIGRATION_REQUIRED","An operator must run the separate database migration job");
+    }
 
     public void requireApproved(String reference) { target(reference); }
 
@@ -45,6 +54,7 @@ public class BankDatabaseProvisioner {
     }
 
     public String upgradeOwned(UUID tenantId,String reference) {
+        requireMigrationAuthority();
         try(Connection lock=openOwned(tenantId,reference)) {
             try(var statement=lock.createStatement();var rows=statement.executeQuery("SELECT pg_try_advisory_lock(1128420179)")) {
                 rows.next();if(!rows.getBoolean(1))throw failure("DATABASE_BUSY");
@@ -56,6 +66,7 @@ public class BankDatabaseProvisioner {
     }
 
     public String provision(UUID tenantId, String reference) {
+        requireMigrationAuthority();
         DriverManagerDataSource dataSource = dataSource(target(reference));
         // The session lock spans ownership reservation and all Flyway connections.
         try (Connection lock = dataSource.getConnection()) {

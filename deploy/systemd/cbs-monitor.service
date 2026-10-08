@@ -1,0 +1,13 @@
+[Unit]
+Description=CBS read-only operations checks
+After=network-online.target
+[Service]
+Type=oneshot
+User=cbs-monitor
+UMask=0077
+ExecStart=/opt/cbs/ops-venv/bin/python /opt/cbs/ops/monitor.py --config /etc/cbs/monitor.json --metrics /var/lib/cbs-monitor/cbs.prom
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/cbs-monitor
+PrivateTmp=true
+TimeoutStartSec=180

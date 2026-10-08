@@ -1,0 +1,9 @@
+# Example maintenance schedule only. Bank must approve the outage window before enabling.
+[Unit]
+Description=Nightly CBS maintenance backup
+[Timer]
+OnCalendar=*-*-* 02:00:00 UTC
+Persistent=false
+Unit=cbs-backup.service
+[Install]
+WantedBy=timers.target

@@ -28,6 +28,9 @@ public class ProductionGuard {
   if(!env.getProperty("spring.flyway.clean-disabled",Boolean.class,false))problems.add("Flyway clean must be disabled");
   if(!env.getProperty("spring.flyway.validate-on-migrate",Boolean.class,false))problems.add("migration validation must be enabled");
   for(var bank:banks.databases().entrySet())if(!verifiedDatabase(bank.getValue().url())||bank.getValue().password()==null||bank.getValue().password().isBlank())problems.add("bank database transport or credential is not production configured");
+  if(env.getProperty("spring.flyway.enabled",Boolean.class,true))problems.add("runtime Flyway migrations must be disabled; use the migration job");
+  if(env.getProperty("cbs.banking.migrations-enabled",Boolean.class,true))problems.add("runtime bank migrations must be disabled");
+  if(!migration.isBlank()||!env.getProperty("spring.flyway.user","").isBlank()||!env.getProperty("spring.flyway.password","").isBlank())problems.add("migration credentials must not be mounted in the runtime");
   if(!problems.isEmpty())throw new IllegalStateException("Production configuration rejected: "+String.join("; ",problems));
  }
  private static boolean https(String value){try{var uri=URI.create(value);return "https".equals(uri.getScheme())&&uri.getHost()!=null&&uri.getUserInfo()==null&&uri.getFragment()==null&&!Set.of("localhost","127.0.0.1","::1").contains(uri.getHost());}catch(RuntimeException e){return false;}}

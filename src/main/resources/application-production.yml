@@ -1,11 +1,14 @@
 # Required secrets and URLs are supplied by the deployment secret store.
 # ProductionGuard rejects overrides that would enable development authentication.
 cbs:
+  banking:
+    migrations-enabled: false
   security:
     enabled: true
     allow-local-http: false
 spring:
   flyway:
+    enabled: false
     clean-disabled: true
     validate-on-migrate: true
   datasource:

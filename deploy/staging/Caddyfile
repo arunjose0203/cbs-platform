@@ -1,0 +1,18 @@
+{
+    email {$ACME_EMAIL}
+    admin off
+}
+{$CBS_DOMAIN} {
+    encode zstd gzip
+    header Strict-Transport-Security "max-age=31536000"
+    handle /health/ready {
+        rewrite * /actuator/health/readiness
+        reverse_proxy app:8080
+    }
+    handle /actuator/* {
+        respond 404
+    }
+    handle {
+        reverse_proxy app:8080
+    }
+}

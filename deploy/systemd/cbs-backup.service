@@ -1,0 +1,13 @@
+[Unit]
+Description=Coordinated encrypted CBS maintenance backup
+After=network-online.target
+[Service]
+Type=oneshot
+User=root
+UMask=0077
+ExecStart=/opt/cbs/ops-venv/bin/python /opt/cbs/ops/backup_job.py --config /etc/cbs/backup.json
+ExecStopPost=/opt/cbs/ops-venv/bin/python /opt/cbs/ops/backup_job.py --config /etc/cbs/backup.json --recover
+TimeoutStartSec=2h
+TimeoutStopSec=180
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,14 @@
+[Unit]
+Description=CBS staging containers
+Requires=docker.service
+After=docker.service network-online.target
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/opt/cbs
+ExecStart=/usr/bin/docker compose --env-file /etc/cbs/staging.env -f deploy/staging/compose.yml up -d --wait app edge
+ExecStop=/usr/bin/docker compose --env-file /etc/cbs/staging.env -f deploy/staging/compose.yml stop app
+TimeoutStartSec=180
+TimeoutStopSec=90
+[Install]
+WantedBy=multi-user.target

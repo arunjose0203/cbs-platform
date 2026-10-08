@@ -1,0 +1,63 @@
+name: cbs-staging
+services:
+  app:
+    image: ${CBS_APP_IMAGE:?Set an immutable app image digest}
+    user: "10001:10001"
+    restart: unless-stopped
+    read_only: true
+    init: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 256
+    mem_limit: 1g
+    cpus: 2
+    stop_grace_period: 45s
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=128m,mode=1777
+    environment:
+      SPRING_PROFILES_ACTIVE: production
+      SPRING_CONFIG_IMPORT: file:/run/secrets/application.yml
+      CBS_BIND_ADDRESS: 0.0.0.0
+    volumes:
+      - ${CBS_RUNTIME_CONFIG:?Set private runtime YAML path}:/run/secrets/application.yml:ro
+      - ${CBS_DATABASE_CA:?Set database CA file}:/home/cbs/.postgresql/root.crt:ro
+    networks: [cbs]
+    logging:
+      driver: json-file
+      options: {max-size: 10m, max-file: "5"}
+  edge:
+    image: ${CADDY_IMAGE:?Set a reviewed Caddy image digest}
+    restart: unless-stopped
+    ports: ["80:80", "443:443"]
+    environment:
+      CBS_DOMAIN: ${CBS_DOMAIN:?Set the staging DNS name}
+      ACME_EMAIL: ${ACME_EMAIL:?Set certificate operations email}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks: [cbs]
+    depends_on:
+      app: {condition: service_healthy}
+    logging:
+      driver: json-file
+      options: {max-size: 10m, max-file: "5"}
+  migrate:
+    profiles: [tools]
+    image: ${CBS_APP_IMAGE:?Set an immutable app image digest}
+    user: "10001:10001"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs: [/tmp]
+    entrypoint: [java, -Dloader.main=com.cbs.operations.MigrationMain, -cp, /app/cbs.jar, org.springframework.boot.loader.launch.PropertiesLauncher]
+    command: [/run/migration/plan.json]
+    volumes:
+      - ${CBS_MIGRATION_DIRECTORY:?Set private migration-only directory}:/run/migration:ro
+      - ${CBS_DATABASE_CA:?Set database CA file}:/home/cbs/.postgresql/root.crt:ro
+    networks: [cbs]
+networks:
+  cbs: {}
+volumes:
+  caddy_data: {}
+  caddy_config: {}

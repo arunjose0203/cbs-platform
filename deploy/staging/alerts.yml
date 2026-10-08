@@ -1,0 +1,18 @@
+groups:
+  - name: cbs-operations
+    rules:
+      - alert: CbsApplicationUnavailable
+        expr: cbs_readiness_up == 0
+        for: 2m
+        labels: {severity: critical}
+        annotations: {summary: "CBS readiness is failing"}
+      - alert: CbsOperationalCheckFailed
+        expr: cbs_monitor_alerts > 0
+        for: 1m
+        labels: {severity: critical}
+        annotations: {summary: "Check protected CBS monitor output for backup, restore, database or posting failures"}
+      - alert: CbsMonitorMissing
+        expr: absent(cbs_monitor_last_run_seconds) or (time() - cbs_monitor_last_run_seconds > 180)
+        for: 2m
+        labels: {severity: critical}
+        annotations: {summary: "CBS monitoring has stopped reporting"}

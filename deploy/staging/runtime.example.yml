@@ -1,0 +1,21 @@
+# Secret file, outside the repository, readable by UID 10001 only.
+# Fill every placeholder through your secret manager. Use direct PostgreSQL URLs.
+spring:
+  datasource:
+    url: jdbc:postgresql://CONTROL_HOST/cbs_control?sslmode=verify-full
+    username: cbs_control_runtime
+    password: REPLACE_FROM_SECRET_STORE
+cbs:
+  security:
+    issuer: https://IDENTITY_DOMAIN/realms/cbs
+    jwk-set-uri: https://IDENTITY_DOMAIN/realms/cbs/protocol/openid-connect/certs
+    audience: cbs-api
+  portal:
+    client-id: cbs-portal
+    redirect-uri: https://CBS_DOMAIN/admin/index.html
+  banking:
+    databases:
+      bank-reference:
+        url: jdbc:postgresql://BANK_HOST/cbs_bank?sslmode=verify-full
+        username: cbs_bank_runtime
+        password: REPLACE_FROM_SECRET_STORE

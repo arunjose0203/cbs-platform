@@ -1,0 +1,32 @@
+{
+  "pg_bin": "/usr/lib/postgresql/18/bin",
+  "pgpass_file": "/etc/cbs/backup.pgpass",
+  "sslrootcert": "/etc/cbs/database-ca.pem",
+  "key_file": "/etc/cbs/backup.key",
+  "scratch_dir": "/var/lib/cbs-restore/encrypted-scratch",
+  "operation_timeout_seconds": 3600,
+  "databases": [
+    {"name":"control","kind":"control","host":"CONTROL_DIRECT_HOST","port":5432,"database":"cbs_control","user":"cbs_control_backup"},
+    {"name":"bank-ke","kind":"bank","host":"BANK_DIRECT_HOST","port":5432,"database":"cbs_bank_ke","user":"cbs_bank_ke_backup","tenant_id":"REPLACE_WITH_REGISTERED_BANK_UUID"},
+    {"name":"identity","kind":"identity","host":"IDENTITY_DB_HOST","port":5432,"database":"keycloak","user":"keycloak_backup"}
+  ],
+  "files": [
+    {"name":"identity-realm-config","path":"/etc/cbs/recovery/realm-export.json"},
+    {"name":"deployment-config","path":"/etc/cbs/recovery/deployment.json"}
+  ],
+  "automation": {
+    "writer_units":["cbs-staging.service","keycloak.service"],
+    "backup_root":"/var/lib/cbs-backup",
+    "state_file":"/var/lib/cbs-backup/job-state.json",
+    "status_file":"/var/lib/cbs-backup/job-status.json"
+  },
+  "monitor": {
+    "readiness_url":"https://CBS_DOMAIN/health/ready",
+    "latest_backup_directory":"/var/lib/cbs-backup/REPLACE_WITH_LATEST_COMPLETE_SET",
+    "latest_restore_report":"/var/lib/cbs-backup/REPLACE_WITH_SIGNED_DRILL_REPORT.json",
+    "last_backup_job":"/var/lib/cbs-backup/job-status.json",
+    "max_backup_age_seconds":0,
+    "max_restore_age_seconds":0,
+    "max_pending_age_seconds":0
+  }
+}
