@@ -22,6 +22,14 @@ import tools.jackson.databind.json.JsonMapper;
 @ConditionalOnProperty(name="cbs.tenancy.enabled",havingValue="true",matchIfMissing=true)
 public class ApprovalService {
     private static final JsonMapper JSON=JsonMapper.builder().build();
+    private final com.cbs.contracts.LoanFeeService loanFees;
+    private final com.cbs.contracts.LoanServicingService loans;
+    private final com.cbs.credit.CreditService credit;
+    private final com.cbs.contracts.TermServicingService termServicing;
+    private final com.cbs.contracts.ContractService contracts;
+    private final com.cbs.fx.FxService fx;
+    private final com.cbs.fx.FxValuationService valuations;
+    private final com.cbs.fx.FxTradeService fxTrades;
     private final com.cbs.payments.PaymentService payments;
     private final com.cbs.payments.PaymentCaseService paymentCases;
     private final com.cbs.payments.PaymentAccess paymentAccess;
@@ -46,9 +54,9 @@ public class ApprovalService {
     private final com.cbs.accounts.AccountService accounts;
     private final com.cbs.accounts.FundingService funding;
     private final com.cbs.accounts.OperationService operations;
-    public ApprovalService(com.cbs.payments.PaymentCaseService paymentCases,com.cbs.payments.PaymentAccess paymentAccess,com.cbs.payments.StatementImportService statements,com.cbs.payments.PaymentService payments,com.cbs.compliance.ComplianceService compliance,com.cbs.servicing.ServicingService servicing,com.cbs.cash.DenominationService denominations,com.cbs.cash.CashService cash,com.cbs.access.BranchOperations branchOperations,JdbcTemplate jdbc, PlatformTransactionManager manager, TenantService tenants,
+    public ApprovalService(com.cbs.contracts.LoanFeeService loanFees,com.cbs.contracts.LoanServicingService loans,com.cbs.credit.CreditService credit,com.cbs.contracts.TermServicingService termServicing,com.cbs.fx.FxValuationService valuations,com.cbs.contracts.ContractService contracts,com.cbs.fx.FxService fx,com.cbs.fx.FxTradeService fxTrades,com.cbs.payments.PaymentCaseService paymentCases,com.cbs.payments.PaymentAccess paymentAccess,com.cbs.payments.StatementImportService statements,com.cbs.payments.PaymentService payments,com.cbs.compliance.ComplianceService compliance,com.cbs.servicing.ServicingService servicing,com.cbs.cash.DenominationService denominations,com.cbs.cash.CashService cash,com.cbs.access.BranchOperations branchOperations,JdbcTemplate jdbc, PlatformTransactionManager manager, TenantService tenants,
             TenantRepository tenantRepository, AccessService access,com.cbs.reference.ReferenceDataService reference,
-            com.cbs.accounting.ChartService chart,com.cbs.accounting.LedgerService ledger,com.cbs.accounting.JournalService journals,com.cbs.accounting.DayCloseService days,com.cbs.products.ProductService products,com.cbs.customers.CustomerService customers,com.cbs.accounts.AccountService accounts,com.cbs.accounts.FundingService funding,com.cbs.accounts.OperationService operations) {this.paymentCases=paymentCases;this.paymentAccess=paymentAccess;this.statements=statements;this.payments=payments;this.compliance=compliance;this.servicing=servicing;this.denominations=denominations;this.cash=cash;this.branchOperations=branchOperations;this.operations=operations;this.funding=funding;
+            com.cbs.accounting.ChartService chart,com.cbs.accounting.LedgerService ledger,com.cbs.accounting.JournalService journals,com.cbs.accounting.DayCloseService days,com.cbs.products.ProductService products,com.cbs.customers.CustomerService customers,com.cbs.accounts.AccountService accounts,com.cbs.accounts.FundingService funding,com.cbs.accounts.OperationService operations) {this.loanFees=loanFees;this.loans=loans;this.credit=credit;this.termServicing=termServicing;this.valuations=valuations;this.contracts=contracts;this.fx=fx;this.fxTrades=fxTrades;this.paymentCases=paymentCases;this.paymentAccess=paymentAccess;this.statements=statements;this.payments=payments;this.compliance=compliance;this.servicing=servicing;this.denominations=denominations;this.cash=cash;this.branchOperations=branchOperations;this.operations=operations;this.funding=funding;
         this.accounts=accounts;
         this.jdbc=jdbc; this.tx=new TransactionTemplate(manager); this.tenants=tenants;
         this.tenantRepository=tenantRepository; this.access=access;
@@ -74,6 +82,22 @@ public class ApprovalService {
     public Request ledger(Actor actor,UUID key,UUID bankId,com.cbs.accounting.LedgerModels.Change input) {
         return submit(actor,key,bankId,Action.LEDGER_ACCOUNT,input.expectedVersion(),input.reason(),input);
     }
+    public Request loanFee(Actor actor,UUID key,UUID bank,com.cbs.contracts.LoanFeeModels.Change input){return submit(actor,key,bank,Action.LOAN_FEE,input.expectedVersion(),input.reason(),input);}
+    public Request loanServicing(Actor actor,UUID key,UUID bank,com.cbs.contracts.LoanServicingModels.Instruction input){return submit(actor,key,bank,Action.LOAN_SERVICING,input.expectedVersion(),input.reason(),input);}
+    public Request creditPolicy(Actor actor,UUID key,UUID bank,com.cbs.credit.CreditModels.Policy input){return submit(actor,key,bank,Action.CREDIT_POLICY,input.expectedVersion(),input.reason(),input);}
+    public Request creditReview(Actor actor,UUID key,UUID bank,com.cbs.credit.CreditModels.Review input){return submit(actor,key,bank,Action.CREDIT_REVIEW,input.expectedVersion(),input.reason(),input);}
+    public Request creditRelease(Actor actor,UUID key,UUID bank,com.cbs.credit.CreditModels.Release input){return submit(actor,key,bank,Action.CREDIT_RELEASE,input.expectedVersion(),input.reason(),input);}
+    public Request termServicing(Actor actor,UUID key,UUID bank,com.cbs.contracts.TermServicingModels.Instruction input){return submit(actor,key,bank,Action.TERM_SERVICING,input.expectedVersion(),input.reason(),input);}
+    public Request contractCorrection(Actor actor,UUID key,UUID bank,com.cbs.contracts.ContractModels.Correction input){return submit(actor,key,bank,Action.CONTRACT_CORRECTION,input.expectedVersion(),input.reason(),input);}
+    public Request contractOpen(Actor actor,UUID key,UUID bank,com.cbs.contracts.ContractModels.Open input){return submit(actor,key,bank,Action.CONTRACT_OPEN,input.expectedVersion(),input.reason(),input);}
+    public Request contractEvent(Actor actor,UUID key,UUID bank,com.cbs.contracts.ContractModels.Event input){return submit(actor,key,bank,Action.CONTRACT_EVENT,input.expectedVersion(),input.reason(),input);}
+    public Request fxBook(Actor actor,UUID key,UUID bank,com.cbs.fx.FxValuationModels.Policy input){return submit(actor,key,bank,Action.FX_BOOK,input.expectedVersion(),input.reason(),input);}
+    public Request fxClosingRate(Actor actor,UUID key,UUID bank,com.cbs.fx.FxValuationModels.ClosingRate input){return submit(actor,key,bank,Action.FX_CLOSING_RATE,input.expectedVersion(),input.reason(),input);}
+    public Request fxValuation(Actor actor,UUID key,UUID bank,com.cbs.fx.FxValuationModels.Run input){return submit(actor,key,bank,Action.FX_VALUATION,input.expectedVersion(),input.reason(),input);}
+    public Request fxTrade(Actor actor,UUID key,UUID bank,com.cbs.fx.FxTradeModels.Trade input){return submit(actor,key,bank,Action.FX_TRADE,input.expectedVersion(),input.reason(),input);}
+    public Request fxReversal(Actor actor,UUID key,UUID bank,com.cbs.fx.FxTradeModels.Reversal input){return submit(actor,key,bank,Action.FX_REVERSAL,input.expectedVersion(),input.reason(),input);}
+    public Request fxRate(Actor actor,UUID key,UUID bank,com.cbs.fx.FxModels.Rate input){return submit(actor,key,bank,Action.FX_RATE,input.expectedVersion(),input.reason(),input);}
+    public Request fxWithdraw(Actor actor,UUID key,UUID bank,com.cbs.fx.FxModels.Withdraw input){return submit(actor,key,bank,Action.FX_RATE_WITHDRAW,input.expectedVersion(),input.reason(),input);}
     public Request paymentCase(Actor actor,UUID key,UUID bank,com.cbs.payments.PaymentCaseModels.Change input){return submit(actor,key,bank,Action.PAYMENT_CASE,input.expectedVersion(),input.reason(),input);}
     public Request paymentGrant(Actor actor,UUID key,UUID bank,com.cbs.payments.PaymentAccess.Grant input){return submit(actor,key,bank,Action.PAYMENT_ACCESS,input.expectedVersion(),input.reason(),input);}
     private static boolean paymentScoped(Action a){return List.of(Action.STATEMENT_ACTION,Action.PAYMENT_CASE,Action.PAYMENT_RECONCILE).contains(a);}
@@ -151,7 +175,23 @@ public class ApprovalService {
             Map<String,Object> before,after;
             String label;
             UUID bankId=null;
-            if(action==Action.PAYMENT_ACCESS){
+            if(action==Action.LOAN_FEE){var bank=tenantRepository.get(id,true);before=Map.of();after=contracts.values(loanFees.validate(bank,(com.cbs.contracts.LoanFeeModels.Change)input,UUID.randomUUID()));label=bank.displayName();bankId=id;
+            } else if(action==Action.LOAN_SERVICING){var bank=tenantRepository.get(id,true);before=Map.of();after=contracts.values(loans.validate(bank,(com.cbs.contracts.LoanServicingModels.Instruction)input,UUID.randomUUID()));label=bank.displayName();bankId=id;
+            } else if(action==Action.CREDIT_POLICY){var bank=tenantRepository.get(id,true);credit.validatePolicy(actor,bank,(com.cbs.credit.CreditModels.Policy)input);before=Map.of();after=Map.of("policy",input);label=bank.displayName();bankId=id;
+            } else if(action==Action.CREDIT_REVIEW){var bank=tenantRepository.get(id,true);before=Map.of();after=credit.validateReview(actor,bank,(com.cbs.credit.CreditModels.Review)input,false);label=bank.displayName();bankId=id;
+            } else if(action==Action.CREDIT_RELEASE){var bank=tenantRepository.get(id,true);before=Map.of();after=credit.validateRelease(actor,bank,(com.cbs.credit.CreditModels.Release)input,false);label=bank.displayName();bankId=id;
+            } else if(action==Action.TERM_SERVICING){var bank=tenantRepository.get(id,true);before=Map.of();after=contracts.values(termServicing.validate(bank,(com.cbs.contracts.TermServicingModels.Instruction)input,UUID.randomUUID()));label=bank.displayName();bankId=id;
+            } else if(action==Action.CONTRACT_CORRECTION){var bank=tenantRepository.get(id,true);before=Map.of();after=contracts.values(contracts.validateCorrection(bank,(com.cbs.contracts.ContractModels.Correction)input,UUID.randomUUID()));label=bank.displayName();bankId=id;
+            } else if(action==Action.CONTRACT_OPEN){var bank=tenantRepository.get(id,true);before=Map.of();after=contracts.values(contracts.validateOpen(bank,(com.cbs.contracts.ContractModels.Open)input,UUID.randomUUID()));label=bank.displayName();bankId=id;
+            } else if(action==Action.CONTRACT_EVENT){var bank=tenantRepository.get(id,true);before=Map.of();after=contracts.values(contracts.validateEvent(bank,(com.cbs.contracts.ContractModels.Event)input,UUID.randomUUID()));label=bank.displayName();bankId=id;
+            } else if(action==Action.FX_BOOK){var bank=tenantRepository.get(id,true);before=Map.of();after=Map.of("book",valuations.validatePolicy(bank,(com.cbs.fx.FxValuationModels.Policy)input,UUID.randomUUID()));label=bank.displayName();bankId=id;
+            } else if(action==Action.FX_CLOSING_RATE){var bank=tenantRepository.get(id,true);valuations.validateRate(bank,(com.cbs.fx.FxValuationModels.ClosingRate)input);before=Map.of();after=Map.of("closingRate",input);label=bank.displayName();bankId=id;
+            } else if(action==Action.FX_VALUATION){var bank=tenantRepository.get(id,true);before=Map.of();after=Map.of("valuation",valuations.validateRun(bank,(com.cbs.fx.FxValuationModels.Run)input,UUID.randomUUID()));label=bank.displayName();bankId=id;
+            } else if(action==Action.FX_TRADE){var bank=tenantRepository.get(id,true);before=Map.of();after=fxTrades.values(fxTrades.validate(bank,(com.cbs.fx.FxTradeModels.Trade)input,UUID.randomUUID()));label=bank.displayName();bankId=id;
+            } else if(action==Action.FX_REVERSAL){var bank=tenantRepository.get(id,true);before=Map.of();after=fxTrades.values(fxTrades.validateReversal(bank,(com.cbs.fx.FxTradeModels.Reversal)input,UUID.randomUUID()));label=bank.displayName();bankId=id;
+            } else if(action==Action.FX_RATE){var bank=tenantRepository.get(id,true);var change=(com.cbs.fx.FxModels.Rate)input;fx.validate(bank,change);before=Map.of();after=fx.values(change);label=bank.displayName();bankId=id;
+            } else if(action==Action.FX_RATE_WITHDRAW){var bank=tenantRepository.get(id,true);var change=(com.cbs.fx.FxModels.Withdraw)input;fx.validateWithdrawal(bank,change);before=fx.values(fx.rate(id,change.rateId()));after=Map.of("withdrawal",change);label=bank.displayName();bankId=id;
+            } else if(action==Action.PAYMENT_ACCESS){
                 var bank=tenantRepository.get(id,true);var change=(com.cbs.payments.PaymentAccess.Grant)input;paymentAccess.validate(actor,bank,change);before=Map.of();after=Map.of("grant",change);label=bank.displayName();bankId=id;
             } else if(action==Action.PAYMENT_CASE){
                 var bank=tenantRepository.get(id,true);var change=(com.cbs.payments.PaymentCaseModels.Change)input;before=Map.of();after=paymentCases.values(actor,bank,change);label=bank.displayName();bankId=id;
@@ -319,6 +359,22 @@ public class ApprovalService {
                     switch(request.action()) {
                         case BANK_SUSPEND -> tenants.suspend(actor,request.targetId(),change);
                         case BANK_RESUME -> tenants.resume(actor,request.targetId(),change);
+                        case LOAN_FEE -> loanFees.apply(actor,request.targetId(),JSON.readValue(jdbc.queryForObject("SELECT payload::text FROM platform.approval_request WHERE id=?",String.class,id),com.cbs.contracts.LoanFeeModels.Change.class),id,request.makerSubject());
+                        case LOAN_SERVICING -> loans.apply(actor,request.targetId(),JSON.readValue(jdbc.queryForObject("SELECT payload::text FROM platform.approval_request WHERE id=?",String.class,id),com.cbs.contracts.LoanServicingModels.Instruction.class),id,request.makerSubject());
+                        case CREDIT_POLICY -> credit.policy(actor,request.targetId(),JSON.readValue(jdbc.queryForObject("SELECT payload::text FROM platform.approval_request WHERE id=?",String.class,id),com.cbs.credit.CreditModels.Policy.class),id);
+                        case CREDIT_REVIEW -> credit.review(actor,request.targetId(),JSON.readValue(jdbc.queryForObject("SELECT payload::text FROM platform.approval_request WHERE id=?",String.class,id),com.cbs.credit.CreditModels.Review.class),id);
+                        case CREDIT_RELEASE -> credit.release(actor,request.targetId(),JSON.readValue(jdbc.queryForObject("SELECT payload::text FROM platform.approval_request WHERE id=?",String.class,id),com.cbs.credit.CreditModels.Release.class),id);
+                        case TERM_SERVICING -> termServicing.apply(actor,request.targetId(),JSON.readValue(jdbc.queryForObject("SELECT payload::text FROM platform.approval_request WHERE id=?",String.class,id),com.cbs.contracts.TermServicingModels.Instruction.class),id,request.makerSubject());
+                        case CONTRACT_CORRECTION -> contracts.correct(actor,request.targetId(),JSON.readValue(jdbc.queryForObject("SELECT payload::text FROM platform.approval_request WHERE id=?",String.class,id),com.cbs.contracts.ContractModels.Correction.class),id,request.makerSubject());
+                        case CONTRACT_OPEN -> contracts.open(actor,request.targetId(),JSON.readValue(jdbc.queryForObject("SELECT payload::text FROM platform.approval_request WHERE id=?",String.class,id),com.cbs.contracts.ContractModels.Open.class),id,request.makerSubject());
+                        case CONTRACT_EVENT -> contracts.event(actor,request.targetId(),JSON.readValue(jdbc.queryForObject("SELECT payload::text FROM platform.approval_request WHERE id=?",String.class,id),com.cbs.contracts.ContractModels.Event.class),id,request.makerSubject());
+                        case FX_BOOK -> valuations.policy(actor,request.targetId(),JSON.readValue(jdbc.queryForObject("SELECT payload::text FROM platform.approval_request WHERE id=?",String.class,id),com.cbs.fx.FxValuationModels.Policy.class),id);
+                        case FX_CLOSING_RATE -> valuations.closingRate(actor,request.targetId(),JSON.readValue(jdbc.queryForObject("SELECT payload::text FROM platform.approval_request WHERE id=?",String.class,id),com.cbs.fx.FxValuationModels.ClosingRate.class),id);
+                        case FX_VALUATION -> valuations.enqueue(actor,request.targetId(),JSON.readValue(jdbc.queryForObject("SELECT payload::text FROM platform.approval_request WHERE id=?",String.class,id),com.cbs.fx.FxValuationModels.Run.class),id,request.makerSubject());
+                        case FX_TRADE -> fxTrades.enqueue(actor,request.targetId(),JSON.readValue(jdbc.queryForObject("SELECT payload::text FROM platform.approval_request WHERE id=?",String.class,id),com.cbs.fx.FxTradeModels.Trade.class),id,request.makerSubject());
+                        case FX_REVERSAL -> fxTrades.reverse(actor,request.targetId(),JSON.readValue(jdbc.queryForObject("SELECT payload::text FROM platform.approval_request WHERE id=?",String.class,id),com.cbs.fx.FxTradeModels.Reversal.class),id,request.makerSubject());
+                        case FX_RATE -> fx.apply(actor,request.targetId(),JSON.readValue(jdbc.queryForObject("SELECT payload::text FROM platform.approval_request WHERE id=?",String.class,id),com.cbs.fx.FxModels.Rate.class),id);
+                        case FX_RATE_WITHDRAW -> fx.withdraw(actor,request.targetId(),JSON.readValue(jdbc.queryForObject("SELECT payload::text FROM platform.approval_request WHERE id=?",String.class,id),com.cbs.fx.FxModels.Withdraw.class),id);
                         case PAYMENT_CASE -> paymentCases.apply(actor,request.targetId(),JSON.readValue(jdbc.queryForObject("SELECT payload::text FROM platform.approval_request WHERE id=?",String.class,id),com.cbs.payments.PaymentCaseModels.Change.class),id);
                         case PAYMENT_ACCESS -> paymentAccess.apply(actor,request.targetId(),JSON.readValue(jdbc.queryForObject("SELECT payload::text FROM platform.approval_request WHERE id=?",String.class,id),com.cbs.payments.PaymentAccess.Grant.class),id);
                         case STATEMENT_ACTION -> statements.apply(actor,request.targetId(),JSON.readValue(jdbc.queryForObject("SELECT payload::text FROM platform.approval_request WHERE id=?",String.class,id),com.cbs.payments.StatementImportModels.Action.class),id,request.makerSubject());

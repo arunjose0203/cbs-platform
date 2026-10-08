@@ -26,6 +26,8 @@ public class OperationService {
  private final ReferenceDataService reference;private final TransactionTemplate tx;
  public OperationService(com.cbs.access.BranchOperations branches,JdbcTemplate jdbc,TenantRepository tenants,AccountService accounts,CustomerService customers,BankOperationStore store,JournalService journals,ReferenceDataService reference,PlatformTransactionManager manager){this.branches=branches;this.jdbc=jdbc;this.tenants=tenants;this.accounts=accounts;this.customers=customers;this.store=store;this.journals=journals;this.reference=reference;this.tx=new TransactionTemplate(manager);}
  public static void requireIdle(JdbcTemplate jdbc,UUID account){
+  if(jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM platform.contract_delivery WHERE account_id=? AND NOT completed)",Boolean.class,account))throw error("ACCOUNT_OPERATION_PENDING");
+  if(jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM platform.fx_trade WHERE (source_account=? OR target_account=?) AND NOT completed)",Boolean.class,account,account))throw error("ACCOUNT_OPERATION_PENDING");
   if(jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM platform.account_operation WHERE (account_id=? OR destination_id=?) AND NOT completed)",Boolean.class,account,account))throw error("ACCOUNT_OPERATION_PENDING");
  }
  public Dashboard dashboard(Actor actor,UUID bankId,UUID accountId,int limit,int offset){

@@ -1,0 +1,40 @@
+# Lending controls and credit assessment
+
+Implemented 8 October 2026. This is a bounded, manually evidenced credit workflow and loan-servicing increment, not production banking certification.
+
+## Deployment and setup
+
+Control migrations V34/V35 add credit applications, policies, decisions, condition evidence, disbursement reservations, collection history and allowance ledger registration. Use **Prepare storage** in Lending to apply bank migration V20 before new contract activity. Earlier applied migrations are unchanged.
+
+Open **Loan applications & credit review**. Propose a currency-specific **Credit policy** and obtain independent approval. Enter bank-approved values for maximum principal, maximum debt-service percentage, minimum monthly surplus, minimum collateral coverage, maximum risk grade (1 best, 10 worst), maximum valuation age, authorized credit reviewer identity subject and policy evidence. No financial thresholds are seeded. The named reviewer must be an active registered identity and use platform-administrator access to decide credit requests.
+
+Approve transaction limits for `LOAN_DISBURSE`, `LOAN_REPAY`, `LOAN_RESTRUCTURE`, `LOAN_IMPAIR` and `LOAN_WRITE_OFF` as needed. Existing reversal limits remain separate. Servicing limits include approved pending instructions: restructuring/write-off consume exposure; impairment consumes the absolute allowance adjustment.
+
+## Application and assessment
+
+1. Create an application against an active linked customer account. Record the unique application/agreement reference, principal, purpose, requested fixed rate, monthly equal-principal instalments, day basis, verified monthly income, living/operating expenses, all existing monthly debt payments and total existing debt. Amounts use the account currency and its minor units.
+2. Record supporting documents and any collateral or guarantees. Each document has a repository reference, SHA-256 fingerprint and valid-through date. Security records include owner/guarantor, unique reference, value, valuation date and evidence. The UI accepts up to 20 supporting documents and 20 security records. Documents remain in the bank's approved repository; this application does not upload, scan, fetch or verify their contents automatically.
+3. Inspect **Dossier & history**. The system calculates the highest projected equal-principal instalment, debt-service ratio `(existing monthly debt payments + peak instalment) / monthly income`, remaining monthly income after expenses/debt/new instalment, and collateral coverage. Monetary calculations use decimal arithmetic. Guarantee value is shown separately and does not increase collateral coverage. Existing external debt and financial evidence are manually verified inputs, not a connected bureau result.
+4. Propose an approval or decline with assessment evidence, risk grade and validity date. Approval must meet all current policy thresholds. Enter disbursement conditions when necessary (UI up to five; API up to twenty).
+5. The authorized credit reviewer must differ from both application creator and request maker. Approval Inbox enforces independent decisions. Conditions require individually ordered evidence and a separately approved verification before the application becomes READY.
+6. Use **Lending → Originate loan** with the approved application reference and exact account, amount, rate, day basis and instalments. The existing journal preview and independent financial approval still apply.
+
+An application is immutable. Mistaken application facts or a changed customer profile require a new application/reference; this release has no editable draft workflow. New reviews preserve history and clear previous condition verification. Undisbursed approved applications may be declined or revoked before reservation. A changed policy or expired approval blocks disbursement and requires renewed review. Invalid document evidence requires a new current dossier. A reserved but unposted opening may receive renewed credit approval; a used application cannot fund another contract. Collateral/guarantee references already reserved by another active, queued or written-off contract cannot be pledged again within the bank.
+
+The system rechecks approval, effective policy, evidence, current customer version, conditions and exact terms at preview, financial approval and before first delivery. Already-posted immutable receipts recover lost acknowledgements without repeating the credit decision or customer credit. Old loans remain serviceable; new opening instructions cannot bypass the application gate. Previously queued openings without an approved application fail closed and require operator remediation.
+
+## Loan servicing
+
+**Arrears and collections.** Lending shows contractual principal arrears and principal days past due. **Collections** records an assigned active staff subject, next follow-up date, evidence reference and note/promise to pay. Notes are append-only and idempotent. These figures do not claim full interest/fee arrears or a delinquency classification engine; no borrower communication is automatically sent.
+
+**Restructuring.** First accrue through the current open business day, pay accrued interest and release any impairment allowance. Create a new READY credit application for the outstanding principal and new rate/monthly term. In Lending, preview **Restructure** using that new reference. Independent approval by the authorized credit reviewer creates a new immutable effective-terms revision and projected schedule, while preserving original terms. Principal, customer cash and the journal are unchanged. Subsequent accrual and arrears use the new cycle. Interest capitalization, principal forgiveness, additional advances and moratoria are not part of this operation.
+
+**Impairment.** Enter the total allowance and stage from the bank's documented credit-loss assessment. Use a dedicated ASSET allowance ledger with CREDIT normal balance and an EXPENSE ledger. The first approved assessment fixes these mappings. Increasing allowance debits impairment expense and credits allowance; reducing it reverses those sides. Allowance cannot exceed principal plus accrued interest. Release any excess allowance before a repayment would reduce exposure below it. The application records an assessed amount and stage; it does not calculate probability of default, loss given default, scenarios or effective-interest discounting. A stage-only change with an unchanged allowance is not yet supported.
+
+**Write-off.** Accrue through the current day and approve full allowance coverage first. A full stage-3 write-off debits allowance and credits principal/accrued-interest receivables, leaving customer cash unchanged. The contract becomes WRITTEN_OFF; original debt and journal history remain. This accounting action does not forgive legal debt or release pledged security. Partial write-offs, write-off reversals, legal debt release and subsequent recovery posting need separate workflows.
+
+All financial servicing requires a mandatory reason/evidence reference, bank version check, current open day, explicit limits, independent approval and no unresolved delivery. Contract position, customer ledger where applicable, journal and immutable bank receipt commit together. Control acknowledgement follows with idempotent recovery. Day close blocks pending financial servicing approvals/deliveries.
+
+## Remaining production work
+
+Scoped credit-officer roles and multi-tier committees; total customer/group exposure and connected bureau checks; automated KYC/screening; document storage/antivirus/retention; security perfection, senior liens, haircuts, valuation providers and release workflow; full interest/fee arrears and ageing buckets; collections dashboards/escalations and outbound notices; partial restructuring/forgiveness, non-accrual and suspense interest; automated IFRS 9 and country prudential treatment; write-off recovery; product catalogues, bank accounting examples and independent Rwanda/Uganda/Kenya acceptance. Security, load, backup/restore and failover evidence remain release gates.

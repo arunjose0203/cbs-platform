@@ -1,11 +1,11 @@
-# CBS application progress — 7 October 2026
+# CBS application progress — 8 October 2026
 
 ## Overall position
 
 The application has an implemented administration and accounting foundation and an
 initial deposit-product catalogue, individual customer onboarding and deposit account opening/funding with customer balances. It is a development system, not a complete
 production CBS. Approved received-deposit credits are available. Holds/releases, recorded withdrawals, same-currency internal transfers, full funding reversals and customer statement views have now been added. Counting modules would give a misleading completion percentage:
-the remaining financial and operational modules differ greatly in size.
+the remaining financial and operational modules differ greatly in size. The latest increment validates the lending lifecycle and adds [loan arrears and collections](loan-arrears-collections.md), posted interest/fee ageing, cash-backed promises, assignments and escalation tracking; see [lending controls](lending-controls.md), [contract corrections and term servicing](contract-corrections-servicing.md), and [FX valuation](fx-valuation.md).
 
 The stack is Java 21, Spring Boot, PostgreSQL on Neon for development, and a browser
 administration portal with local Keycloak identity integration. Shared bank
@@ -37,16 +37,15 @@ in each bank's dedicated database. Product definitions use the control database.
 | 13 Statements/notifications | Customer statement view with running balances and bounded backend CSV export | Complete portal export, PDF, delivery preferences, templates and delivery tracking |
 | 14 External payments | Safaricom M-Pesa Kenya B2C sandbox adapter, approved payouts, single dispatch, status query and callback observations | Actual sandbox acceptance, production certification, collections/other rails, beneficiary screening and richer exception handling |
 | 15 Settlement | Normalized full CSV imports, payout/GL matching, wallet balances, fee adjustments, duplicate controls, corrections, independent closure and exports | Provider-native format acceptance, timing differences, split/net settlement, larger automated imports and production controls |
-| 16 FX | Multiple currency definitions and separated balances only | Exchange rates, conversion, revaluation, FX gains/losses |
-| 17 Term deposits | Not implemented | Tenor, maturity, renewal, premature closure and interest |
-| 18 Lending | Not implemented | Loan products, assessment workflow, schedules, repayment and arrears |
+| 16 FX | Approved rates/conversions, atomic currency legs, full reversal, approved closing valuation, weighted-average trading-book realized/unrealized P&L, long/short limits and day-close gates | Full-bank monetary-item translation, cross rates, feeds, policy/limit amendments, valuation corrections and accounting acceptance |
+| 17 Term deposits | Fixed-rate opening/accrual, withholding, maturity payout, current-day corrections, renewal, full early closure and in-app maturity alerts | Product catalogue, partial closure, broader corrections, customer messaging and bank acceptance |
+| 18 Lending | Loan applications, manually evidenced affordability/security, independent credit policy/review/conditions, disbursement gate, fixed-rate schedules/accrual/repayment, current-day corrections, principal/interest/fee ageing, approved fee assessment/payment/waiver, assigned collection cases, cash-backed promises, escalation tracking, approved restructuring, assessed allowance accounting and full write-off | Scoped credit roles, aggregate/bureau exposure, scalable arrears snapshots, outbound collections, fee tax/corrections, automated IFRS 9, richer restructuring, recoveries, regulatory reporting and bank acceptance |
 | 19 Reporting expansion | Accounting reports only | Operational dashboards, customer and jurisdiction-specific regulatory reporting |
 | 20 Operational readiness | Some engineering controls and tests | Data migration, security/volume tests, backups, disaster recovery, monitoring, runbooks and pilot acceptance |
 
 Implemented does not mean production-approved. English/French/Swahili interface
 labels exist, but a full translation review and translated product/customer content
-remain outstanding. Multi-currency currently means separated same-currency
-products, ledgers and journals; it does not include currency conversion.
+remain outstanding. Own-customer currency conversion and functional-currency trading-book valuation/P&L are implemented. Full-bank foreign-currency translation and regulatory acceptance remain outstanding.
 
 ## End-to-end flow
 
@@ -195,3 +194,20 @@ This completes the bounded normalized-file workflow, not provider-native format 
 Added **Payment exceptions**: bank-scoped reconciler/supervisor/auditor permissions, investigation ownership and evidence history, overdue indicators, approved dated settlement carry-forwards, and full provider-return credits tied to the original customer debit. Statement and payment review now use the scoped payment workspace. Returns require matching provider credit evidence and independent approval; replaying delivery cannot credit the customer twice. Day close checks investigation deadlines and return posting.
 
 See [operator workflow and acceptance limits](payment-lifecycle-exceptions.md). Local regression: 120 backend tests and 65 UI tests. Actual M-Pesa export validation and live provider sandbox acceptance remain unverified. Remote reversal initiation, partial returns, suspense handling and outbound overdue notifications remain pending. Next planned modules: FX & Exchange Rate Management, Term Deposits, Lending. No production-completion percentage is asserted.
+
+
+## 8 October 2026 — FX, term deposits and lending
+
+Implemented first operational versions in the requested order: independently approved rate books and atomic own-customer currency conversions; fixed-rate term deposit opening, accrual, withholding and full maturity payout; fixed-rate loan disbursement, equal-principal schedules, accrual and interest-first repayment. Customer statements, bank-wide limits, immutable receipts, retry recovery and daily-close checks are integrated. See [supported flows and explicit remaining gaps](fx-term-deposits-lending.md). This does not complete the production CBS or the full lifecycle acceptance criteria in the competitive gap report. Historical progress entries above describe their original implementation dates.
+
+## 8 October 2026 — contract corrections and term-deposit servicing
+
+Implemented current-open-day opening/accrual/repayment reversals with independent approval and atomic bank posting, plus explicit early closure, renewal with payout or capitalization, immutable effective terms and in-app maturity alerts. See [operator guide and remaining scope](contract-corrections-servicing.md). Earlier roadmap entries are historical. Next functional priorities are lending assessment, collateral, arrears, restructuring and impairment; production acceptance remains outstanding.
+
+## 8 October 2026 — lending controls and credit assessment
+
+Implemented the Loan applications & credit review page, immutable financial/evidence dossiers, policy-based affordability and reviewer authority, collateral/guarantor evidence, independently verified conditions and mandatory loan disbursement gates. Added principal days past due, collections follow-up notes, approved replacement schedules, assessed impairment journals and fully provided write-offs. See [operator guide and explicit boundaries](lending-controls.md). No bank credit policy, live customer credit decision or financial transaction was seeded.
+
+## Lending validation and collections — 8 October 2026
+
+Completed isolated lending workflow validation before implementing the arrears/collections page. The release includes actual posted arrears by due date, six ageing buckets, immutable assignment/contact/promise/escalation history and independently approved fee accounting. See [setup, accounting rules and remaining acceptance](loan-arrears-collections.md). No real bank financial test records or new MFA exception were created.

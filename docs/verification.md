@@ -484,3 +484,67 @@ Final evidence hardening was followed by **3 passing migration/reconciliation te
 - Focused lifecycle integration covers historical carry across business-day close, subsequent settlement, full return, lost acknowledgement recovery, contradictory callbacks, partial-return rejection, scoped lookup APIs, bank/auditor denial and revoked-maker denial (`.local/lifecycle-final-tests.log`).
 - Browser fixture: payment exception list, investigation details and full-return proposal rendered; `.local/payment-exceptions-preview.png` uses fictional data.
 - Actual M-Pesa export format and live Daraja sandbox acceptance: **not executed / external evidence needed**. No production readiness claim.
+
+
+## 8 October 2026 — FX, term deposits and lending
+
+- Full isolated PostgreSQL regression: **130 backend tests passed**, no failures/errors/skips (`.local/contracts-full-tests.log`).
+- Final protection changes: **12 focused tests passed** and Maven `verify` packaged the application (`.local/treasury-release-tests.log`). This includes the generated agreement-reference/immutability-trigger correction and authenticated contract directory check.
+- Final UI suite: **69 tests passed** (`.local/treasury-ui-final.log`). Exact monetary strings, server preview before submission, pinned type/version/date/quote and blank financial rates are covered.
+- FX tests cover bid/ask direction, currency precision, overlapping inverse pairs, self-approval, withdrawal, bank scoping, second-leg rollback, lost acknowledgement recovery, single-leg reversal denial and full original-amount reversal.
+- Contract tests cover duplicate agreements, protected tax mappings, atomic opening rollback, lost acknowledgement recovery, principal/interest reconciliation, maturity withholding, interest-first partial repayment and payoff, statements, role denial and day-close accrual blockers. Math tests cover calendar month ends, reducing principal, exact large values and fractional carry.
+- Browser checks used isolated fictional fixtures on port 18083: FX directory, term-deposit directory/opening form, lending directory and schedule/details. No live financial contracts or conversions were submitted.
+- Supported scope and remaining production gaps: [operator guide](fx-term-deposits-lending.md).
+
+The packaged application started successfully on localhost:8080. The configured Neon development control database applied V28, V29 and V30 successfully. Readiness returned `UP`; local Keycloak discovery returned HTTP 200. The actual portal was opened and showed the three new navigation entries with identity connected. Existing bank databases still require the explicit storage-preparation action before using new posting features. No real-bank financial event, rate or contract was created, and no MFA exception was renewed. Changes remain in the working tree.
+
+
+## FX valuation — 8 October 2026
+
+- `FxValuationModelsTest`: six tests cover weighted-average partial realization,
+  short positions, crossing zero, gain/loss sign changes, exact reversals,
+  large decimal values and RWF/UGX zero-minor-unit rounding.
+- Extended PostgreSQL FX lifecycle test verifies independent policy/closing-rate/
+  valuation approval, limits including approved unposted exposure, atomic receipt
+  rollback, recovery after a lost acknowledgement, immutable rate history,
+  blocked generic reversal, day sealing and cross-day realized/unrealized journals.
+- Full backend run: **136 tests passed, zero failures/errors/skips** in
+  `.local/fx-valuation-full.log`. The subsequent packaging step initially failed
+  because the running Windows app held the JAR. After stopping that verified local
+  process, `mvn -DskipTests package` succeeded (`.local/fx-valuation-package.log`).
+- UI: **73 tests passed** (`.local/fx-valuation-ui.log`). Browser review used the
+  isolated fictional-data fixture: valuation table, accounting details and policy
+  configuration controls rendered successfully. No bank financial records were
+  created by that review.
+- These checks establish development regression evidence, not production security,
+  load, restore/failover or bank accounting acceptance. See [remaining scope](fx-valuation.md).
+
+Runtime verification: the updated local CBS reports readiness UP; identity discovery returns HTTP 200. The saved Neon development control database applied V31 successfully. Existing bank databases remain upgraded through the explicit FX Prepare action; no financial configuration or valuation records were seeded in them.
+
+## 8 October 2026 — contract corrections and term-deposit servicing
+
+- Full PostgreSQL/backend regression: **139 tests passed**, zero failures, errors or skips (`.local/contracts-full-tests.log`). Tests cover independent approval, original linkage, duplicate prevention, insufficient available funds, dependent events, closed dates, exact accrual carry restoration, full-payoff reopening, rollback and lost-acknowledgement recovery.
+- Servicing integration exercises payout and capitalization renewals, immutable original/effective terms, subsequent accrual using renewed terms, early closure with explicit penalty and tax basis, customer/GL balances, maturity alerts and day-close gates.
+- UI regression: **76 tests passed** (`.local/contracts-ui-tests.log`). Fictional browser review verified history, renewal controls and maturity-alert results. No live financial records were created for browser review.
+- Packaging succeeded (`.local/contracts-package.log`). The restarted local application reports readiness UP and configured identity discovery HTTP 200; browser landing page shows Identity connected. Saved Neon control database migrations V32/V33 applied. Bank V18/V19 upgrades remain explicit through Prepare storage.
+- Current-day corrections and in-app notifications are bounded features, not production acceptance. See [operating guide](contract-corrections-servicing.md).
+
+## 8 October 2026 — lending controls and credit assessment
+
+- Backend suite contains **144 tests**. The full run (`.local/credit-full-tests.log`) passed 143 and found one stale schema-version assertion (expected V33, migrated V35). Updated that assertion and reran the foundation, credit arithmetic and full credit lifecycle: **7 passed** (`.local/credit-final-tests.log`).
+- Final shared bank term-revision safeguards were verified by **2 passing PostgreSQL lifecycle tests** covering both term-deposit renewal/closure and credit approval/restructuring/impairment/write-off (`.local/credit-revision-tests.log`). No unresolved test failures remain.
+- Credit tests cover explicit affordability arithmetic, guarantees excluded from collateral coverage, large decimal amounts, expired approval, self/unauthorized reviewers, condition release, mismatched disbursement terms, immutable dossier/event state, idempotent collections notes, original/effective restructuring terms, lost acknowledgement recovery, excess allowance repayment protection, atomic write-off rollback and security remaining pledged after write-off. Operator access is rejected.
+- UI regression: **83 tests passed** (`.local/credit-ui-tests.log`). Browser review used fictional data to verify the application/evidence wizard, dossier with collateral and conditions, policy summary, lending actions and impairment form. No real credit decisions or customer financial transactions were created.
+- Packaging succeeded (`.local/credit-package.log`). Control V34/V35 and bank V20 are the new schema versions. See [lending controls](lending-controls.md) for setup and bounded scope.
+
+Runtime check: the saved Neon development control database successfully applied V34/V35. The restarted CBS reports readiness UP; configured identity discovery returns HTTP 200. The browser shows the new Loan applications & credit review navigation. Existing bank databases still require the explicit Prepare storage action for V20; no live credit policies or customer transactions were seeded.
+
+## 8 October 2026 — lending validation and loan arrears/collections
+
+- Before implementing collections, the isolated credit lifecycle passed (`.local/lending-e2e-validation.log`): signed test identities, independent policy/limits/review/conditions, fictional evidence, disbursement, repayment/reversal, approved restructure, impairment and write-off, immutable history, exact customer balances and successful day close. This was not interactive live-bank authentication or a real lending transaction.
+- Full backend regression: **151 passed**, zero failures/errors/skips (`.local/collections-full-tests.log`). After the final fee day-close check and added coverage, **9 focused tests passed** (`.local/collections-final-tests.log`), including both complete lending and collections lifecycles. The suite now contains 152 tests.
+- New coverage includes calendar-month due dates, zero-minor-unit currency carry, exact ageing boundaries, actual rather than projected interest, repayment-reversal promise reopening, late fulfilment, exclusion of prior cash/waivers, immutable assignment history, stale versions, cross-bank/missing-bank rejection and unauthorized operator denial. Fee assessment/payment/waiver reconcile; injected receipt failure rolls back the customer debit; lost acknowledgement retries once; outstanding fees prevent closure; final payment closes the contract and day close succeeds.
+- UI: **88 tests passed** (`.local/collections-ui-tests.log`), including pinned wizard payloads, exact money, retained idempotency keys, escaped text and history pagination. Fictional browser review verified ageing, broken promise/follow-up alerts, promise forms and exact fee preview. No bank policy or financial fixtures were seeded in Neon.
+- Control V36 and bank V21 are the new migrations. See [operating guide and remaining scope](loan-arrears-collections.md). Bank-specific production acceptance, scoped collection roles, fee taxation/corrections, external notifications and recovery/scale gates remain outstanding.
+
+Runtime verification: packaging succeeded (.local/collections-package.log). The saved Neon development control database applied V36; CBS readiness is UP and configured identity discovery returned HTTP 200. The actual browser navigation shows Loan arrears & collections. Bank V21 remains an explicit Prepare storage upgrade after sign-in. The app was left running; temporary fictional preview and leftover test fixture were removed.

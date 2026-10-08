@@ -33,7 +33,7 @@ public class JournalService {
             jdbc.query("SELECT id FROM platform.tenant WHERE id=? FOR SHARE",r->{},bankId);
             Tenant bank=tenants.get(bankId,false);
             boolean ready=List.of(Status.ACTIVE,Status.SUSPENDED).contains(bank.status())&&store.ready(bank);
-            var rows=jdbc.query("SELECT payload::text,completed,failure_code,(EXISTS(SELECT 1 FROM platform.funding_delivery f WHERE f.request_id=platform.journal_delivery.request_id) OR EXISTS(SELECT 1 FROM platform.account_operation o WHERE o.request_id=platform.journal_delivery.request_id) OR EXISTS(SELECT 1 FROM platform.cash_delivery x WHERE x.request_id=platform.journal_delivery.request_id) OR EXISTS(SELECT 1 FROM platform.servicing_posting sp WHERE sp.request_id=platform.journal_delivery.request_id)) funding FROM platform.journal_delivery WHERE tenant_id=? ORDER BY created_at DESC,request_id LIMIT ? OFFSET ?",
+            var rows=jdbc.query("SELECT payload::text,completed,failure_code,(EXISTS(SELECT 1 FROM platform.funding_delivery f WHERE f.request_id=platform.journal_delivery.request_id) OR EXISTS(SELECT 1 FROM platform.account_operation o WHERE o.request_id=platform.journal_delivery.request_id) OR EXISTS(SELECT 1 FROM platform.cash_delivery x WHERE x.request_id=platform.journal_delivery.request_id) OR EXISTS(SELECT 1 FROM platform.servicing_posting sp WHERE sp.request_id=platform.journal_delivery.request_id) OR EXISTS(SELECT 1 FROM platform.fx_posting fp WHERE fp.journal_id=platform.journal_delivery.request_id) OR EXISTS(SELECT 1 FROM platform.contract_delivery cd WHERE cd.id=platform.journal_delivery.request_id) OR EXISTS(SELECT 1 FROM platform.fx_valuation v WHERE v.id=platform.journal_delivery.request_id)) funding FROM platform.journal_delivery WHERE tenant_id=? ORDER BY created_at DESC,request_id LIMIT ? OFFSET ?",
                     (r,n)->new Item(JSON.readValue(r.getString(1),Entry.class),r.getBoolean(2)?"POSTED":"AWAITING_POSTING",r.getString(3),r.getBoolean(4)),bankId,limit,offset);
             return new Directory(bankId,bank.version(),ready,rows,jdbc.queryForObject("SELECT count(*) FROM platform.journal_delivery WHERE tenant_id=?",Long.class,bankId),limit,offset);
         });
@@ -51,6 +51,9 @@ public class JournalService {
     public Entry postedForReconciliation(Actor actor,UUID bankId,UUID id){com.cbs.payments.PaymentAccess.require(jdbc,actor,bankId,com.cbs.payments.PaymentAccess.Capability.READ);return store.read(tenants.get(bankId,false),id);}
     public Change reversal(Actor actor,UUID bankId,UUID id,Reversal input){
         AccessService.admin(actor);Tenant bank=tenants.get(bankId,false);Entry original=store.read(bank,id);
+        if(jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM platform.fx_valuation WHERE id=?)",Boolean.class,id))throw error(409,"FX_VALUATION_MANAGED");
+        if(jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM platform.contract_delivery WHERE id=?)",Boolean.class,id))throw error(409,"CONTRACT_MANAGED");
+        if(jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM platform.fx_posting WHERE journal_id=?)",Boolean.class,id))throw error(409,"FX_MANAGED");
         if(jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM platform.servicing_posting WHERE request_id=?)",Boolean.class,id))throw error(409,"SERVICING_MANAGED");
         if(jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM platform.funding_delivery WHERE request_id=?) OR EXISTS(SELECT 1 FROM platform.account_operation WHERE request_id=?) OR EXISTS(SELECT 1 FROM platform.cash_delivery WHERE request_id=?)",Boolean.class,id,id,id))throw error(409,"FUNDING_MANAGED");
         if(original.reversalOf()!=null)throw error(409,"JOURNAL_REVERSAL_INVALID");
@@ -64,7 +67,15 @@ public class JournalService {
     public void validateCash(Tenant bank,Change input){validate(bank,input,false,true);}
     public void validateStatement(Tenant bank,Change input){validate(bank,input,false,false,true);}
     private void validate(Tenant bank,Change input,boolean funding,boolean cash){validate(bank,input,funding,cash,false);}
-    private void validate(Tenant bank,Change input,boolean funding,boolean cash,boolean statement){
+    public void validateFx(Tenant bank,Change input){validate(bank,input,true,false,false,true);}
+    private void validate(Tenant bank,Change input,boolean funding,boolean cash,boolean statement){validate(bank,input,funding,cash,statement,false);}
+    public void validateContract(Tenant bank,Change input){validate(bank,input,true,false,false,false,true);}
+    private void validate(Tenant bank,Change input,boolean funding,boolean cash,boolean statement,boolean fx){validate(bank,input,funding,cash,statement,fx,false);}
+    public void validateFxValuation(Tenant bank,Change input){validate(bank,input,false,false,false,true,false,true);}
+    private void validate(Tenant bank,Change input,boolean funding,boolean cash,boolean statement,boolean fx,boolean contract){
+        validate(bank,input,funding,cash,statement,fx,contract,false);
+    }
+    private void validate(Tenant bank,Change input,boolean funding,boolean cash,boolean statement,boolean fx,boolean contract,boolean valuation){
         DayCloseService.requireOpen(jdbc,bank.id());
         if(bank.version()!=input.expectedVersion())throw error(409,"STALE_VERSION");
         if(bank.status()!=Status.ACTIVE)throw error(409,"LEDGER_BANK_NOT_ACTIVE");
@@ -87,6 +98,9 @@ public class JournalService {
         if(ids.size()<2)throw error(400,"JOURNAL_LINES_INVALID");
         var actual=ledgers.read(bank,ids);
         for(UUID id:ids){
+            if(!valuation && jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM platform.fx_book_ledger bl JOIN platform.fx_book b ON b.id=bl.book_id WHERE bl.ledger_id=? AND (?=false OR (bl.ledger_id<>(b.payload->'policy'->>'foreignPositionLedger')::uuid AND bl.ledger_id<>(b.payload->'policy'->>'functionalPositionLedger')::uuid)))",Boolean.class,id,fx))throw error(409,"FX_VALUATION_MANAGED");
+            if(!contract&&jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM platform.contract_ledger WHERE ledger_id=?)",Boolean.class,id))throw error(409,"CONTRACT_MANAGED");
+            if(!fx&&jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM platform.fx_position WHERE ledger_id=?)",Boolean.class,id))throw error(409,"FX_MANAGED");
             com.cbs.payments.StatementImportService.requireWritable(jdbc,bank.id(),id,input.businessDate());
             if(!cash&&jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM platform.cash_location WHERE ledger_id=?) OR EXISTS(SELECT 1 FROM platform.cash_transit WHERE ledger_id=?)",Boolean.class,id,id))throw error(409,"CASH_MANAGED");
             if(!funding&&jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM platform.account_ledger WHERE ledger_id=?)",Boolean.class,id))throw error(409,"FUNDING_MANAGED");
@@ -96,6 +110,9 @@ public class JournalService {
         }
         if(jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM platform.journal_delivery WHERE tenant_id=? AND reference=?)",Boolean.class,bank.id(),input.reference().trim()))throw error(409,"JOURNAL_REFERENCE_IN_USE");
         if(input.reversalOf()!=null){
+            if(jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM platform.fx_valuation WHERE id=?)",Boolean.class,input.reversalOf()))throw error(409,"FX_VALUATION_MANAGED");
+            if(jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM platform.contract_delivery WHERE id=?)",Boolean.class,input.reversalOf()))throw error(409,"CONTRACT_MANAGED");
+            if(jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM platform.fx_posting WHERE journal_id=?)",Boolean.class,input.reversalOf()))throw error(409,"FX_MANAGED");
             if(!statement&&jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM platform.statement_decision WHERE journal_id=? AND kind IN ('BOOK','REVERSE'))",Boolean.class,input.reversalOf()))throw error(409,"STATEMENT_MANAGED");
             Entry original=store.read(bank,input.reversalOf());
             if(original.reversalOf()!=null||!original.currency().equals(input.currency())||!original.legalEntityId().equals(input.legalEntityId())||!opposite(original.lines()).equals(input.lines()))throw error(400,"JOURNAL_REVERSAL_INVALID");
@@ -126,8 +143,11 @@ public class JournalService {
         if(!jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM platform.journal_delivery WHERE request_id=? AND tenant_id=? AND reviewer_issuer=?)",Boolean.class,id,bankId,actor.issuer()))throw error(404,"APPROVAL_NOT_FOUND");
         deliver(id);
     }
-    public List<UUID> pending(){return jdbc.query("SELECT request_id FROM platform.journal_delivery WHERE NOT completed AND request_id NOT IN (SELECT request_id FROM platform.funding_delivery UNION ALL SELECT request_id FROM platform.account_operation UNION ALL SELECT request_id FROM platform.cash_delivery UNION ALL SELECT request_id FROM platform.servicing_posting) ORDER BY last_attempt_at NULLS FIRST,created_at LIMIT 20",(r,n)->r.getObject(1,UUID.class));}
+    public List<UUID> pending(){return jdbc.query("SELECT request_id FROM platform.journal_delivery WHERE NOT completed AND request_id NOT IN (SELECT request_id FROM platform.funding_delivery UNION ALL SELECT request_id FROM platform.account_operation UNION ALL SELECT request_id FROM platform.cash_delivery UNION ALL SELECT request_id FROM platform.servicing_posting UNION ALL SELECT journal_id FROM platform.fx_posting UNION ALL SELECT id FROM platform.contract_delivery UNION ALL SELECT id FROM platform.fx_valuation) ORDER BY last_attempt_at NULLS FIRST,created_at LIMIT 20",(r,n)->r.getObject(1,UUID.class));}
     public void deliver(UUID id){
+        if(jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM platform.fx_valuation WHERE id=?)",Boolean.class,id))throw error(409,"FX_VALUATION_MANAGED");
+        if(jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM platform.contract_delivery WHERE id=?)",Boolean.class,id))throw error(409,"CONTRACT_MANAGED");
+        if(jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM platform.fx_posting WHERE journal_id=?)",Boolean.class,id))throw error(409,"FX_MANAGED");
         if(jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM platform.servicing_posting WHERE request_id=?)",Boolean.class,id))throw error(409,"SERVICING_MANAGED");
         if(jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM platform.funding_delivery WHERE request_id=?) OR EXISTS(SELECT 1 FROM platform.account_operation WHERE request_id=?) OR EXISTS(SELECT 1 FROM platform.cash_delivery WHERE request_id=?)",Boolean.class,id,id,id))throw error(409,"FUNDING_MANAGED");
         tx.executeWithoutResult(s->{

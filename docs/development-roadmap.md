@@ -1,6 +1,6 @@
 # Development roadmap
 
-## Current increment: Cash inventory, receipts and daily deposit servicing
+## Current increment: lending validation and loan arrears/collections
 
 The foundation supplies executable service, health checks, packaging and CI.
 Module 01 adds tenant registration, legal entities, bank memberships, JWT-protected
@@ -31,9 +31,9 @@ bank backup restoration, load testing and production hosting remain later work.
 | 13 | Statements and notifications | Initial customer statement view with date range, opening/closing/running balances; exports and delivery remain planned |
 | 14 | External payment integration | Initial Safaricom M-Pesa Kenya B2C sandbox implementation; actual provider acceptance and live certification pending |
 | 15 | Settlement and reconciliation | Individual payout evidence/approval and refunds implemented; complete statements, wallet balances, fees and conflict resolution pending |
-| 16 | FX conversion and valuation | Planned |
-| 17 | Term deposits | Planned |
-| 18 | Lending | Planned |
+| 16 | FX conversion and valuation | Rates, atomic conversion/reversal, closing valuation, trading-book P&L, limits and day-close gates implemented; full-bank translation and correction policies pending |
+| 17 | Term deposits | Fixed-rate opening, accrual and maturity implemented; renewal/early closure/corrections pending |
+| 18 | Lending | Fixed-rate disbursement, equal-principal schedule and repayment implemented; wider credit lifecycle pending |
 | 19 | Reporting | Expand with each financial module |
 | 20 | Migration and operational readiness | Continuous; acceptance before pilot |
 
@@ -74,3 +74,22 @@ Statement workflow: [full normalized M-Pesa import and reconciliation](mpesa-sta
 ## Payment lifecycle delivery sequence
 
 Payment Returns, Reversals & Settlement Exceptions now provides confirmed full-return accounting, independently approved settlement timing carries, case history, scoped payment operators and overdue dashboard alerts. Read [payment-lifecycle-exceptions.md](payment-lifecycle-exceptions.md) for the operational workflow and current boundaries. Native M-Pesa statement acceptance and actual Daraja sandbox exercises require external evidence. Continue next with FX & Exchange Rate Management, then Term Deposits and Lending. Remote provider reversal initiation and partial/suspense returns remain distinct payment backlog items.
+
+
+### 8 October 2026 increment
+
+The first FX, term-deposit and lending flows are implemented. Read [their operator guide](fx-term-deposits-lending.md) before setup; the broad production lifecycle is still incomplete. Next hardening priorities are FX functional-currency valuation and position policy; contract corrections and term renewal/early closure; credit policy, full arrears, restructuring and impairment. These require bank-approved accounting and product rules, in addition to code and acceptance evidence.
+
+See [FX valuation](fx-valuation.md) for configuration, accounting identities, recovery and remaining scope. Next: contract corrections, term-deposit servicing, lending controls, then production acceptance.
+
+## 8 October 2026 — contract corrections and term-deposit servicing
+
+Implemented current-open-day opening/accrual/repayment reversals with independent approval and atomic bank posting, plus explicit early closure, renewal with payout or capitalization, immutable effective terms and in-app maturity alerts. See [operator guide and remaining scope](contract-corrections-servicing.md). Earlier roadmap entries are historical. Next functional priorities are lending assessment, collateral, arrears, restructuring and impairment; production acceptance remains outstanding.
+
+## Lending controls increment — 8 October 2026
+
+The [lending controls guide](lending-controls.md) describes delivered application/review/condition gates and bounded servicing. Next gaps are scoped credit roles, aggregate exposure and bureau integration, full arrears/collections operations, automated impairment, recoveries and jurisdiction-specific acceptance. Earlier roadmap entries remain historical.
+
+## Loan arrears and collections — 8 October 2026
+
+Implemented after isolated lending end-to-end validation. See [operator guide](loan-arrears-collections.md) for exact ageing, posted interest/fee accounting, assignments, promises, escalation and safe retries. Next acceptance work is bank-led lending UAT, scoped collections/credit roles, country product rules, fee tax/corrections and post-write-off recoveries. Security/load/restore/failover remain production gates. Earlier entries are historical rather than current completeness claims.

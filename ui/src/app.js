@@ -1,3 +1,7 @@
+import {createCollectionsUi} from './collections-ui.js';
+import {createCreditUi} from './credit-ui.js';
+import {createContractsUi} from './contracts-ui.js';
+import {createFxUi} from './fx-ui.js';
 import {createPaymentCasesUi} from './payment-cases-ui.js';
 import {createStatementImportUi} from './statement-import-ui.js';
 import {createPaymentsUi} from './payments-ui.js';
@@ -22,8 +26,13 @@ let manager, user, me, configuration, view='banks', selectedBank, submitForm, la
 let rows=[], offset=0, busy=false, noticeTimer, renderVersion=0;
 let approvalScope='INBOX', approvalAction='', approvalBank='', selectedApproval;
 const pageSize=25;
-const labels={paymentcases:'Payment exceptions',statements:'M-Pesa statements',payments:'Payments & reconciliation',compliance:'Compliance cases',servicing:'Deposit servicing',branchwork:'Branch workspace',banks:'Bank directory',staff:'Staff & access',approvals:'Approval Inbox',settings:'Bank settings',chart:'Chart of Accounts',ledgers:'Ledger Accounts',journals:'Journals & balances',reports:'Accounting reports',dayclose:'Business Day Close',products:'Product Factory',accounts:'Deposit accounts',customers:'Customers',sessions:'My sessions',audit:'Audit trail'};
+const labels={collections:"Loan arrears & collections",credit:'Loan applications & credit review',term:'Term deposits',loan:'Lending',fx:'FX & exchange rates',paymentcases:'Payment exceptions',statements:'M-Pesa statements',payments:'Payments & reconciliation',compliance:'Compliance cases',servicing:'Deposit servicing',branchwork:'Branch workspace',banks:'Bank directory',staff:'Staff & access',approvals:'Approval Inbox',settings:'Bank settings',chart:'Chart of Accounts',ledgers:'Ledger Accounts',journals:'Journals & balances',reports:'Accounting reports',dayclose:'Business Day Close',products:'Product Factory',accounts:'Deposit accounts',customers:'Customers',sessions:'My sessions',audit:'Audit trail'};
 const statementImportUi=createStatementImportUi({api,form,field,refresh:render});
+const collectionsUi=createCollectionsUi({api,form,field,refresh:render});
+const creditUi=createCreditUi({api,form,field,refresh:render});
+const termUi=createContractsUi({api,form,field,refresh:render,type:'TERM_DEPOSIT'});
+const loanUi=createContractsUi({api,form,field,refresh:render,type:'LOAN'});
+const fxUi=createFxUi({api,form,field,refresh:render});
 const paymentCasesUi=createPaymentCasesUi({api,form,field,refresh:render});
 const paymentsUi=createPaymentsUi({api,form,field,refresh:render});
 const complianceUi=createComplianceUi({api,form,field,refresh:render});
@@ -82,9 +91,14 @@ async function render(){
   document.querySelector('#breadcrumb').textContent=t(labels[view]);
   document.querySelectorAll('[data-view]').forEach(b=>{b.classList.toggle('active',b.dataset.view===view);b.setAttribute('aria-current',b.dataset.view===view?'page':'false');});
   if(!me){signedOut();return;}
-  if(!me.platformAdmin&&['banks','staff','audit','approvals','settings','chart','ledgers','journals','reports','dayclose','products','customers','accounts','servicing','compliance'].includes(view)){content.innerHTML=heading(labels[view],'Platform administrator access is required for this section.')+`<div class="card empty"><h3>You are signed in as ${e(me.staff.displayName)}</h3><p>Your current identity can manage its own sessions.</p>${button('View my sessions','my-sessions')}</div>`;return;}
+  if(!me.platformAdmin&&['collections','credit','term','loan','fx','banks','staff','audit','approvals','settings','chart','ledgers','journals','reports','dayclose','products','customers','accounts','servicing','compliance'].includes(view)){content.innerHTML=heading(labels[view],'Platform administrator access is required for this section.')+`<div class="card empty"><h3>You are signed in as ${e(me.staff.displayName)}</h3><p>Your current identity can manage its own sessions.</p>${button('View my sessions','my-sessions')}</div>`;return;}
   content.innerHTML='<div class="loading">Loading workspace…</div>';
   try{
+    if(view==='collections'){await collectionsUi.render(content,()=>revision===renderVersion);return;}
+    if(view==='credit'){await creditUi.render(content,()=>revision===renderVersion);return;}
+    if(view==='term'){await termUi.render(content,()=>revision===renderVersion);return;}
+    if(view==='loan'){await loanUi.render(content,()=>revision===renderVersion);return;}
+    if(view==='fx'){await fxUi.render(content,()=>revision===renderVersion);return;}
     if(view==='paymentcases'){await paymentCasesUi.render(content,()=>revision===renderVersion);return;}
     if(view==='statements'){await statementImportUi.render(content,()=>revision===renderVersion);return;}
     if(view==='payments'){await paymentsUi.render(content,()=>revision===renderVersion);return;}
@@ -139,7 +153,7 @@ async function approvalDirectory(revision){
     `<button class="button ${approvalScope===value?'':'secondary'}" data-action="approval-scope" data-id="${value}" aria-pressed="${approvalScope===value}">${label}</button>`).join('');
   content.innerHTML=heading('Approval Inbox','Review proposed changes before they take effect. Every decision is recorded.')+
     `<div class="approval-tabs actions">${tabs}</div><section class="card"><div class="toolbar approval-filters">
-    <label class="field">Request type<select id="approval-type"><option value="">All types</option>${['BANK_SUSPEND','BANK_RESUME','STAFF_UPDATE','BANK_SETTINGS','CHART_ACCOUNT','LEDGER_ACCOUNT','JOURNAL_POST','DAY_CLOSE','DEPOSIT_PRODUCT','CUSTOMER_CHANGE','DEPOSIT_ACCOUNT','ACCOUNT_FUNDING','ACCOUNT_OPERATION','TRANSACTION_LIMIT','ACCOUNT_BRANCH','BRANCH_LIMIT','CASH_OPERATION','CASH_DENOMINATIONS','SERVICING_POLICY','SERVICING_RUN','COMPLIANCE_REVIEW','PAYMENT_ORDER','PAYMENT_RECONCILE','STATEMENT_ACTION'].map(a=>`<option value="${a}" ${a===approvalAction?'selected':''}>${e(titleCase(a))}</option>`).join('')}</select></label>
+    <label class="field">Request type<select id="approval-type"><option value="">All types</option>${['BANK_SUSPEND','BANK_RESUME','STAFF_UPDATE','BANK_SETTINGS','CHART_ACCOUNT','LEDGER_ACCOUNT','JOURNAL_POST','DAY_CLOSE','DEPOSIT_PRODUCT','CUSTOMER_CHANGE','DEPOSIT_ACCOUNT','ACCOUNT_FUNDING','ACCOUNT_OPERATION','TRANSACTION_LIMIT','ACCOUNT_BRANCH','BRANCH_LIMIT','CASH_OPERATION','CASH_DENOMINATIONS','SERVICING_POLICY','SERVICING_RUN','COMPLIANCE_REVIEW','PAYMENT_ORDER','PAYMENT_RECONCILE','STATEMENT_ACTION','PAYMENT_CASE','PAYMENT_ACCESS','FX_RATE','FX_RATE_WITHDRAW','FX_TRADE','FX_REVERSAL','FX_BOOK','FX_CLOSING_RATE','FX_VALUATION','CONTRACT_OPEN','CONTRACT_EVENT','CONTRACT_CORRECTION','TERM_SERVICING','CREDIT_POLICY','CREDIT_REVIEW','CREDIT_RELEASE','LOAN_SERVICING','LOAN_FEE'].map(a=>`<option value="${a}" ${a===approvalAction?'selected':''}>${e(titleCase(a))}</option>`).join('')}</select></label>
     <label class="field">Bank<select id="approval-bank"><option value="">All banks and staff</option>${banks.items.map(b=>`<option value="${b.id}" ${b.id===approvalBank?'selected':''}>${e(b.displayName)}</option>`).join('')}</select></label>
     <span class="tag">${rows.length} on this page</span></div>`+
     table(['Request / target','Status','Submitted by','Submitted',''],rows.map(r=>`<tr><td><strong>${e(titleCase(r.action))}</strong><small>${e(r.targetLabel)}</small></td><td>${badge(r.status)}</td><td>${e(r.makerSubject)}${r.makerSubject===me.staff.subject?'<small>Your request</small>':''}</td><td>${e(date(r.createdAt))}</td><td><button class="link-button" data-action="open-approval" data-id="${r.id}">View request →</button></td></tr>`).join(''),approvalScope==='INBOX'?'No pending approvals. Changes submitted for review will appear here.':'No requests match these filters.')+pagination()+
@@ -174,6 +188,11 @@ function form(title,fields,submit,label='Save changes'){
 function closeDialog(){if(busy)return;dialog.close();lastFocus?.focus();}
 async function action(name,id){
   if(name.startsWith('statement-import-')){await statementImportUi.action(name.slice(17),id);return;}
+  if(name.startsWith('collections-')){await collectionsUi.action(name.slice(12),id);return;}
+  if(name.startsWith('credit-')){await creditUi.action(name.slice(7),id);return;}
+  if(name.startsWith('term-')){await termUi.action(name.slice(5),id);return;}
+  if(name.startsWith('loan-')){await loanUi.action(name.slice(5),id);return;}
+  if(name.startsWith('fx-')){await fxUi.action(name.slice(3),id);return;}
   if(name.startsWith('payment-case-')){await paymentCasesUi.action(name.slice(13),id);return;}
   if(name.startsWith('payments-')){await paymentsUi.action(name.slice(9),id);return;}
   if(name.startsWith('compliance-')){await complianceUi.action(name.slice(11),id);return;}
@@ -237,7 +256,7 @@ async function action(name,id){
   if(name==='bank-limits'){
     const d=await api(base+'/transaction-limits');const key=crypto.randomUUID();
     const table='<div class="field full table-wrap"><table><thead><tr><th>Currency</th><th>Operation</th><th>Per transaction</th><th>Daily total</th></tr></thead><tbody>'+d.items.map(x=>'<tr><td>'+e(x.currency)+'</td><td>'+e(x.operation)+'</td><td>'+e(x.perTransaction)+'</td><td>'+e(x.dailyTotal)+'</td></tr>').join('')+'</tbody></table></div>';
-    form('Transaction limits',table+(d.missing?.length?'<p class="field full">Missing policies: '+d.missing.map(x=>e(x.currency+' '+x.operation)).join(', ')+'.</p>':'')+'<p class="field full">Set bank-wide limits for one currency and operation. Another administrator must approve the change. Approved transactions awaiting posting count toward the daily total. Transactions are blocked when their currency and operation have no approved bank-wide policy.</p>'+field('currency','Currency','KES',{max:3,pattern:'[A-Z]{3}'})+field('operation','Operation','WITHDRAWAL',{choices:['FUNDING','TRANSFER','WITHDRAWAL','FUNDING_REVERSAL','HOLD','CASH_RECEIVE','CASH_DISPATCH','CASH_TRANSFER','CASH_DEPOSIT','CASH_WITHDRAWAL','CASH_SHORTAGE','CASH_OVERAGE','CASH_REVERSAL','WITHDRAWAL_REVERSAL','TRANSFER_REVERSAL'].map(value=>({value,label:value}))})+field('perTransaction','Per transaction','',{pattern:'[0-9]{1,18}(\\.[0-9]{1,6})?'})+field('dailyTotal','Daily total','',{pattern:'[0-9]{1,18}(\\.[0-9]{1,6})?'})+reason(),values=>api(base+'/transaction-limits',{method:'POST',headers:{'Idempotency-Key':key},body:{...values,expectedVersion:d.version}}),'Submit for approval');return;
+    form('Transaction limits',table+(d.missing?.length?'<p class="field full">Missing policies: '+d.missing.map(x=>e(x.currency+' '+x.operation)).join(', ')+'.</p>':'')+'<p class="field full">Set bank-wide limits for one currency and operation. Another administrator must approve the change. Approved transactions awaiting posting count toward the daily total. Transactions are blocked when their currency and operation have no approved bank-wide policy.</p>'+field('currency','Currency','KES',{max:3,pattern:'[A-Z]{3}'})+field('operation','Operation','WITHDRAWAL',{choices:['FUNDING','TRANSFER','WITHDRAWAL','FUNDING_REVERSAL','HOLD','CASH_RECEIVE','CASH_DISPATCH','CASH_TRANSFER','CASH_DEPOSIT','CASH_WITHDRAWAL','CASH_SHORTAGE','CASH_OVERAGE','CASH_REVERSAL','WITHDRAWAL_REVERSAL','TRANSFER_REVERSAL','FX_CONVERSION','FX_REVERSAL','TD_OPEN','TD_REDEEM','LOAN_DISBURSE','LOAN_REPAY','TD_OPEN_REVERSAL','LOAN_DISBURSE_REVERSAL','LOAN_REPAY_REVERSAL','TD_EARLY_CLOSE','TD_RENEW','LOAN_IMPAIR','LOAN_RESTRUCTURE','LOAN_WRITE_OFF','LOAN_FEE_ASSESS','LOAN_FEE_PAY','LOAN_FEE_WAIVE'].map(value=>({value,label:value}))})+field('perTransaction','Per transaction','',{pattern:'[0-9]{1,18}(\\.[0-9]{1,6})?'})+field('dailyTotal','Daily total','',{pattern:'[0-9]{1,18}(\\.[0-9]{1,6})?'})+reason(),values=>api(base+'/transaction-limits',{method:'POST',headers:{'Idempotency-Key':key},body:{...values,expectedVersion:d.version}}),'Submit for approval');return;
   }
   if(name==='login'){if(manager)await manager.signinRedirect({prompt:'login',max_age:0});return;}
   if(name==='setup'){const p=document.querySelector('#setup-help');p.hidden=!p.hidden;p.scrollIntoView({behavior:'smooth',block:'nearest'});return;}
