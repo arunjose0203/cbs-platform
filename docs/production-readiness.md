@@ -1,6 +1,6 @@
 # Production release gates — African regional CBS
 
-Updated 8 October 2026. Release status: **NOT PRODUCTION READY**.
+Updated 9 October 2026. Release status: **NOT PRODUCTION READY**.
 
 The user authorized continued implementation of the full roadmap without per-module permission requests. Target markets are Rwanda, Uganda and Kenya. The first launch jurisdiction, licensed operator, payment providers, production infrastructure, transaction-volume targets and recovery objectives still require selection. Shared core implementation can continue; jurisdiction-specific acceptance and provider certification cannot be inferred from a regional target.
 
@@ -10,11 +10,11 @@ The user authorized continued implementation of the full roadmap without per-mod
 | --- | --- | --- |
 | Deposit posting | Local automated funding/debit/hold/transfer/reversal and recovery tests | Bank-approved business cases, limits and independent acceptance |
 | Access | Staff/session/MFA checks, scoped branch operations, bank/branch lending roles, immutable grant review history and currency/operation approval limits | Finer bank-scoped administration/compliance roles, privileged access review, production MFA |
-| Deployment | Packaged Spring Boot application, CI workflow | Hosted CI evidence, signed release baseline, staging rollout and rollback drill |
+| Deployment | Docker/Caddy staging templates, offline migration entry point, restricted runtime privileges and CI workflow; Compose template validates | Hosted CI evidence, signed release baseline, staging rollout and rollback drill |
 | Production configuration | ProductionGuard rejects local HTTP identity, MFA exceptions, bootstrap admin and database URLs without verify-full | Deploy with production profile, real secret store, trusted database CA, TLS ingress and tested network isolation |
-| Backups | No restore drill demonstrated | Independent backups of control and every bank database, point-in-time recovery, coordinated consistency checks and measured restore |
+| Backups | Encrypted coordinated backup and isolated full-schema restore drill passed with fictional funded customer, journals, approvals and pending deliveries; see [recovery runbook](production-deployment-recovery.md) | Independent backups of control and every bank database, point-in-time recovery, coordinated consistency checks and measured restore |
 | Performance | Functional concurrency/retry tests only | Agreed peak TPS, database scale, soak and failover tests |
-| Monitoring | Health/readiness, application logs, operation retry state | Alerts for queue age, failures, recon differences, security events and capacity; staffed runbooks |
+| Monitoring | Read-only database/queue checks, authenticated backup/restore evidence, Prometheus output and sample alert rules; local failure tests pass | Alerts for queue age, failures, recon differences, security events and capacity; staffed runbooks |
 | Compliance | Configurable country/currency/calendar; manual customer review and independent compliance cases | Country-specific onboarding/screening, privacy, retention, accounting and reporting requirements approved by bank specialists |
 | Payments | Initial M-Pesa Kenya sandbox adapter and manual per-payout reconciliation; not connected to an actual provider account | Provider contracts, sandbox credentials/specifications, signatures, idempotency, returns, settlement and certification |
 | Products | Savings/current setup, pinned terms, daily capitalization/fees/tax and batch controls | Advanced servicing, bank rule acceptance, overdraft, term deposits and lending |

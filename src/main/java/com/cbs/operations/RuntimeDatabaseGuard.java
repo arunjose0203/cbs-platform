@@ -3,8 +3,7 @@ package com.cbs.operations;
 import com.cbs.tenancy.BankDatabaseProvisioner;
 import java.sql.Connection;
 import javax.sql.DataSource;
-import org.springframework.boot.ApplicationArguments;
-import org.springframework.boot.ApplicationRunner;
+import org.springframework.beans.factory.SmartInitializingSingleton;
 import org.springframework.context.annotation.Profile;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.stereotype.Component;
@@ -12,11 +11,12 @@ import org.springframework.stereotype.Component;
 /** Refuse database owners and DDL-capable identities in the production runtime. */
 @Component
 @Profile("production")
-public class RuntimeDatabaseGuard implements ApplicationRunner {
+public class RuntimeDatabaseGuard implements SmartInitializingSingleton {
     private final DataSource control;
     private final BankDatabaseProvisioner.Settings banks;
     public RuntimeDatabaseGuard(DataSource control,BankDatabaseProvisioner.Settings banks){this.control=control;this.banks=banks;}
-    @Override public void run(ApplicationArguments args){
+    // Validate before context refresh starts HTTP lifecycle beans and scheduled posting workers.
+    @Override public void afterSingletonsInstantiated(){
         try {
             try(var connection=control.getConnection()){verify(connection);}
             for(var target:banks.databases().values()){

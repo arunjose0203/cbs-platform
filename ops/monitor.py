@@ -3,6 +3,7 @@ import argparse
 from datetime import datetime, timezone
 import hmac
 import json
+import math
 import os
 from pathlib import Path
 import urllib.request
@@ -18,7 +19,7 @@ def age(when):
 def check(config):
     recovery.validate(config)
     limits = config['monitor']
-    if any(float(limits[k]) <= 0 for k in ('max_backup_age_seconds','max_restore_age_seconds','max_pending_age_seconds')):
+    if any(not isinstance(limits[k], (int,float)) or isinstance(limits[k],bool) or not math.isfinite(limits[k]) or limits[k] <= 0 for k in ('max_backup_age_seconds','max_restore_age_seconds','max_pending_age_seconds')):
         raise recovery.OpsError('Set explicit positive monitoring thresholds')
     alerts, metrics = [], {}
     url = urlparse(limits['readiness_url'])

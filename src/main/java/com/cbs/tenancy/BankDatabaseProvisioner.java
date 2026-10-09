@@ -30,8 +30,21 @@ public class BankDatabaseProvisioner {
         this.settings = settings;
         this.migrationsEnabled = environment.getProperty("cbs.banking.migrations-enabled", Boolean.class, true);
     }
-    private void requireMigrationAuthority() {
-        if (!migrationsEnabled) throw new TenantException(503,"DATABASE_MIGRATION_REQUIRED","An operator must run the separate database migration job");
+    private String verifyPrepared(UUID tenantId, String reference) {
+        try (var connection = openOwned(tenantId, reference)) {
+            var flyway = Flyway.configure().dataSource(dataSource(target(reference)))
+                    .locations("classpath:db/bank-migration").defaultSchema("bank").schemas("bank")
+                    .createSchemas(false).cleanDisabled(true).ignoreMigrationPatterns(new String[0]).load();
+            // Read-only validation lets an administrator activate an operator-migrated bank.
+            // The runtime never creates schemas, changes history or invokes migrate().
+            flyway.validate();
+            var info = flyway.info();
+            if (info.current() == null || info.pending().length > 0)
+                throw new IllegalStateException();
+            return info.current().getVersion().toString();
+        } catch (Exception failure) {
+            throw new TenantException(503,"DATABASE_MIGRATION_REQUIRED","An operator must prepare and verify the bank database with the separate migration job");
+        }
     }
 
     public void requireApproved(String reference) { target(reference); }
@@ -54,7 +67,7 @@ public class BankDatabaseProvisioner {
     }
 
     public String upgradeOwned(UUID tenantId,String reference) {
-        requireMigrationAuthority();
+        if (!migrationsEnabled) return verifyPrepared(tenantId, reference);
         try(Connection lock=openOwned(tenantId,reference)) {
             try(var statement=lock.createStatement();var rows=statement.executeQuery("SELECT pg_try_advisory_lock(1128420179)")) {
                 rows.next();if(!rows.getBoolean(1))throw failure("DATABASE_BUSY");
@@ -66,7 +79,7 @@ public class BankDatabaseProvisioner {
     }
 
     public String provision(UUID tenantId, String reference) {
-        requireMigrationAuthority();
+        if (!migrationsEnabled) return verifyPrepared(tenantId, reference);
         DriverManagerDataSource dataSource = dataSource(target(reference));
         // The session lock spans ownership reservation and all Flyway connections.
         try (Connection lock = dataSource.getConnection()) {

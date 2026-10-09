@@ -318,7 +318,7 @@ def authenticated_manifest(config, directory, verify_files=True):
     if not hmac.compare_digest(envelope['hmac'], hmac.digest(signing, canonical(m), 'sha256').hex()) or m.get('format') != 1:
         raise OpsError('Manifest authentication failed')
     for item in m['databases'] + m['files']:
-        if Path(item['file']).name != item['file'] or '\\' in item['file'] or (root / item['file']).is_symlink():
+        if Path(item['file']).name != item['file'] or '\\' in item['file'] or (root / item['file']).is_symlink() or not (root / item['file']).is_file():
             raise OpsError('Unsafe archive path')
         if verify_files and digest(root / item['file']) != item['sha256']:
             raise OpsError('Encrypted archive checksum failed')

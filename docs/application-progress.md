@@ -1,4 +1,8 @@
-# CBS application progress — 8 October 2026
+# CBS application progress — 9 October 2026
+
+## Deployment and recovery increment
+
+[Deployment and recovery tooling](production-deployment-recovery.md) now includes HTTPS staging templates, separate migration/runtime credentials, encrypted coordinated backups, isolated restore validation, monitoring rules and operating procedures. The expanded local restore drill verifies a fictional funded customer, balances, journals, approvals, pending postings and restricted runtime database privileges. Real hosted deployment, MFA/role acceptance, off-host durability, failover and bank-approved recovery objectives remain pending.
 
 ## Overall position
 
