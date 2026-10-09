@@ -4,6 +4,29 @@ import {createAccountUi} from '../src/account-ui.js';
 import {setLanguage,t} from '../src/i18n.js';
 const banks=[{id:'a',displayName:'Bank A',status:'ACTIVE',legalEntities:[{id:'entity',legalName:'Entity'}]},{id:'b',displayName:'Bank B',status:'ACTIVE'}];
 const summary={id:'d',accountNumber:'A001',customerNumber:'C001',name:'<img src=x>',productCode:'SAV',currency:'KES',state:'AWAITING_FUNDING',delivery:'PENDING',requestId:'r'};
+test('closure shows exact balances and blockers without submitting an ineligible account',async()=>{
+ const forms=[],posts=[];const ui=createAccountUi({field:()=>'',form:(...v)=>forms.push(v),api:async(path,options)=>{
+  if(options){posts.push(options);return {};}
+  if(path==='/admin/tenants?limit=100')return {items:banks};
+  if(path.endsWith('/closure'))return {version:7,posted:'9007199254740993.17',held:'1.00',ledgerBalance:'9007199254740993.17',blockers:['FUNDING_BALANCE_NOT_ZERO','ACCOUNT_CLOSURE_HOLDS']};
+  if(path.endsWith('/d'))return {definition:{id:'d',terms:{currency:'KES'}}};
+  return {version:1,storageReady:true,total:0,items:[]};
+ }});
+ await ui.render({innerHTML:''},()=>true);await ui.action('closure','d');
+ assert.match(forms[0][1],/9007199254740993.17/);assert.match(forms[0][1],/Release all account holds/);assert.equal(forms[0][3],'Done');await forms[0][2]({reason:'Close'});assert.equal(posts.length,0);
+});
+test('eligible closure pins fresh version, uses independent approval and preserves retry key',async()=>{
+ let submit;const posts=[];const ui=createAccountUi({field:()=>'',form:(title,fields,fn)=>submit=fn,api:async(path,options)=>{
+  if(options){posts.push(options);return {};}
+  if(path==='/admin/tenants?limit=100')return {items:banks};
+  if(path.endsWith('/closure'))return {version:9,posted:'0',held:'0',ledgerBalance:'0',blockers:[]};
+  if(path.endsWith('/d'))return {definition:{id:'d',name:'Savings',customerId:'c',legalEntityId:'entity',terms:{id:'p',revision:3,currency:'KES'}}};
+  return {version:1,storageReady:true,total:0,items:[]};
+ }});
+ await ui.render({innerHTML:''},()=>true);await ui.action('closure','d');await submit({reason:'Customer request'});await submit({reason:'Customer request'});
+ assert.equal(posts[0].body.expectedVersion,9);assert.equal(posts[0].body.state,'CLOSED');assert.equal(posts[0].body.productRevision,3);assert.equal(posts[0].headers['Idempotency-Key'],posts[1].headers['Idempotency-Key']);
+ await submit({reason:'Corrected reason'});assert.notEqual(posts[1].headers['Idempotency-Key'],posts[2].headers['Idempotency-Key']);
+});
 test('account directory escapes data, distinguishes delivery and scopes bank requests',async()=>{
  const calls=[],forms=[],host={innerHTML:''};const ui=createAccountUi({form:(...a)=>forms.push(a),api:async path=>{calls.push(path);if(path==='/admin/tenants?limit=100')return {items:banks};if(path.endsWith('/d'))return {definition:{id:'d'},delivery:'PENDING'};return {version:1,storageReady:true,total:1,items:[summary]};}});
  await ui.render(host,()=>true);assert.match(host.innerHTML,/&lt;img src=x&gt;/);assert.ok(!host.innerHTML.includes('<img'));assert.match(host.innerHTML,/Awaiting delivery/);assert.match(host.innerHTML,/data-action="account-edit"[^>]*disabled/);

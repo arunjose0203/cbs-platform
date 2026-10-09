@@ -218,7 +218,7 @@ class TenantAdministrationIntegrationTest {
         b = provision(b);
         assertThat(a.status()).isEqualTo(Status.ACTIVE);
         assertThat(b.status()).isEqualTo(Status.ACTIVE);
-        assertThat(a.databaseBinding().schemaVersion()).isEqualTo("21");
+        assertThat(a.databaseBinding().schemaVersion()).isEqualTo("22");
         bankGet(a.id(), "operator-a", true).andExpect(status().isOk())
                 .andExpect(jsonPath("$.tenantId").value(a.id().toString())).andExpect(jsonPath("$.databaseBinding").doesNotExist());
         mvc.perform(get("/api/v1/banks/" + b.id() + "/operational-context")
@@ -887,7 +887,7 @@ class TenantAdministrationIntegrationTest {
         ledger.initialize(ADMIN,bank.id(),new ChangeRequest(0L,"Prepare ledgers"));
         assertThat(ledger.list(ADMIN,bank.id(),"",null,null,25,0).storageReady()).isTrue();
         ledger.initialize(ADMIN,bank.id(),new ChangeRequest(service.get(ADMIN,bank.id()).version(),"Recheck upgrade"));
-        assertThat(service.get(ADMIN,bank.id()).databaseBinding().schemaVersion()).isEqualTo("21");
+        assertThat(service.get(ADMIN,bank.id()).databaseBinding().schemaVersion()).isEqualTo("22");
     }
 
     private List<com.cbs.accounting.LedgerModels.Definition> journalLedgers(Tenant bank) throws Exception {
@@ -964,6 +964,29 @@ class TenantAdministrationIntegrationTest {
             for(var task:tasks)assertThat(task.get()).isTrue();
         }
         assertThat(journalBalance(accounts.get(0).id())).isEqualTo("0.6");assertThat(journalBalance(accounts.get(1).id())).isEqualTo("-0.6");
+    }
+    @Test void manualJournalDeliveryRechecksActiveParticipantsBeforeFirstPosting() throws Exception {
+        Tenant bank=ledgerBank();var ledgers=journalLedgers(bank);
+        String maker="w02-maker-"+UUID.randomUUID(),checker="w02-checker-"+UUID.randomUUID();
+        access.bootstrap(TestIdentity.ISSUER,maker);access.bootstrap(TestIdentity.ISSUER,checker);
+        var makerActor=new Actor(TestIdentity.ISSUER,maker,true,UUID.randomUUID());
+        var checkerActor=new Actor(TestIdentity.ISSUER,checker,true,UUID.randomUUID());
+        var request=approvals.journal(makerActor,UUID.randomUUID(),bank.id(),journalChange(bank,ledgers,"25.00"));
+        approvals.decide(checkerActor,request.id(),com.cbs.approvals.ApprovalModels.Decision.APPROVE,"Independent review");
+        jdbc.update("UPDATE platform.staff_identity SET active=false WHERE issuer=? AND subject=?",TestIdentity.ISSUER,maker);
+        journals.deliver(request.id());
+        assertThat(journalBalance(ledgers.getFirst().id())).isEqualTo("0");
+        assertThat(jdbc.queryForObject("SELECT failure_code FROM platform.journal_delivery WHERE request_id=?",String.class,request.id())).isEqualTo("APPROVAL_PARTICIPANT_DISABLED");
+        jdbc.update("UPDATE platform.staff_identity SET active=true WHERE issuer=? AND subject=?",TestIdentity.ISSUER,maker);
+        jdbc.update("UPDATE platform.staff_identity SET active=false WHERE issuer=? AND subject=?",TestIdentity.ISSUER,checker);
+        journals.deliver(request.id());assertThat(journalBalance(ledgers.getFirst().id())).isEqualTo("0");
+        jdbc.update("UPDATE platform.staff_identity SET active=true WHERE issuer=? AND subject=?",TestIdentity.ISSUER,checker);
+        new TransactionTemplate(transactionManager).executeWithoutResult(t->{journals.deliver(request.id());t.setRollbackOnly();});
+        assertThat(journalBalance(ledgers.getFirst().id())).isEqualTo("25");
+        jdbc.update("UPDATE platform.staff_identity SET active=false WHERE issuer=? AND subject IN (?,?)",TestIdentity.ISSUER,maker,checker);
+        journals.deliver(request.id());journals.deliver(request.id());
+        assertThat(journalBalance(ledgers.getFirst().id())).isEqualTo("25");
+        assertThat(jdbc.queryForObject("SELECT completed FROM platform.journal_delivery WHERE request_id=?",Boolean.class,request.id())).isTrue();
     }
     @Test void journalFailureRollsBackAllLinesAndBalances() throws Exception {
         Tenant bank=ledgerBank();var accounts=journalLedgers(bank);var request=approvals.journal(ADMIN,UUID.randomUUID(),bank.id(),journalChange(bank,accounts,"123.45"));approveHttp(request.id());
@@ -1281,7 +1304,7 @@ class TenantAdministrationIntegrationTest {
         var bank=provision(register(binding));
         if(binding.equals("payments-lifecycle"))jdbc.update("UPDATE platform.bank_settings SET business_date=DATE '2026-10-05' WHERE tenant_id=?",bank.id()); // Historical initial fixture, before any ledger exists.
         var mapping=productMapping(bank);
-        var productRequest=approvals.product(ADMIN,UUID.randomUUID(),bank.id(),productChange(bank,null,mapping.id(),"SAV_"+bank.legalEntities().getFirst().functionalCurrency(),bank.legalEntities().getFirst().functionalCurrency(),"100","10",true));approveHttp(productRequest.id());
+        var productRequest=approvals.product(ADMIN,UUID.randomUUID(),bank.id(),productChange(bank,null,mapping.id(),"SAV_"+bank.legalEntities().getFirst().functionalCurrency(),bank.legalEntities().getFirst().functionalCurrency(),"100",binding.equals("closure-main")?"0":"10",true));approveHttp(productRequest.id());
         var customerRequest=approvals.customer(ADMIN,UUID.randomUUID(),bank.id(),customerChange(bank,null,customerProfile("Account Example","ACC001",com.cbs.customers.CustomerModels.State.ACTIVE,"REVIEW/1"),""));approveHttp(customerRequest.id());customers.deliver(customerRequest.id());
         return new AccountFixture(bank,customers.list(ADMIN,bank.id(),"",null,25,0).items().getFirst().id(),products.list(ADMIN,bank.id(),"",null,null,25,0).items().getFirst());
     }
@@ -1361,6 +1384,7 @@ class TenantAdministrationIntegrationTest {
         var badTax=new com.cbs.contracts.ContractModels.Open(terms.expectedVersion(),terms.type(),terms.accountId(),terms.principalLedger(),terms.accruedInterestLedger(),terms.interestProfitLossLedger(),f.liability().id(),terms.principal(),terms.annualRatePercent(),terms.withholdingPercent(),terms.dayBasis(),terms.startDate(),terms.maturityDate(),terms.instalments(),"TEST/BAD-TAX",terms.reason());
         assertCode(()->approvals.contractOpen(ADMIN,UUID.randomUUID(),bank.id(),badTax),"CONTRACT_LEDGER_USED");
         var key=UUID.randomUUID();var td=approvals.contractOpen(ADMIN,key,bank.id(),terms);assertThat(approvals.contractOpen(ADMIN,key,bank.id(),terms).id()).isEqualTo(td.id());assertCode(()->approvals.decide(ADMIN,td.id(),com.cbs.approvals.ApprovalModels.Decision.APPROVE,"Self"),"SELF_APPROVAL_FORBIDDEN");approveHttp(td.id());
+        assertThat(accounts.closure(ADMIN,bank.id(),f.account()).blockers()).contains("ACCOUNT_CLOSURE_CONTRACT_REVIEW");
         assertCode(()->journals.deliver(td.id()),"CONTRACT_MANAGED");assertThat(journals.pending()).doesNotContain(td.id());
         // A receipt failure must roll back the customer's debit and the contract principal journal.
         try(var c=TestDatabases.bank("contracts");var st=c.createStatement()){st.execute("CREATE FUNCTION bank.fail_contract_test() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'Injected contract receipt failure'; END $$");st.execute("CREATE TRIGGER fail_contract_test BEFORE INSERT ON bank.contract_event FOR EACH ROW EXECUTE FUNCTION bank.fail_contract_test()");}
@@ -1738,6 +1762,7 @@ class TenantAdministrationIntegrationTest {
         approveHttp(approvals.limits(ADMIN,UUID.randomUUID(),bank.id(),new com.cbs.access.TransactionLimits.Change(service.get(ADMIN,bank.id()).version(),"KES","WITHDRAWAL_REVERSAL","1000","2000","Fictional return policy")).id());
         org.mockito.Mockito.when(mpesa.configured(bank.id())).thenReturn(true);org.mockito.Mockito.when(mpesa.binding(bank.id(),f.source().id())).thenReturn(true);org.mockito.Mockito.when(mpesa.profile(bank.id())).thenReturn("fictional-sandbox-profile");
         var payout=approvals.payment(ADMIN,UUID.randomUUID(),bank.id(),paymentOrder(f,"100","LIFECYCLE-1"));approveHttp(payout.id());operations.deliver(payout.id());
+        assertThat(accounts.closure(ADMIN,bank.id(),f.account()).blockers()).contains("ACCOUNT_CLOSURE_PAYMENT_REVIEW");
         var lifecycleToken=new java.util.concurrent.atomic.AtomicReference<String>();org.mockito.Mockito.when(mpesa.transfer(org.mockito.ArgumentMatchers.eq(bank.id()),org.mockito.ArgumentMatchers.eq(payout.id()),org.mockito.ArgumentMatchers.any(),org.mockito.ArgumentMatchers.anyString())).thenAnswer(invocation->{lifecycleToken.set(invocation.getArgument(3));return new com.cbs.payments.PaymentModels.Acceptance("life-conversation","life-originator");});payments.dispatch(ADMIN,bank.id(),payout.id());
         var date=reference.get(ADMIN,bank.id()).businessDate();String header="receipt,date,type,credit,debit,balance,payment_reference,beneficiary\n";
         UUID first=statementImports.upload(maker,bank.id(),UUID.randomUUID(),new com.cbs.payments.StatementImportModels.Upload(service.get(ADMIN,bank.id()).version(),f.source().id(),"LIFE-DAY1","WALLET",date,date,"0","1000","TEST/DAY1",java.util.Map.of(),header+"LIFE-TOPUP,"+date+",CREDIT,1000,0,1000,,\n"));
@@ -1914,6 +1939,53 @@ class TenantAdministrationIntegrationTest {
     private com.cbs.payments.PaymentModels.Order paymentOrder(FundingFixture f,String amount,String ref){return new com.cbs.payments.PaymentModels.Order(service.get(ADMIN,f.f().bank().id()).version(),f.account(),f.source().id(),amount,"254700000001","Fictional beneficiary",reference.get(ADMIN,f.f().bank().id()).businessDate(),ref,"Fictional sandbox payout");}
     private com.cbs.payments.PaymentModels.Statement paymentStatement(UUID bank,UUID payment,String amount,String ref,com.cbs.payments.PaymentModels.Outcome outcome){return new com.cbs.payments.PaymentModels.Statement(service.get(ADMIN,bank).version(),payment,ref,amount,"KES","254700000001",outcome,reference.get(ADMIN,bank).businessDate(),"PROVIDER/TEST","Fictional verified statement");}
     private com.cbs.payments.PaymentModels.Reconcile paymentResolution(UUID bank,UUID payment,UUID statement,com.cbs.payments.PaymentModels.Resolution outcome){return new com.cbs.payments.PaymentModels.Reconcile(service.get(ADMIN,bank).version(),payment,outcome,statement,"Fictional independent evidence review");}
+
+    @Test void zeroBalanceClosurePreservesHistoryAndRechecksApprovalBeforeDelivery() throws Exception {
+        var f=fundingFixture("closure-main");var bank=f.f().bank();var closed=com.cbs.accounts.AccountModels.State.CLOSED;
+        String path="/api/v1/admin/tenants/"+bank.id()+"/accounts/"+f.account()+"/closure";
+        mvc.perform(get(path)).andExpect(status().isUnauthorized());
+        mvc.perform(get(path).header("Authorization","Bearer "+TestIdentity.token("operator",false))).andExpect(status().isForbidden());
+        assertThat(accounts.closure(ADMIN,bank.id(),f.account()).eligible()).isTrue();
+        var original=fund(f,"100.25");
+        var holdRequest=approvals.operation(ADMIN,UUID.randomUUID(),bank.id(),operationChange(f,com.cbs.accounts.OperationModels.Kind.HOLD,"1",null,null));approveHttp(holdRequest.id());
+        assertThat(accounts.closure(ADMIN,bank.id(),f.account()).blockers()).contains("ACCOUNT_OPERATION_PENDING");
+        operations.deliver(holdRequest.id());var held=holdRequest.id();
+        assertThat(accounts.closure(ADMIN,bank.id(),f.account()).blockers()).contains("FUNDING_BALANCE_NOT_ZERO","ACCOUNT_CLOSURE_HOLDS");
+        assertCode(()->approvals.account(ADMIN,UUID.randomUUID(),bank.id(),accountChange(f.f(),f.account(),closed)),"FUNDING_BALANCE_NOT_ZERO");
+        try(var c=TestDatabases.bank("closure");var st=c.createStatement()){
+            assertThatThrownBy(()->st.executeUpdate("UPDATE bank.account SET payload=jsonb_set(payload,'{state}','\"CLOSED\"') WHERE id='"+f.account()+"'")).isInstanceOf(java.sql.SQLException.class);
+        }
+        postOperation(f,operationChange(f,com.cbs.accounts.OperationModels.Kind.RELEASE,"1",null,held));
+        postOperation(f,operationChange(f,com.cbs.accounts.OperationModels.Kind.FUNDING_REVERSAL,"100.25",null,original));
+        var check=accounts.closure(ADMIN,bank.id(),f.account());assertThat(check.eligible()).isTrue();
+        assertThat(new java.math.BigDecimal(check.posted())).isEqualByComparingTo("0");assertThat(new java.math.BigDecimal(check.ledgerBalance())).isEqualByComparingTo("0");
+        mvc.perform(admin(get(path))).andExpect(status().isOk()).andExpect(jsonPath("$.blockers").isEmpty());
+        assertCode(()->accounts.closure(ADMIN,UUID.randomUUID(),f.account()),"TENANT_NOT_FOUND");
+        String maker="w03-maker-"+UUID.randomUUID(),checker="w03-checker-"+UUID.randomUUID();
+        access.bootstrap(TestIdentity.ISSUER,maker);access.bootstrap(TestIdentity.ISSUER,checker);
+        var makerActor=new Actor(TestIdentity.ISSUER,maker,true,UUID.randomUUID());var checkerActor=new Actor(TestIdentity.ISSUER,checker,true,UUID.randomUUID());
+        var input=accountChange(f.f(),f.account(),closed);var key=UUID.randomUUID();
+        var request=approvals.account(makerActor,key,bank.id(),input);
+        assertThat(approvals.account(makerActor,key,bank.id(),input).id()).isEqualTo(request.id());
+        assertCode(()->approvals.decide(makerActor,request.id(),com.cbs.approvals.ApprovalModels.Decision.APPROVE,"Self review"),"SELF_APPROVAL_FORBIDDEN");
+        approvals.decide(checkerActor,request.id(),com.cbs.approvals.ApprovalModels.Decision.APPROVE,"Independent closure review");
+        jdbc.update("UPDATE platform.staff_identity SET active=false WHERE issuer=? AND subject=?",TestIdentity.ISSUER,maker);
+        accounts.deliver(request.id());
+        assertThat(jdbc.queryForObject("SELECT failure_code FROM platform.account_delivery WHERE request_id=?",String.class,request.id())).isEqualTo("APPROVAL_PARTICIPANT_DISABLED");
+        jdbc.update("UPDATE platform.staff_identity SET active=true WHERE issuer=? AND subject=?",TestIdentity.ISSUER,maker);
+        new TransactionTemplate(transactionManager).executeWithoutResult(t->{accounts.deliver(request.id());t.setRollbackOnly();});
+        assertThat(jdbc.queryForObject("SELECT completed FROM platform.account_delivery WHERE request_id=?",Boolean.class,request.id())).isFalse();
+        jdbc.update("UPDATE platform.staff_identity SET active=false WHERE issuer=? AND subject IN (?,?)",TestIdentity.ISSUER,maker,checker);
+        accounts.deliver(request.id());accounts.deliver(request.id());
+        assertThat(accounts.detail(ADMIN,bank.id(),f.account()).definition().state()).isEqualTo(closed);
+        assertThat(accounts.detail(ADMIN,bank.id(),f.account()).delivery()).isEqualTo("APPLIED");
+        assertCode(()->approvals.funding(ADMIN,UUID.randomUUID(),bank.id(),fundingChange(f,"100","AFTER-CLOSE")),"FUNDING_ACCOUNT_NOT_READY");
+        try(var c=TestDatabases.bank("closure");var st=c.createStatement();var r=st.executeQuery("SELECT (SELECT count(*) FROM bank.account_event WHERE request_id='"+request.id()+"'),(SELECT count(*) FROM bank.funding),(SELECT count(*) FROM bank.customer_entry),(SELECT count(*) FROM bank.account_ledger)")){
+            r.next();assertThat(r.getInt(1)).isEqualTo(1);assertThat(r.getInt(2)).isEqualTo(1);assertThat(r.getInt(3)).isEqualTo(1);assertThat(r.getInt(4)).isEqualTo(1);
+            assertThatThrownBy(()->st.executeUpdate("INSERT INTO bank.journal_line(journal_id,line_number,ledger_id,side,amount) VALUES ('"+UUID.randomUUID()+"',1,'"+f.liability().id()+"','CREDIT',1)")).isInstanceOf(java.sql.SQLException.class).hasMessageContaining("Posting to a closed customer account");
+            assertThatThrownBy(()->st.executeUpdate("UPDATE bank.account SET payload=jsonb_set(payload,'{state}','\"ACTIVE\"') WHERE id='"+f.account()+"'")).isInstanceOf(java.sql.SQLException.class);
+        }
+    }
 
     private record FundingFixture(AccountFixture f,UUID account,com.cbs.accounting.LedgerModels.Definition source,com.cbs.accounting.LedgerModels.Definition liability) {}
     private FundingFixture fundingFixture(String binding)throws Exception{
@@ -2373,6 +2445,7 @@ class TenantAdministrationIntegrationTest {
         var configuration=approvals.servicingPolicy(ADMIN,UUID.randomUUID(),bank.id(),policy);
         assertCode(()->approvals.decide(ADMIN,configuration.id(),com.cbs.approvals.ApprovalModels.Decision.APPROVE,"Own policy"),"SELF_APPROVAL_FORBIDDEN");approveHttp(configuration.id());
         assertThat(days.dashboard(ADMIN,bank.id(),25,0).blockers()).contains("SERVICING_REQUIRED");
+        assertThat(accounts.closure(ADMIN,bank.id(),f.account()).blockers()).contains("ACCOUNT_CLOSURE_SERVICING_REQUIRED");
         // Approved policy corrections retain history and supersede the same effective date.
         java.util.function.Function<String,com.cbs.servicing.ServicingModels.Policy> withFee=fee->new com.cbs.servicing.ServicingModels.Policy(service.get(ADMIN,bank.id()).version(),policy.productId(),policy.productRevision(),policy.legalEntityId(),date,policy.annualRatePercent(),365,fee,"10","20","HALF_EVEN",expense,payable,income,tax,"Correct fictional daily fee");
         var expensive=approvals.servicingPolicy(ADMIN,UUID.randomUUID(),bank.id(),withFee.apply("2000"));approveHttp(expensive.id());

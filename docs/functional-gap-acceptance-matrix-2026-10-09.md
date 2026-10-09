@@ -1,0 +1,211 @@
+# Functional Gap & Acceptance Matrix
+
+Assessment date: **9 October 2026**. Application baseline: **fe23ba3**. Target: the existing CBS for a first bank in Kenya, Uganda or Rwanda; the first bank's final product scope is not yet approved.
+
+**Decision: no module is independently functionally accepted yet.** There is substantial implementation and local automated evidence. This matrix is the proposed acceptance baseline, not a certificate of completeness, a regulatory assessment, or a percentage score.
+
+Implementation follow-up: [W02 validation and W03 deposit closure](w02-w03-functional-validation.md) records a reproduced approval-delivery defect, its fix and bounded zero-balance closure. The evidence baseline below predates that increment. Bank acceptance remains pending.
+
+## How to read and maintain this matrix
+
+- **T — Tested bounded scope:** the listed operations have implementation and relevant automated evidence; independent functional acceptance remains pending.
+- **P — Partial module:** a working scope exists, with identified functional extensions or lifecycle gaps. This does not mean the existing scope is defective.
+- **O — Operational tooling:** implementation and local checks exist; deployed operation is not established.
+- **P0:** validate/fix before accepting any financial release: isolation, authority, accounting integrity, duplicates, recovery and closing controls. A P0 acceptance obligation is not a claim that a defect was reproduced.
+- **P1:** complete or explicitly exclude before offering the affected product/workflow. A bank cannot accept a workflow that requires a missing function.
+- **P2:** optional expansion if the bank signs it out of the initial release. Reclassify if its product offering requires it.
+
+The F identifiers are stable assessment IDs, not replacements for existing module numbers. Each F row maps to the same-numbered A acceptance case. **All A cases have result NOT RUN for independent bank UAT and sign-off PENDING.** Existing automated results are recorded separately. Responsible roles below are proposed roles, not assigned people or granted access.
+
+Read a row as: implemented scope → confirmed boundary/gap → acceptance scenario → retained evidence and bank decision. The bank must choose IMPLEMENT, ACCEPT BOUNDED SCOPE, or EXCLUDE for each gap. Until it does, scope is OPEN. Do not convert an unverified statement into PASS or label a missing optional feature a production defect without that scope decision.
+
+## Evidence baseline and assessment limits
+
+| Evidence | Result / interpretation |
+| --- | --- |
+| Full backend regression, 9 October | 157 tests passed, zero failures/errors/skips, before the final production-only prepared-bank validation change. Recorded in `.local/operations-resume-tests.log`. |
+| Final focused backend/package run | 11 tests passed and executable JAR built after that change; includes runtime permissions, prepared-bank verification, ownership and migration-checksum rejection. `.local/operations-final-package.log`. Do not add 157 + 11 as unique tests. |
+| Operations tests | 21 tests previously passed for encryption/authentication, restore safety, monitoring and staging preflight. See [test sources](../ops/tests/) and [recovery report](production-deployment-recovery.md). Not rerun for this documentation-only assessment. |
+| Packaged recovery drill | Packaged migration ran twice; full control/bank schema and synthetic identity data restored; fictional 100 KES customer balance, journals, approvals, two pending deliveries and configuration matched. One delivery was already bank-posted with acknowledgement pending. Small-fixture restore: 11.402 seconds, **not** a production RTO. `.local/recovery-packaged-drill.log`. |
+| UI tests rerun for this assessment | **96 passed**, zero failures/skips, `.local/functional-matrix-ui-tests.log`. These are automated UI tests, not a fresh interactive browser review or complete visual/accessibility acceptance. |
+| Code and document inspection | Controllers/services, key model rules, named integration cases, operational scripts and latest operator guides inspected. This is targeted inspection, not a line-by-line audit of every implementation path. |
+| External evidence | No actual provider certification, independently calculated bank acceptance pack, real-user MFA sign-off or country reporting acceptance supplied. |
+
+Local logs are ignored operational artifacts and are not available from a Git clone. Test sources and the checked-in verification summary are durable references; capture CI artifacts and approved UAT evidence for a release. No banking data or credentials were changed by this assessment. The initial documentation assessment reproduced no defect. The subsequent W02 execution did reproduce and fix a disabled-participant posting defect; see the execution report. The remaining matrix findings distinguish functional boundaries, implementation gaps and acceptance obligations.
+
+## Module matrix
+
+“Evidence” points to a named source/test group in the evidence index. Tests demonstrate particular scenarios, not complete module coverage.
+
+| ID / module | Implemented functional scope | Status | Confirmed gap or acceptance boundary | Priority / evidence |
+| --- | --- | --- | --- | --- |
+| F01 Bank Tenant Administration | Registration, legal entities, database ownership, provisioning/activation, suspension and audited changes | T | Actual first-bank lifecycle and operator-prepared production activation require acceptance; no bank configuration is assumed | P0; E01, E15 |
+| F02 Identity, Staff & Sessions | Registered staff, MFA enforcement, disable/revoke, session expiry and history | T | Real identity-provider sign-in and MFA recovery must be exercised; expired development exceptions are not functioning production MFA | P0; E02 |
+| F03 Bank/Branch Roles & Authority | Bank/branch restrictions, operational roles, lending grants, per-currency/operation authority and revoke-before-post checks | P | Lending/cash/payment scopes exist; finer treasury, compliance and general administration roles remain. Actual bank assignments/caps are not configured by tests | P0; E02, E11 |
+| F04 Approval Inbox | Maker/checker decisions, reject/cancel, stale-version rejection, immutable events and retry protection | T | Accept every operation/role combination and pending-request behaviour after staff/policy changes; scope model is not uniform across all modules | P0; E03 |
+| F05 Reference Data & Calendars | Currency/language settings, precision, rounding, holidays, weekends and forward business dates | T | Actual country/bank calendars and conventions require approval; complete locale content is F33 | P0; E04 |
+| F06 Chart of Accounts | Bank hierarchy, categories, posting definitions, uniqueness and independent approval | T | Bank-specific mappings and accounting policy validation remain | P0; E05 |
+| F07 Ledger Accounts | Dedicated bank storage, approved ledger definitions, ownership checks and recoverable delivery | T | Independently reconcile account/category mappings and protection of dedicated customer/cash/FX ledgers | P0; E05 |
+| F08 Journals & General Reversals | Balanced single-currency journals, immutable lines, full reversal, date checks and retry receipts | T | Not a universal reversal API: product-specific journals require their own controls. Prior-period correction policy is not supplied | P0; E05 |
+| F09 Accounting Reports | Trial balance, ledger statement, turnover reconciliation and CSV | P | Operational/regulatory/consolidated translated reports are not complete; bank chart/report presentation remains to be accepted | P1; E05 |
+| F10 Business Day Close | Readiness checks, independent close, posting locks, next-working-day advancement and recovery | P | Controlled reopening, branch-specific closing and month/year-end procedures remain | P0 core close; P1 extensions; E06 |
+| F11 Product Factory | Savings/current products, minimums, currency, liability mapping, immutable revisions and activation | P | General eligibility/overdraft rules, full term/loan catalogues and controlled existing-account terms migration remain; separate servicing policies already exist | P1; E07 |
+| F12 Individual Customer Onboarding | Profiles, manual document references, exact duplicate checks, approval and bank delivery | P | Corporate/beneficial-owner/joint/guardian models, automated document verification and general periodic review are not complete; references are not document storage | P1; E07 |
+| F13 Compliance Cases | Manual evidence, independent review, restrictions and expiry/current-profile checks | P | Automated sanctions/PEP/transaction monitoring, mandatory universal review, scoped investigators, assignment/SLA and regulatory reports remain | P1; E10 |
+| F14 Deposit Account Lifecycle | Opening with pinned terms, approval, eligibility, activation through funding, freeze and bounded closure | P | Zero-balance closure now supported with independent approval and obligation checks. Positive-balance payout, final interest/fee/tax settlement and closure with contract/payment history remain missing | P1; E08; source-confirmed |
+| F15 Funding & Customer Balances | Approved funding, exact subledger/GL integration, balances and safe retry | T | Accept genuine funding-evidence controls and bank mappings; external receipt verification is not automatic | P0; E08 |
+| F16 Holds, Withdrawals, Transfers & Reversals | Holds/releases, recorded withdrawals, same-bank/entity/currency transfers and full supported reversals | P | Not cross-bank clearing; broader value-date/partial corrections and product-specific operations need explicit scope | P0 supported paths; P1 extensions; E08 |
+| F17 Branch & Staff Transaction Limits | Required bank policies plus scoped branch/staff caps and pending-usage controls | T | Bank must define currencies/operations/caps and treatment of each reversal; no approved financial limits are inferred | P0; E02, E08 |
+| F18 Teller & Cash | Vault/till custody, cash deposits/withdrawals, counts, exceptions, approved adjustments, reversals and interbranch transit | P | Carrier custody, emergency reassignment and broader shipment investigation/write-off workflows remain; unresolved transit blocks day close | P0 current cash flows; P1 extensions; E09 |
+| F19 Denominations & Receipts | Approved catalogue, opening stock, quantity checks, movement/reversal tracking and printable numbered receipts | P | Denomination exchange/reclassification, extended receipt variants and bank-specific receipt requirements remain | P1; E09 |
+| F20 Interest, Fees & Taxes | Actual/360 or fixed Actual/365, closing-balance interest, daily capitalization, fixed business-day fee, explicit taxes and fractional carry | P | Tiered/value-date/backdated calculations, deferred capitalization, exemptions, deposit-fee waivers and servicing correction remain; current rules are not universal product rules | P1; E10 |
+| F21 Daily Financial Processing | Preview, independent batch approval, atomic posting, deterministic receipts, statement integration and date sealing | P | **Hard limit: 1,000 funded nonclosed accounts/run; 31 days to next working day.** Frozen/ineligible accounts can block the whole batch. No chunking or automatic run creation/approval | P1; E10; source-confirmed |
+| F22 Customer Statements & Notifications | Running balances, date filtering and portal/backend CSV; in-app operational alerts in selected modules | P | CSV export capped at **10,000 entries**; PDF, customer delivery preferences, email/SMS and delivery history remain | P1 exports/required notices; P2 optional channels; E08, E14 |
+| F23 M-Pesa Payouts | Kenya B2C sandbox adapter, approval/debit, one dispatch, status inquiry and callback observations | P | **Production-profile dispatch disabled in code.** Actual contracted sandbox acceptance, live adapter/certification, collections and other rails remain | P1 if payments offered; E12 |
+| F24 Statement Import & Reconciliation | Normalized CSV, immutable evidence, duplicate checks, wallet/GL matching, fees, adjustments and independent closure | P | Native provider format not accepted against a real sample; split/net settlement, suspense and automated acquisition remain | P1; E12 |
+| F25 Payment Exceptions & Returns | Scoped investigations, approved dated carry, overdue indicators and evidence-backed full returns | P | Partial returns, remote reversal initiation, outbound escalation and larger lookup/search workflows remain | P1; E12 |
+| F26 FX Rates & Conversion | Independently approved rate books, supported own-customer conversion, atomic currency legs and full reversal | P | Automated feeds, two-foreign-currency cross trades and broader market workflows remain | P1 if FX offered; E13 |
+| F27 FX Valuation & P&L | Conversion-book closing rates, weighted-average realized/unrealized P&L, long/short limits and closing gates | P | Not full-bank monetary-item translation. Book policy/limit amendments, valuation correction, period P&L transfer and scoped treasury access remain | P1 if FX offered; E13 |
+| F28 Term Deposits & Servicing | Fixed-rate opening/accrual, withholding, maturity payout, renewal, full early closure and in-app maturity alerts | P | Partial closure, standing renewal, richer penalty/repricing policy, full catalogue and customer notifications remain | P1 if offered; E11 |
+| F29 Contract Corrections | Original-linked eligible current-open-day opening/disbursement, accrual and repayment reversal; dependent-event and duplicate controls | P | Prior-day/value-date corrections and redemption/renewal/early-closure reversals are outside current scope | P0 supported correction paths; P1 extensions; E11 |
+| F30 Loan Applications & Credit Review | Immutable dossier, manually evidenced affordability/security, independent policy/review and disbursement conditions | P | Editable draft workflow, bureau/group exposure, verified document storage, legal security perfection/release and richer committee routing remain | P1 if lending offered; E11 |
+| F31 Loan Servicing & Impairment | Fixed-rate equal-principal schedules, interest-first repayment, bounded restructure, manually assessed allowance and full covered write-off | P | Moratoria/non-accrual, interest capitalization, partial write-off, automated ECL/IFRS 9 and post-write-off recovery remain; stage-only allowance changes unsupported | P1 if lending offered; E11 |
+| F32 Arrears & Collections | Posted principal/interest/fee ageing, assignments, promises, escalation history and approved fee assessment/payment/waiver | P | Fee-payment reversal/taxation, automatic penalty policies, borrower notices, legal recovery and scalable snapshots remain; replay rejects over **10,000 completed events/contract** | P1; E11; source-confirmed |
+| F33 Multitenancy, Currency & Language Coverage | Dedicated bank routing, decimal money, configurable currencies and some English/French/Swahili labels | P | Currency configuration is not full FX accounting; several newer screens remain English. Complete translated journeys, statements/receipts and locale review are unaccepted | P0 isolation/money; P1 required languages; E02, E04, E14 |
+| F34 Deployment, Backup & Recovery | Preflight, migration/runtime separation, encrypted coordinated backup/restore, queue monitoring and operating runbook | O | Actual server/HTTPS/MFA, scheduled/off-host backups, real identity restoration, alert delivery and failover remain. Local cold-backup tooling does not supply PITR | P0 release gate, distinct from product functionality; E15 |
+
+## Acceptance scenarios and required results
+
+Run against isolated fictional data, with independent maker/checker users and a second bank/branch. Start each financial case from a known reconciled baseline. The expected result must be independently calculated and approved by bank finance; copying the application preview is not an independent oracle. Use current business dates and explicit test-only policies. Never reuse these sample values as live bank policy.
+
+Each case below inherits G01–G08 where applicable. A failed precondition is BLOCKED, not PASS. A missing capability is NOT IMPLEMENTED, not a successful negative test. Record every step's actual result using the evidence template below.
+
+| Case | Execute / expected acceptance result | Proposed acceptance owner |
+| --- | --- | --- |
+| A01 | Register a bank; replay registration; conflict its code/binding; prepare via separate migration job; activate/suspend/resume. One bank and expected audit chain; wrong database owner cannot activate; suspension blocks new work | Bank operations + DBA |
+| A02 | Sign in with real configured MFA; test invalid/expired proof, idle expiry, disabled staff and own/other-session revocation. Unauthorized requests denied and another person's session cannot be revoked through self-service | Security + operations |
+| A03 | Grant bank-A/branch-1 roles with explicit currency caps. Read/approve/post inside and outside scope; revoke before delivery and after bank commit. No new unauthorized posting; committed lost-ack receipt is acknowledged once | Security + credit/cash/payments leads |
+| A04 | Submit, self-approve, independently approve, reject, cancel, concurrently approve and change the target before review. One valid decision/effect; rejection/cancellation/staleness leave financial state unchanged | Operations |
+| A05 | Configure KES/RWF/UGX, valid/invalid precision and a holiday/weekend. Independently verify rounding and next working date; invalid precision rejected; no backward date change | Finance + operations |
+| A06 | Create hierarchy and leaf mappings; attempt duplicate/cyclic/invalid/inactive definitions and concurrent changes. Only independently approved valid chart changes apply, within one bank | Finance |
+| A07 | Deliver ledgers to two bank databases; interrupt before commit and after commit. Ownership preserved; no duplicate ledger/event and no generic use of protected ledgers | Finance + DBA |
+| A08 | Post a balanced journal, attempt unbalanced/wrong-currency/closed-date versions, reverse and replay. Dr=Cr by journal/currency/entity; one original and one linked reversal; rejected writes have zero effect | Finance |
+| A09 | Compare posted journal lines, turnover, ledger balances and CSV for fixed dates. Totals agree exactly; deliberately introduced isolated test drift is detected even if net balance coincides | Finance |
+| A10 | Attempt close with pending work, open till, mismatch and overdue obligations; resolve and close independently. Blockers prevent advancement; closed day rejects new ordinary posting; retry advances once | Finance + operations |
+| A11 | Approve/revise/deactivate a product, open an account on revision 1, then revise to 2. Existing pinned terms unchanged; new eligibility/mappings use the approved revision; no silent migration | Product owner |
+| A12 | Onboard fictional individual, duplicate document, profile change and rejected activation. Duplicate and expired/invalid evidence rules hold; only approved delivered eligible customer opens an account | Customer operations |
+| A13 | Restrict customer, request clearance, self-review, independent review, expire review and change profile. Restrictions/current-evidence rules block the supported flows; no claim of automated screening | Compliance |
+| A14 | Open/fund/freeze/reactivate; test unfunded closure and funded zero-balance closure. Existing supported lifecycle obeys terms; zero-balance closure preserves history and rejects obligations. Positive-balance/final-servicing settlement remains NOT IMPLEMENTED | Deposit operations |
+| A15 | Fund 1,000 KES with approved fictional receipt and separate checker. Customer posted balance +1,000 and mapped GL effects reconcile; duplicate, failed commit and lost acknowledgement produce one effect | Finance + deposit operations |
+| A16 | From A=1,000 and B=0 KES, transfer 250: A=750, B=250. Withdraw 100 from B: B=150. Reverse withdrawal: B=250. Replay and insufficient/held-funds attempts do not alter expected totals | Deposit operations + finance |
+| A17 | Test cap−smallest currency unit, cap, cap+unit, daily total, pending approvals, retries and another currency. Enforce bank/branch/staff authority without double-counting retries or implicit FX conversion | Operations + security |
+| A18 | Open counted till, receive cash, deposit/withdraw, transfer vault/till, investigate shortage/overage and send/receive/return interbranch cash. Physical counts, inventory, cash GL and in-transit amounts agree; custody and independent decisions enforced | Cash operations + finance |
+| A19 | With explicit fictional stock, request unavailable denomination quantities, valid movement, reverse and print/reprint receipt. Quantity×denomination equals money; no negative stock; stable original receipt and audited reprint | Cash operations |
+| A20 | Use the independent calculation fixture below; also test zero rates, fractional carry, weekend interval and insufficient available funds. Customer/interest/fee/tax ledgers and carry match exact expected values | Product owner + finance |
+| A21 | Run approved daily batch; fail one account posting; retry after bank commit. No partial bank batch, no duplicate effect, sealed date protected. At 1,001 accounts or >31-day interval, explicit rejection rather than truncation; required larger scope remains a gap | Finance + operations |
+| A22 | Compare paginated statement and CSV to posted transactions, reversals and servicing. Running/closing balances match; CSV is scoped and escaped; over 10,000 entries rejected explicitly. PDF/email/SMS remain NOT IMPLEMENTED | Deposit operations |
+| A23 | On contracted sandbox test success, confirmed failure, timeout/status query and duplicate/out-of-order callbacks. No blind resend; customer/GL/provider references reconcile. Record unavailable provider scenarios as BLOCKED, not simulated certification | Payments + provider |
+| A24 | Import actual redacted provider sample and normalized equivalent, duplicate/conflicting files, fees and unknown movements. File coverage/wallet totals/GL match; independent closure rejects unexplained differences | Reconciliation + finance |
+| A25 | Open exception, assign/investigate, approve dated carry, settle later and approve evidence-backed full return. Return credited once, original retained, deadlines affect day close. Partial/remote reversal remain NOT IMPLEMENTED | Payments + finance |
+| A26 | Approve valid/overlapping/expired rate books; convert and reverse at specified amounts. Both currency legs commit or neither; customer balances and FX bridge reconcile to independent worksheet | Treasury + finance |
+| A27 | Test long, short, partial sale, crossing zero and reversal under selected weighted-average policy; close twice/retry. Realized/unrealized movements and released prior valuation match independent examples; over-limit exposure blocked | Treasury + finance |
+| A28 | Open term deposit, accrue, mature, renew with payout/capitalization and close early with explicit penalty/tax basis. Original/effective terms preserved; cash, principal, accrued interest, tax and closure reconcile | Deposit products + finance |
+| A29 | Reverse latest eligible opening/accrual/repayment; try duplicate, dependent event, closed day and insufficient balance. Correct cash/contract/GL/carry restoration; forbidden corrections rejected without editing history | Finance + lending/deposit operations |
+| A30 | Submit manual dossier, duplicate pledge, invalid evidence, expired review and unmet condition; independently release conditions and fund exact approved terms. Unauthorized or mismatched disbursement denied; one application cannot finance two contracts | Credit |
+| A31 | Validate fixed-rate schedule and payment allocation; restructure under supported preconditions; assess/release allowance; fully provided write-off. Original terms/history preserved, accounting reconciles, write-off does not imply legal forgiveness | Credit + finance |
+| A32 | Test due-date/ageing boundaries, cash-backed promise, repayment reversal, assignment, fee payment/waiver and case resolution. Ageing uses actual posted amounts; reversed payment reopens promise; waive is not cash; unauthorized collector denied | Collections + finance |
+| A33 | Repeat core journeys in every offered language/currency and across two banks/branches. No cross-bank data, correct decimal/date display and translated errors/receipts/exports; untranslated screens recorded as gaps | Operations + language reviewer |
+| A34 | Execute deployed migration, restricted runtime startup, scheduled coordinated backup, isolated restore and queue recovery with provider egress blocked. Reconcile all balances/approvals/pending work and actual identity; prove off-host receipt and delivered alert separately | DBA + operations + finance |
+
+### Independent daily calculation fixture for A20
+
+Fictional KES account only: posted balance 100,000.00; carry 0; annual rate 3.65%; Actual/365 fixed; one calendar day to next working day; interest tax 10%; fixed fee 2.00; fee tax 10%; HALF_EVEN. No holds, minimum-balance restriction or other transactions in this fixture.
+
+- Exact gross interest = 100,000 × 3.65 × 1 / (100 × 365) = **10.00**.
+- Interest tax = **1.00**; fee = **2.00**; fee tax = **0.20**.
+- Net customer change = **+6.80**; closing posted balance = **100,006.80**; carry = **0**.
+- Expected combined journal totals: Dr interest expense 10.00; Cr customer liability net 6.80; Cr fee income 2.00; Cr tax liability 1.20. Intermediate accrued-interest liability entries net to zero because capitalization is immediate.
+- For a three-day Friday-to-Monday interval under the same explicit fixture, gross = **30.00**, interest tax = **3.00**, fixed business-day fee remains **2.00**, fee tax **0.20**, net **24.80**. This tests current non-compounding weekend behaviour, not an assumed bank product rule.
+
+These are proposed independent acceptance examples, not tests executed by this document or recommended country tax rates. Add bank-approved RWF/UGX rounding, leap-year, holiday and fractional-carry worksheets before sign-off.
+
+## Shared financial acceptance gates
+
+| Gate | Required evidence |
+| --- | --- |
+| G01 Isolation and current authority | Other-bank/branch read, list, export, approve and first-post attempts denied; revoked/disabled users denied; already-committed receipt recovery does not create new financial work |
+| G02 Independent approval | Maker cannot approve own financial instruction; wrong reviewer/currency/amount limit denied; stale target/policy and changed customer eligibility rechecked |
+| G03 Accounting conservation | Each journal balanced by currency/entity; ledger balances equal journal movements; customer/contract positions reconcile; holds and fees do not create unexplained cash |
+| G04 Atomic bank posting | Inject failure during posting: no partial customer/contract/journal/receipt effect; control remains visibly pending or failed until safe retry |
+| G05 Retry and concurrency | Same key/payload and concurrent approval/delivery produce one effect; changed payload conflicts; lost acknowledgement recovered from immutable bank receipt |
+| G06 Corrections and date boundaries | Original remains immutable; reversal linked and applied once; dependent/closed-day corrections rejected; permitted corrections exactly restore relevant balances/carry |
+| G07 Evidence and reporting | Actor, reason, bank, business date, approval/original/receipt IDs and expected/actual amounts retained; statement/report export agrees with database accounting |
+| G08 Unsupported scope fails visibly | Oversized batch/export, unsupported partial return/correction and unavailable integration rejected explicitly; no silent truncation, invented result or simulated external acceptance |
+
+## Priority backlog and implementation sequence
+
+| Work package | Matrix coverage | Concrete exit condition |
+| --- | --- | --- |
+| W01 Agree first-bank scope and build UAT pack | All F rows | Named bank/product owners, offered products/currencies/languages, account volumes, required workflows and IMPLEMENT/BOUNDED/EXCLUDE decisions recorded; no guessed limits or financial policies |
+| W02 Validate administration/access/accounting foundation | F01–F10, F17, G01–G08 | Independent A cases passed; any reproduced P0 defect fixed with regression evidence before money workflows are accepted |
+| W03 Finish core deposit lifecycle | F11–F16, F22 | Funded-account settlement/closure implemented if deposits offered; required customer types agreed; opening/funding/holds/transfers/withdrawals/corrections reconcile end to end |
+| W04 Finish cash and daily servicing | F18–F21 | Required cash exception/denomination operations completed; bank-approved interest/tax examples pass; correction and frozen-account treatment agreed; batch capacity meets the intended bank scope |
+| W05 Complete payment acceptance | F23–F25 | Actual provider sample and sandbox evidence accepted; production integration/certification delivered before live payouts; required returns/suspense/netting workflows implemented |
+| W06 Complete optional product lifecycles | F26–F32 | Treasury/deposit/credit owners approve supported offerings; implement required valuation/contract/fee corrections and recovery paths; explicitly exclude unsupported products |
+| W07 Complete reporting/language/customer communications | F09, F22, F33 | Offered-language journeys reviewed; required statements/notices and operational reports delivered; country reporting handled as a separate signed specification |
+| W08 Deployed and bank-led acceptance | F34 and all offered modules | Real MFA/roles, hosted recovery/alerts, independent end-to-end financial UAT and separately tracked production security/performance/regulatory gates pass |
+
+Known adjacent capabilities not demonstrated as complete existing modules: corporate/beneficial-owner onboarding; automated AML/screening and bureau connections; country regulatory reporting; customer internet/mobile channels; legacy data migration/cutover. They require separate scoped work packages if the first bank needs them. They must not be counted as completed merely because an underlying customer/account API exists.
+
+## Acceptance record template
+
+Create one record per case/scenario variation; retain in the bank's controlled evidence repository. No actual approver is assigned by this document.
+
+| Field | Initial value / required entry |
+| --- | --- |
+| Case and linked matrix row | Axx / Fxx, plus scenario variation and G gates |
+| Release | Commit SHA, packaged artifact digest, control/bank schema versions, UI version |
+| Environment and fixture | Isolated bank/branch, currencies, business date, product/policy revisions, test identities and initial reconciled balances; exclude passwords/tokens |
+| Scope decision | OPEN → IMPLEMENT / ACCEPT BOUNDED SCOPE / EXCLUDE; decision owner and rationale |
+| Expected result | Independently calculated balances, journal lines, state, limits, errors and audit effects before execution |
+| Steps and actual result | Timestamped UI/API actions; request/approval/journal/receipt references; comparison against expected result |
+| Result | NOT RUN / BLOCKED / FAIL / PASS / NOT IMPLEMENTED / EXCLUDED |
+| Defect or gap | Issue ID, reproduction, impact, owner, fix commit and retest evidence; do not use a test count as closure |
+| Evidence | Protected screenshots, exports, queries/reconciliation worksheet and automated test/CI run links |
+| Sign-off | Proposed business owner + independent finance/security reviewer as appropriate; names/date remain PENDING |
+
+Acceptance rule: all required cases/gates PASS, no unresolved critical/high defect affecting offered workflows, accounting reconciles exactly, and every exclusion is explicitly approved. A module can be accepted **only for that recorded scope and release**. New code/policy changes require an impact review and affected-case retest. Functional acceptance does not replace production security, load, recovery or jurisdictional approval.
+
+## Evidence index
+
+The integration methods below are in [TenantAdministrationIntegrationTest](../src/test/java/com/cbs/tenancy/TenantAdministrationIntegrationTest.java). Helpers run within their parent lifecycle tests, rather than being independent test results. Links to module guides describe known boundaries, including historical wording superseded by later modules.
+
+| Ref | Implementation / guide | Relevant automated evidence inspected |
+| --- | --- | --- |
+| E01 | [Tenant service](../src/main/java/com/cbs/tenancy/TenantService.java), [bank provisioner](../src/main/java/com/cbs/tenancy/BankDatabaseProvisioner.java) | `registrationIsAuditedAndIdempotentWithPayloadConflictProtection`, `duplicateCodesAndBindingsRollBackTheWholeRegistration`, `bankLifecycleIsIsolatedAndSuspensionAndRevocationTakeEffect`, `failedMigrationsCannotActivateTenantAndCanBeRetried` |
+| E02 | [Access service](../src/main/java/com/cbs/access/AccessService.java), [lending access guide](bank-scoped-lending-access.md), [branch controls](branch-operations.md) | `administratorMfaAndStaffRegistrationAreRequired`, `staffLifecycleBlocksExistingTokensAndBootstrapCannotReenableThem`, `branchPermissionsAreScopedToBankBranchAndCurrentMembership`, `lendingRolesBranchesLimitsAndRevocationsAreEnforcedEndToEnd` |
+| E03 | [Approval service](../src/main/java/com/cbs/approvals/ApprovalService.java), [approval guide](module-03-approvals.md) | `approvalSubmissionIsRetrySafeAndCannotBeSelfApprovedOrReadAcrossIssuers`, `aStaleApprovalNeverOverwritesALaterChange`, `concurrentApprovalsApplyOnceAndReturnTheSameDecision` |
+| E04 | [Reference guide](module-04-reference-data.md), [servicing money model](../src/main/java/com/cbs/servicing/ServicingModels.java) | `bankSettingsRequireApprovalAndUseExactCurrencyRounding`, `calendarsRespectHolidaysWeekendsAndForwardOnlyBusinessDates`, `languagePreferencesAreOwnedByTheAuthenticatedUser` |
+| E05 | [Accounting implementation](../src/main/java/com/cbs/accounting/), [reports guide](module-05-reports.md) | `chartEnforcesHierarchyUniquenessAndBankBoundaries`, `ledgerDeliverySurvivesControlRollbackAfterBankCommit`, `journalFailureRollsBackAllLinesAndBalances`, `manualJournalDeliveryRechecksActiveParticipantsBeforeFirstPosting`, `journalApprovalPostingAndReversalAreAuditedAndIdempotent`, `reportsUsePostedBusinessDatesAndExactStatementBalances`, `reconciliationFindsTurnoverDriftEvenWhenNetBalanceMatches` |
+| E06 | [Day close guide](module-05-day-close.md), [day close service](../src/main/java/com/cbs/accounting/DayCloseService.java) | `dayCloseRequiresApprovalFreezesPostingsAndRecoversAfterBankCommit`, `dayCloseBlocksPendingWorkAndRechecksAtApproval`, `dayCloseRefusesBalanceDriftAndRetriesWithoutAdvancingEarly` |
+| E07 | [Product models](../src/main/java/com/cbs/products/ProductModels.java), [customer guide](module-07-customers.md) | `productApprovalPreservesExactAmountsAndImmutableRevisions`, `productRulesProtectBankMappingsCurrenciesAndPrecision`, `customerOnboardingRequiresApprovalAndDeliversIsolatedProfile`, `customerDuplicateReviewAndHttpAccessAreEnforced` |
+| E08 | [Account service](../src/main/java/com/cbs/accounts/AccountService.java), [statement service](../src/main/java/com/cbs/accounts/StatementService.java), [operations guide](module-08-operations.md) | `depositAccountPinsTermsAndControlsLifecycle`, `zeroBalanceClosurePreservesHistoryAndRechecksApprovalBeforeDelivery`, `fundingPostsExactCustomerAndGeneralLedgerBalances`, `fundingRecoversLostAcknowledgementAndConcurrentRetries`, `operationsProtectHoldsMinimumAndRecoverWithdrawals`, `operationsTransferAndReverseFundingWithAtomicRecovery`, `branchOperationsRequireScopedRolesMfaAndApprovedLimits` |
+| E09 | [Cash guide](teller-cash-management.md), [inventory/receipts](cash-inventory-and-receipts.md), [transit](interbranch-cash.md) | `cashCustodyEnforcesApprovalsCountsLimitsAndAtomicPosting` and helpers `verifyDenominationInventory`, `verifyInterbranchCash`, `verifyCashAdjustments`, `verifyCashReversals`; [cash UI tests](../ui/test/cash.test.mjs) |
+| E10 | [Servicing service](../src/main/java/com/cbs/servicing/ServicingService.java), [servicing boundaries](deposit-servicing.md), [compliance boundaries](compliance-cases.md) | `servicingPostsInterestFeesTaxesAndStatementsExactlyOnce`, `complianceCasesRestrictPostingAndRequireIndependentCurrentEvidence`; [servicing arithmetic tests](../src/test/java/com/cbs/servicing/ServicingModelsTest.java) |
+| E11 | [Contracts implementation](../src/main/java/com/cbs/contracts/), [credit guide](lending-controls.md), [corrections](contract-corrections-servicing.md), [collections](loan-arrears-collections.md), [later scoped-role increment](bank-scoped-lending-access.md) | `termDepositAndLoanLifecyclesPostReconciledAccrualAndSettlement`, `contractCorrectionsRestoreCashPositionsAndAccrualCarryWithoutEditingHistory`, `termServicingRenewsWithImmutableTermsAndClosesEarlyWithExplicitDeductions`, `creditApprovalConditionsRestructureImpairmentAndWriteoffAreControlled`, `collectionsFeesPromisesAndImmutableHistoryReconcile`, `lendingRolesBranchesLimitsAndRevocationsAreEnforcedEndToEnd` |
+| E12 | [Sandbox gateway](../src/main/java/com/cbs/payments/DarajaSandboxGateway.java), [statement reconciliation](mpesa-statement-reconciliation.md), [exceptions](payment-lifecycle-exceptions.md) | `mpesaPaymentsRequireEvidenceAndNeverResendUnknownOutcomes` and helper `verifyFullStatementImport`; `paymentLifecycleCarriesTimingDifferencesAndCreditsVerifiedReturnsOnce`; [gateway tests](../src/test/java/com/cbs/payments/DarajaSandboxGatewayTest.java) |
+| E13 | [FX valuation guide](fx-valuation.md), [FX implementation](../src/main/java/com/cbs/fx/) | `fxConversionPostsBothCurrenciesAtomicallyAndReversesExactlyOnce` (includes valuation lifecycle), `fxRatesRequireIndependentApprovalAndRejectOverlappingInversePairs`; [valuation arithmetic](../src/test/java/com/cbs/fx/FxValuationModelsTest.java) |
+| E14 | [UI test suite](../ui/test/), [statement controller](../src/main/java/com/cbs/accounts/StatementController.java), [labels](../ui/src/i18n.js) | 96 UI tests rerun, including statement/export, exact-money, escaping, grant and idempotency scenarios. Presence of labels is not full translated-journey acceptance |
+| E15 | [Deployment/recovery guide](production-deployment-recovery.md), [runtime guard tests](../src/test/java/com/cbs/operations/RuntimeDatabaseGuardIntegrationTest.java), [packaged recovery drill](../ops/tests/recovery_drill.py), [operations tests](../ops/tests/) | 11 final focused tests; 21 operations tests; full-schema isolated recovery fixture. Real Keycloak recovery, live HTTPS, off-host durability and provider replay remain unverified |
+
+## Corrections to older progress statements
+
+- Lending/collections bank-scoped roles are **implemented** in the later V37 increment; older credit/collections guides listing them as pending are historical.
+- Principal/interest/fee ageing and collections escalation tracking are **implemented**; outbound notices and broader recovery remain missing.
+- Statement CSV download is **implemented in the portal and backend**; PDF and customer delivery are missing.
+- Interest/fees/taxes exist in a separate servicing module; this does not mean Product Factory has a complete pricing/eligibility catalogue.
+- Payment timing carry and full returns exist; broader split/net/suspense and partial returns remain gaps.
+- Local coordinated restore evidence now exists; a deployed, independently accepted disaster-recovery capability does not.
+- None of these corrections establishes universal module completeness. Use this dated baseline over undated or older “next module” paragraphs; inspect current code again after later releases.
+
+**Current action:** W02 automated validation and the W03 zero-balance closure increment are recorded in the [execution report](w02-w03-functional-validation.md). Complete independent W02 acceptance and the remaining W03 settlement/customer-scope gaps before marking those work packages complete.

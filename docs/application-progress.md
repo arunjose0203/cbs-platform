@@ -1,5 +1,13 @@
 # CBS application progress — 9 October 2026
 
+## Current functional acceptance baseline
+
+Use the [Functional Gap & Acceptance Matrix](functional-gap-acceptance-matrix-2026-10-09.md) for the current 34-area functional assessment, 34 proposed acceptance cases, source/test evidence, confirmed limits and prioritized completion work. It reconciles older historical pending lists below. No module has independent bank functional sign-off recorded; existing automated test results do not replace that acceptance.
+
+## W02 / W03 functional work
+
+[Validation and closure report](w02-w03-functional-validation.md): fixed first journal delivery after approval-participant deactivation, retained lost-acknowledgement recovery, and added Closure Check plus independently approved zero-balance closure. Final payout, interest/fee/tax settlement and linked contract/payment closure remain partial. Bank acceptance is still pending. Existing banks need bank schema V22.
+
 ## Deployment and recovery increment
 
 [Deployment and recovery tooling](production-deployment-recovery.md) now includes HTTPS staging templates, separate migration/runtime credentials, encrypted coordinated backups, isolated restore validation, monitoring rules and operating procedures. The expanded local restore drill verifies a fictional funded customer, balances, journals, approvals, pending postings and restricted runtime database privileges. Real hosted deployment, MFA/role acceptance, off-host durability, failover and bank-approved recovery objectives remain pending.

@@ -19,6 +19,7 @@ public class AccountController {
     public AccountController(AccountService accounts,ApprovalService approvals,com.cbs.accounts.FundingService funding){this.funding=funding;this.accounts=accounts;this.approvals=approvals;}
     @GetMapping Directory list(JwtAuthenticationToken jwt,@PathVariable UUID bankId,@RequestParam(defaultValue="") String search,@RequestParam(required=false) State state,@RequestParam(defaultValue="25") int limit,@RequestParam(defaultValue="0") int offset){return accounts.list(actor(jwt),bankId,search,state,limit,offset);}
     @GetMapping("/{id}") Detail detail(JwtAuthenticationToken jwt,@PathVariable UUID bankId,@PathVariable UUID id){return accounts.detail(actor(jwt),bankId,id);}
+    @GetMapping("/{id}/closure") AccountClosureService.Check closure(JwtAuthenticationToken jwt,@PathVariable UUID bankId,@PathVariable UUID id){return accounts.closure(actor(jwt),bankId,id);}
     @PostMapping @ResponseStatus(HttpStatus.ACCEPTED)
     ApprovalModels.Request change(JwtAuthenticationToken jwt,@PathVariable UUID bankId,@RequestHeader("Idempotency-Key") UUID key,@Valid @RequestBody Change input){return approvals.account(actor(jwt),key,bankId,input);}
     @PostMapping("/prepare") @ResponseStatus(HttpStatus.NO_CONTENT)

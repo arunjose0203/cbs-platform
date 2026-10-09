@@ -13,7 +13,8 @@ import tools.jackson.databind.json.JsonMapper;
 public class BankJournalStore {
     private static final JsonMapper JSON=JsonMapper.builder().build();
     private final BankDatabaseProvisioner databases;
-    public BankJournalStore(BankDatabaseProvisioner databases){this.databases=databases;}
+    private final org.springframework.beans.factory.ObjectProvider<org.springframework.jdbc.core.JdbcTemplate> control;
+    public BankJournalStore(BankDatabaseProvisioner databases,org.springframework.beans.factory.ObjectProvider<org.springframework.jdbc.core.JdbcTemplate> control){this.databases=databases;this.control=control;}
     private Connection connection(Tenant bank){return databases.openOwned(bank.id(),bank.databaseBinding().databaseReference());}
     public boolean ready(Tenant bank){
         try(var c=connection(bank);var s=c.createStatement();var r=s.executeQuery("SELECT to_regclass('bank.journal') IS NOT NULL AND to_regclass('bank.ledger_balance') IS NOT NULL")){
@@ -58,6 +59,8 @@ public class BankJournalStore {
                         if(!r.getBoolean(1))throw new SQLException("Journal receipt mismatch");return;
                     }}
                 }
+                // Existing receipts above remain recoverable after access is withdrawn.
+        com.cbs.access.AccessService.requireActiveParticipants(control.getObject(),job.issuer(),job.maker(),job.checker());
                 // Lock in a consistent order across journals and ledger changes.
                 for(UUID id:entry.lines().stream().map(Line::ledgerId).distinct().sorted().toList()){
                     try(var s=c.prepareStatement("SELECT id FROM bank.ledger_account WHERE id=? AND tenant_id=? AND legal_entity_id=? AND currency=? AND active FOR UPDATE")){

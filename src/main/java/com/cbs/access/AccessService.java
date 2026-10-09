@@ -25,6 +25,13 @@ import tools.jackson.databind.json.JsonMapper;
 @Service
 @ConditionalOnProperty(name="cbs.tenancy.enabled",havingValue="true",matchIfMissing=true)
 public class AccessService {
+    /** Hold current staff records until the surrounding posting transaction ends. */
+    public static void requireActiveParticipants(JdbcTemplate jdbc,String issuer,String maker,String checker) {
+        var active=jdbc.query("SELECT subject,active FROM platform.staff_identity WHERE issuer=? AND subject IN (?,?) ORDER BY subject FOR SHARE",
+                (row,n)->row.getBoolean("active"),issuer,maker,checker);
+        if(maker.equals(checker)||active.size()!=2||active.stream().anyMatch(value->!value))
+            throw new com.cbs.tenancy.TenantException(409,"APPROVAL_PARTICIPANT_DISABLED","Both original approval participants must remain active before first delivery");
+    }
     private static final JsonMapper JSON = JsonMapper.builder().build();
     private final JdbcTemplate jdbc;
     private final TransactionTemplate tx;

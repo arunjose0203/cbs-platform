@@ -15,7 +15,7 @@ public class BankAccountStore {
     public BankAccountStore(BankDatabaseProvisioner databases){this.databases=databases;}
     private Connection connection(Tenant bank){return databases.openOwned(bank.id(),bank.databaseBinding().databaseReference());}
     public boolean ready(Tenant bank){
-        try(var c=connection(bank);var s=c.createStatement();var r=s.executeQuery("SELECT to_regclass('bank.account') IS NOT NULL AND to_regclass('bank.account_event') IS NOT NULL")){r.next();return r.getBoolean(1);}catch(SQLException e){throw unavailable();}
+        try(var c=connection(bank);var s=c.createStatement();var r=s.executeQuery("SELECT to_regclass('bank.account') IS NOT NULL AND to_regclass('bank.account_event') IS NOT NULL AND to_regprocedure('bank.guard_account_closure()') IS NOT NULL")){r.next();return r.getBoolean(1);}catch(SQLException e){throw unavailable();}
     }
     public boolean posted(Tenant bank,UUID id){try(var c=connection(bank);var s=c.prepareStatement("SELECT EXISTS(SELECT 1 FROM bank.account_event WHERE request_id=?)")){s.setObject(1,id);try(var r=s.executeQuery()){r.next();return r.getBoolean(1);}}catch(SQLException e){throw unavailable();}}
     public Definition read(Tenant bank,UUID id){

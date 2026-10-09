@@ -17,9 +17,10 @@ import tools.jackson.databind.json.JsonMapper;
 @ConditionalOnProperty(name="cbs.tenancy.enabled",havingValue="true",matchIfMissing=true)
 public class AccountService {
     private final JdbcTemplate jdbc;private final TenantRepository tenants;private final BankAccountStore store;private final BankDatabaseProvisioner databases;private final TransactionTemplate tx;
+    private final AccountClosureService closure;
     private static final JsonMapper JSON=JsonMapper.builder().build();
     private final com.cbs.customers.CustomerService customers; private final com.cbs.products.ProductService products; private final com.cbs.reference.ReferenceDataService reference; private final com.cbs.accounting.ChartService chart;
-    public AccountService(JdbcTemplate jdbc,TenantRepository tenants,BankAccountStore store,BankDatabaseProvisioner databases,PlatformTransactionManager manager,com.cbs.customers.CustomerService customers,com.cbs.products.ProductService products,com.cbs.reference.ReferenceDataService reference,com.cbs.accounting.ChartService chart){this.customers=customers;this.products=products;this.reference=reference;this.chart=chart;this.jdbc=jdbc;this.tenants=tenants;this.store=store;this.databases=databases;this.tx=new TransactionTemplate(manager);}
+    public AccountService(JdbcTemplate jdbc,TenantRepository tenants,BankAccountStore store,BankDatabaseProvisioner databases,PlatformTransactionManager manager,com.cbs.customers.CustomerService customers,com.cbs.products.ProductService products,com.cbs.reference.ReferenceDataService reference,com.cbs.accounting.ChartService chart,AccountClosureService closure){this.closure=closure;this.customers=customers;this.products=products;this.reference=reference;this.chart=chart;this.jdbc=jdbc;this.tenants=tenants;this.store=store;this.databases=databases;this.tx=new TransactionTemplate(manager);}
     private boolean ready(Tenant bank){return List.of(Status.ACTIVE,Status.SUSPENDED).contains(bank.status())&&store.ready(bank);}
     public Directory list(Actor actor,UUID bankId,String search,State state,int limit,int offset){
         AccessService.admin(actor);AccessService.page(limit,offset);if(search.length()>100)throw error(400,"INVALID_REQUEST");
@@ -48,6 +49,14 @@ public class AccountService {
             tenants.audit(actor,bankId,"ACCOUNT_PROFILE_VIEWED",bank.version(),bank.status(),bank.status(),"Account detail viewed",null,null,Map.of("accountId",id));return row;
         });
     }
+    public AccountClosureService.Check closure(Actor actor,UUID bankId,UUID id){
+        AccessService.admin(actor);return tx.execute(t->{
+            jdbc.query("SELECT id FROM platform.tenant WHERE id=? FOR SHARE",r->{},bankId);
+            var bank=tenants.get(bankId,false);var row=current(bankId,id);
+            if(!row.delivery().equals("APPLIED"))throw error(409,"ACCOUNT_DELIVERY_PENDING");
+            requireMatching(bank,row.definition());return closure.check(bank,row.definition());
+        });
+    }
     public void initialize(Actor actor,UUID bankId,ChangeRequest input){
         AccessService.admin(actor);tx.executeWithoutResult(t->{var bank=tenants.get(bankId,true);
             if(bank.version()!=input.expectedVersion())throw error(409,"STALE_VERSION");if(bank.status()!=Status.ACTIVE)throw error(409,"ACCOUNT_BANK_NOT_ACTIVE");
@@ -70,7 +79,8 @@ public class AccountService {
             if(!d.customerId().equals(input.customerId())||!d.terms().id().equals(input.productId())||d.terms().revision()!=input.productRevision()||!d.legalEntityId().equals(input.legalEntityId()))throw error(400,"ACCOUNT_STRUCTURE_IMMUTABLE");
             if(d.state()==State.CLOSED)throw error(409,"ACCOUNT_ALREADY_CLOSED");
             boolean funded=jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM platform.account_ledger WHERE account_id=?)",Boolean.class,d.id());
-            if(funded&&(input.state()==State.CLOSED||input.state()==State.AWAITING_FUNDING))throw error(409,"FUNDING_BALANCE_NOT_ZERO");
+            if(funded&&input.state()==State.AWAITING_FUNDING)throw error(409,"FUNDING_BALANCE_NOT_ZERO");
+            if(input.state()==State.CLOSED)closure.requireEligible(bank,d);
             if(!funded&&input.state()==State.ACTIVE)throw error(409,"FUNDING_REQUIRED");
             // Blocking or closing must remain possible even when the customer is no longer eligible.
             if(input.state()==State.AWAITING_FUNDING||input.state()==State.ACTIVE)customers.requireEligible(bank,input.customerId());
@@ -109,7 +119,15 @@ public class AccountService {
     public void deliver(UUID id){if(jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM platform.funding_delivery WHERE request_id=?)",Boolean.class,id))throw error(409,"FUNDING_MANAGED");tx.executeWithoutResult(t->{
         var jobs=jdbc.query("SELECT * FROM platform.account_delivery WHERE request_id=? AND NOT completed FOR UPDATE",(r,n)->new Dispatch(id,JSON.readValue(r.getString("payload"),Definition.class),r.getString("maker_subject"),r.getString("reviewer_issuer"),r.getString("reviewer_subject"),r.getObject("correlation_id",UUID.class)),id);
         if(jobs.isEmpty())return;var job=jobs.getFirst();var bank=tenants.get(job.definition().bankId(),true);String failure=null;
-        if(bank.status()!=Status.ACTIVE)failure="ACCOUNT_BANK_NOT_ACTIVE";else try{if(!store.posted(bank,id)&&(job.definition().state()==State.ACTIVE||job.definition().state()==State.AWAITING_FUNDING))customers.requireEligible(bank,job.definition().customerId());store.deliver(bank,job);}catch(TenantException e){failure=e.code();}
+        try{
+            if(!store.posted(bank,id)){
+                if(bank.status()!=Status.ACTIVE)throw error(409,"ACCOUNT_BANK_NOT_ACTIVE");
+                AccessService.requireActiveParticipants(jdbc,job.reviewerIssuer(),job.makerSubject(),job.reviewerSubject());
+                if(job.definition().state()==State.CLOSED)closure.requireEligible(bank,store.read(bank,job.definition().id()));
+                if(job.definition().state()==State.ACTIVE||job.definition().state()==State.AWAITING_FUNDING)customers.requireEligible(bank,job.definition().customerId());
+            }
+            store.deliver(bank,job);
+        }catch(TenantException e){failure=e.code();}
         jdbc.update("UPDATE platform.account_delivery SET attempts=attempts+1,last_attempt_at=clock_timestamp(),failure_code=? WHERE request_id=?",failure,id);if(failure!=null)return;
         jdbc.update("UPDATE platform.account_delivery SET completed=true,completed_at=clock_timestamp() WHERE request_id=?",id);jdbc.update("UPDATE platform.account_registry SET delivery='APPLIED' WHERE id=? AND request_id=?",job.definition().id(),id);
         tenants.audit(new Actor(job.reviewerIssuer(),job.reviewerSubject(),true,job.correlationId()),bank.id(),"ACCOUNT_CHANGE_DELIVERED",bank.version(),bank.status(),bank.status(),"Delivered approved request "+id,null,null,Map.of("accountId",job.definition().id(),"requestId",id));
