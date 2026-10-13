@@ -1,0 +1,516 @@
+{
+  "date": "2026-10-13",
+  "baseline": "42932bfaaa66897e5d819b8cce5bcdb67f245cda",
+  "environment": "Fresh disposable local PostgreSQL 18.3, loopback ports 55439 (W02) and 55440 (W03 retry/full); fictional data only",
+  "identity": "TestIdentity signed JWTs; no live identity-provider or authenticator acceptance",
+  "acceptance": "Stopped at user request. W02 automated tests passed; W03 retry interrupted; full regression not started. Independent bank acceptance remains pending.",
+  "runsOverlap": true,
+  "runs": [
+    {
+      "name": "w02",
+      "tests": 78,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "logSha256": "17ed6fbb14bbd7dc27fedc47671dc8f67a552113dce77f7a8dfc943e8556a0c3",
+      "testsExecuted": [
+        {
+          "class": "com.cbs.access.DevelopmentMfaPolicyTest",
+          "method": "disabledByDefault",
+          "seconds": 0.195,
+          "result": "PASS"
+        },
+        {
+          "class": "com.cbs.access.DevelopmentMfaPolicyTest",
+          "method": "refusesRemoteIdentityExternalBindAndUnboundedDeadline",
+          "seconds": 0.023,
+          "result": "PASS"
+        },
+        {
+          "class": "com.cbs.access.DevelopmentMfaPolicyTest",
+          "method": "deadlineIsCheckedOnEveryRequestAndOnlyForTheNamedIdentity",
+          "seconds": 0.051,
+          "result": "PASS"
+        },
+        {
+          "class": "com.cbs.access.DevelopmentMfaPolicyTest",
+          "method": "expiredExceptionRejectsPasswordOnlyButStillAcceptsRealMfaEvidence",
+          "seconds": 2.63,
+          "result": "PASS"
+        },
+        {
+          "class": "com.cbs.accounting.ReportCsvTest",
+          "method": "csvQuotesAndNeutralizesFormulasWithoutChangingSignedMoney",
+          "seconds": 0.017,
+          "result": "PASS"
+        },
+        {
+          "class": "com.cbs.foundation.security.IdentityUrlPolicyTest",
+          "method": "localIdentityModeCannotExposeCbsOnAnExternalInterface",
+          "seconds": 0.031,
+          "result": "PASS"
+        },
+        {
+          "class": "com.cbs.foundation.security.IdentityUrlPolicyTest",
+          "method": "httpsIsTheDefaultAndDoesNotExpandLocalCsp",
+          "seconds": 0.005,
+          "result": "PASS"
+        },
+        {
+          "class": "com.cbs.foundation.security.IdentityUrlPolicyTest",
+          "method": "explicitLocalModeAllowsOnlyTheExactLoopbackOrigin",
+          "seconds": 0.006,
+          "result": "PASS"
+        },
+        {
+          "class": "com.cbs.foundation.security.ProductionGuardTest",
+          "method": "refusesMfaExceptionAndLocalIdentity",
+          "seconds": 0.107,
+          "result": "PASS"
+        },
+        {
+          "class": "com.cbs.foundation.security.ProductionGuardTest",
+          "method": "validatesEveryBankAndNeverLeaksSecrets",
+          "seconds": 0.021,
+          "result": "PASS"
+        },
+        {
+          "class": "com.cbs.foundation.security.ProductionGuardTest",
+          "method": "refusesRuntimeMigrationAuthority",
+          "seconds": 0.003,
+          "result": "PASS"
+        },
+        {
+          "class": "com.cbs.foundation.security.ProductionGuardTest",
+          "method": "acceptsExplicitSecureConfiguration",
+          "seconds": 0.003,
+          "result": "PASS"
+        },
+        {
+          "class": "com.cbs.foundation.security.ProductionGuardTest",
+          "method": "refusesUnsafeDatabaseAndBootstrap",
+          "seconds": 0.006,
+          "result": "PASS"
+        },
+        {
+          "class": "com.cbs.operations.RuntimeDatabaseGuardIntegrationTest",
+          "method": "rejectsOwnersAndCreateAuthorityButAcceptsRestrictedRuntime",
+          "seconds": 0.847,
+          "result": "PASS"
+        },
+        {
+          "class": "com.cbs.operations.RuntimeDatabaseGuardIntegrationTest",
+          "method": "runtimeVerifiesPreparedBankWithoutMigrationPrivileges",
+          "seconds": 2.652,
+          "result": "PASS"
+        },
+        {
+          "class": "com.cbs.tenancy.BankDatabaseConfigurationTest",
+          "method": "acceptsNeonTlsAndRequiredChannelBindingWithDefaultOrExplicitPort",
+          "seconds": 0.002,
+          "result": "PASS"
+        },
+        {
+          "class": "com.cbs.tenancy.BankDatabaseConfigurationTest",
+          "method": "rejectsCredentialsAndUnapprovedDriverOptionsInUrls",
+          "seconds": 0.0,
+          "result": "PASS"
+        },
+        {
+          "class": "com.cbs.tenancy.JwtValidationTest",
+          "method": "rejectsOtherIssuer",
+          "seconds": 0.341,
+          "result": "PASS"
+        },
+        {
+          "class": "com.cbs.tenancy.JwtValidationTest",
+          "method": "rejectsExpiredToken",
+          "seconds": 0.009,
+          "result": "PASS"
+        },
+        {
+          "class": "com.cbs.tenancy.JwtValidationTest",
+          "method": "rejectsOtherAudience",
+          "seconds": 0.002,
+          "result": "PASS"
+        },
+        {
+          "class": "com.cbs.tenancy.JwtValidationTest",
+          "method": "rejectsMissingRequiredClaims",
+          "seconds": 0.02,
+          "result": "PASS"
+        },
+        {
+          "class": "com.cbs.tenancy.JwtValidationTest",
+          "method": "rejectsUntrustedSignature",
+          "seconds": 0.14,
+          "result": "PASS"
+        },
+        {
+          "class": "com.cbs.tenancy.JwtValidationTest",
+          "method": "acceptsCorrectlySignedAndScopedIdentity",
+          "seconds": 0.005,
+          "result": "PASS"
+        },
+        {
+          "class": "com.cbs.tenancy.TenantAdministrationIntegrationTest",
+          "method": "lendingRolesBranchesLimitsAndRevocationsAreEnforcedEndToEnd",
+          "seconds": 10.702,
+          "result": "PASS"
+        },
+        {
+          "class": "com.cbs.tenancy.TenantAdministrationIntegrationTest",
+          "method": "existingBankUpgradePreservesOwnershipAndIsRetryable",
+          "seconds": 1.394,
+          "result": "PASS"
+        },
+        {
+          "class": "com.cbs.tenancy.TenantAdministrationIntegrationTest",
+          "method": "failedMigrationsCannotActivateTenantAndCanBeRetried",
+          "seconds": 0.916,
+          "result": "PASS"
+        },
+        {
+          "class": "com.cbs.tenancy.TenantAdministrationIntegrationTest",
+          "method": "chartEnforcesHierarchyUniquenessAndBankBoundaries",
+          "seconds": 0.162,
+          "result": "PASS"
+        },
+        {
+          "class": "com.cbs.tenancy.TenantAdministrationIntegrationTest",
+          "method": "journalFailureRollsBackAllLinesAndBalances",
+          "seconds": 2.003,
+          "result": "PASS"
+        },
+        {
+          "class": "com.cbs.tenancy.TenantAdministrationIntegrationTest",
+          "method": "provisioningRecoveryRequiresExpiredLeaseAndCurrentVersion",
+          "seconds": 0.744,
+          "result": "PASS"
+        },
+        {
+          "class": "com.cbs.tenancy.TenantAdministrationIntegrationTest",
+          "method": "reconciliationFindsTurnoverDriftEvenWhenNetBalanceMatches",
+          "seconds": 1.243,
+          "result": "PASS"
+        },
+        {
+          "class": "com.cbs.tenancy.TenantAdministrationIntegrationTest",
+          "method": "revokeAllRequiresFreshAuthenticationEvenWithANewlyIssuedToken",
+          "seconds": 0.047,
+          "result": "PASS"
+        },
+        {
+          "class": "com.cbs.tenancy.TenantAdministrationIntegrationTest",
+          "method": "anOldProvisioningWorkerCannotOverwriteANewerAttempt",
+          "seconds": 0.014,
+          "result": "PASS"
+        },
+        {
+          "class": "com.cbs.tenancy.TenantAdministrationIntegrationTest",
+          "method": "branchPermissionsAreScopedToBankBranchAndCurrentMembership",
+          "seconds": 0.159,
+          "result": "PASS"
+        },
+        {
+          "class": "com.cbs.tenancy.TenantAdministrationIntegrationTest",
+          "method": "ledgerValidationProtectsBankChartCurrencyAndPendingDependencies",
+          "seconds": 1.058,
+          "result": "PASS"
+        },
+        {
+          "class": "com.cbs.tenancy.TenantAdministrationIntegrationTest",
+          "method": "endingOwnSessionCannotRevokeAnotherUsersSession",
+          "seconds": 0.049,
+          "result": "PASS"
+        },
+        {
+          "class": "com.cbs.tenancy.TenantAdministrationIntegrationTest",
+          "method": "dayCloseBlocksPendingWorkAndRechecksAtApproval",
+          "seconds": 2.621,
+          "result": "PASS"
+        },
+        {
+          "class": "com.cbs.tenancy.TenantAdministrationIntegrationTest",
+          "method": "concurrentApprovalsApplyOnceAndReturnTheSameDecision",
+          "seconds": 0.022,
+          "result": "PASS"
+        },
+        {
+          "class": "com.cbs.tenancy.TenantAdministrationIntegrationTest",
+          "method": "journalApprovalPostingAndReversalAreAuditedAndIdempotent",
+          "seconds": 2.38,
+          "result": "PASS"
+        },
+        {
+          "class": "com.cbs.tenancy.TenantAdministrationIntegrationTest",
+          "method": "dayCloseRefusesBalanceDriftAndRetriesWithoutAdvancingEarly",
+          "seconds": 2.787,
+          "result": "PASS"
+        },
+        {
+          "class": "com.cbs.tenancy.TenantAdministrationIntegrationTest",
+          "method": "ledgerApprovalAndDeliveryStoreAccountsOnlyInTheirOwnBank",
+          "seconds": 1.49,
+          "result": "PASS"
+        },
+        {
+          "class": "com.cbs.tenancy.TenantAdministrationIntegrationTest",
+          "method": "legalEntitiesAndAuditChangesArePreserved",
+          "seconds": 0.116,
+          "result": "PASS"
+        },
+        {
+          "class": "com.cbs.tenancy.TenantAdministrationIntegrationTest",
+          "method": "journalBankCommitSurvivesLostAcknowledgementAndConcurrentRetries",
+          "seconds": 2.03,
+          "result": "PASS"
+        },
+        {
+          "class": "com.cbs.tenancy.TenantAdministrationIntegrationTest",
+          "method": "bankSettingsRequireApprovalAndUseExactCurrencyRounding",
+          "seconds": 0.11,
+          "result": "PASS"
+        },
+        {
+          "class": "com.cbs.tenancy.TenantAdministrationIntegrationTest",
+          "method": "bankLifecycleIsIsolatedAndSuspensionAndRevocationTakeEffect",
+          "seconds": 1.733,
+          "result": "PASS"
+        },
+        {
+          "class": "com.cbs.tenancy.TenantAdministrationIntegrationTest",
+          "method": "ledgerDeliverySurvivesControlRollbackAfterBankCommit",
+          "seconds": 0.577,
+          "result": "PASS"
+        },
+        {
+          "class": "com.cbs.tenancy.TenantAdministrationIntegrationTest",
+          "method": "staleSettingsApprovalCannotOverwriteBankChanges",
+          "seconds": 0.016,
+          "result": "PASS"
+        },
+        {
+          "class": "com.cbs.tenancy.TenantAdministrationIntegrationTest",
+          "method": "chartApiRejectsUnauthorizedInvalidAndInactiveBankChanges",
+          "seconds": 0.097,
+          "result": "PASS"
+        },
+        {
+          "class": "com.cbs.tenancy.TenantAdministrationIntegrationTest",
+          "method": "registrationIsAuditedAndIdempotentWithPayloadConflictProtection",
+          "seconds": 0.043,
+          "result": "PASS"
+        },
+        {
+          "class": "com.cbs.tenancy.TenantAdministrationIntegrationTest",
+          "method": "rejectingAndCancellingLeaveTheTargetUnchanged",
+          "seconds": 0.009,
+          "result": "PASS"
+        },
+        {
+          "class": "com.cbs.tenancy.TenantAdministrationIntegrationTest",
+          "method": "idleAndAbsoluteSessionLimitsCannotBeExtendedByRetries",
+          "seconds": 0.029,
+          "result": "PASS"
+        },
+        {
+          "class": "com.cbs.tenancy.TenantAdministrationIntegrationTest",
+          "method": "disabledMakerAndFailedBusinessRulesCannotApplyAnApproval",
+          "seconds": 0.013,
+          "result": "PASS"
+        },
+        {
+          "class": "com.cbs.tenancy.TenantAdministrationIntegrationTest",
+          "method": "reportsUsePostedBusinessDatesAndExactStatementBalances",
+          "seconds": 2.076,
+          "result": "PASS"
+        },
+        {
+          "class": "com.cbs.tenancy.TenantAdministrationIntegrationTest",
+          "method": "identityAuditIsAppendOnlyAndSelfDeactivationIsRejected",
+          "seconds": 0.005,
+          "result": "PASS"
+        },
+        {
+          "class": "com.cbs.tenancy.TenantAdministrationIntegrationTest",
+          "method": "administratorMfaAndStaffRegistrationAreRequired",
+          "seconds": 0.011,
+          "result": "PASS"
+        },
+        {
+          "class": "com.cbs.tenancy.TenantAdministrationIntegrationTest",
+          "method": "competingChartApprovalsCannotOverwriteEachOther",
+          "seconds": 0.023,
+          "result": "PASS"
+        },
+        {
+          "class": "com.cbs.tenancy.TenantAdministrationIntegrationTest",
+          "method": "chartAccountDecisionAndAuditRollBackTogether",
+          "seconds": 0.019,
+          "result": "PASS"
+        },
+        {
+          "class": "com.cbs.tenancy.TenantAdministrationIntegrationTest",
+          "method": "languagePreferencesAreOwnedByTheAuthenticatedUser",
+          "seconds": 0.024,
+          "result": "PASS"
+        },
+        {
+          "class": "com.cbs.tenancy.TenantAdministrationIntegrationTest",
+          "method": "ledgerApiChecksAuthorizationAndStaleApprovals",
+          "seconds": 0.119,
+          "result": "PASS"
+        },
+        {
+          "class": "com.cbs.tenancy.TenantAdministrationIntegrationTest",
+          "method": "simultaneousRetriesCreateExactlyOneTenantAndAuditRecord",
+          "seconds": 0.024,
+          "result": "PASS"
+        },
+        {
+          "class": "com.cbs.tenancy.TenantAdministrationIntegrationTest",
+          "method": "journalValidationEnforcesScopePrecisionBalanceDateAndAccess",
+          "seconds": 2.197,
+          "result": "PASS"
+        },
+        {
+          "class": "com.cbs.tenancy.TenantAdministrationIntegrationTest",
+          "method": "branchOperationsRequireScopedRolesMfaAndApprovedLimits",
+          "seconds": 4.89,
+          "result": "PASS"
+        },
+        {
+          "class": "com.cbs.tenancy.TenantAdministrationIntegrationTest",
+          "method": "auditFailureRollsBackAdministrativeChanges",
+          "seconds": 0.011,
+          "result": "PASS"
+        },
+        {
+          "class": "com.cbs.tenancy.TenantAdministrationIntegrationTest",
+          "method": "ledgerFailureRollsBackBankWriteAndCanBeRetried",
+          "seconds": 0.446,
+          "result": "PASS"
+        },
+        {
+          "class": "com.cbs.tenancy.TenantAdministrationIntegrationTest",
+          "method": "portalIsPublicButContainsNoIdentitySecrets",
+          "seconds": 0.057,
+          "result": "PASS"
+        },
+        {
+          "class": "com.cbs.tenancy.TenantAdministrationIntegrationTest",
+          "method": "chartChangesRequireAnotherAdministratorAndReplaySafely",
+          "seconds": 0.058,
+          "result": "PASS"
+        },
+        {
+          "class": "com.cbs.tenancy.TenantAdministrationIntegrationTest",
+          "method": "duplicateCodesAndBindingsRollBackTheWholeRegistration",
+          "seconds": 0.0,
+          "result": "PASS"
+        },
+        {
+          "class": "com.cbs.tenancy.TenantAdministrationIntegrationTest",
+          "method": "authenticatedAdministrationAndRequestValidationAreEnforced",
+          "seconds": 0.049,
+          "result": "PASS"
+        },
+        {
+          "class": "com.cbs.tenancy.TenantAdministrationIntegrationTest",
+          "method": "bankSettingsAreIsolatedAndMembershipCannotBeForged",
+          "seconds": 0.084,
+          "result": "PASS"
+        },
+        {
+          "class": "com.cbs.tenancy.TenantAdministrationIntegrationTest",
+          "method": "calendarsRespectHolidaysWeekendsAndForwardOnlyBusinessDates",
+          "seconds": 0.058,
+          "result": "PASS"
+        },
+        {
+          "class": "com.cbs.tenancy.TenantAdministrationIntegrationTest",
+          "method": "dayCloseRequiresApprovalFreezesPostingsAndRecoversAfterBankCommit",
+          "seconds": 3.06,
+          "result": "PASS"
+        },
+        {
+          "class": "com.cbs.tenancy.TenantAdministrationIntegrationTest",
+          "method": "manualJournalDeliveryRechecksActiveParticipantsBeforeFirstPosting",
+          "seconds": 1.367,
+          "result": "PASS"
+        },
+        {
+          "class": "com.cbs.tenancy.TenantAdministrationIntegrationTest",
+          "method": "settingsRejectInvalidReferenceDataAndDirectLanguageBypass",
+          "seconds": 0.024,
+          "result": "PASS"
+        },
+        {
+          "class": "com.cbs.tenancy.TenantAdministrationIntegrationTest",
+          "method": "staffLifecycleBlocksExistingTokensAndBootstrapCannotReenableThem",
+          "seconds": 0.087,
+          "result": "PASS"
+        },
+        {
+          "class": "com.cbs.tenancy.TenantAdministrationIntegrationTest",
+          "method": "concurrentEditsRejectStaleVersionWithoutExtraAudit",
+          "seconds": 0.016,
+          "result": "PASS"
+        },
+        {
+          "class": "com.cbs.tenancy.TenantAdministrationIntegrationTest",
+          "method": "aStaleApprovalNeverOverwritesALaterChange",
+          "seconds": 0.016,
+          "result": "PASS"
+        },
+        {
+          "class": "com.cbs.tenancy.TenantAdministrationIntegrationTest",
+          "method": "approvalSubmissionIsRetrySafeAndCannotBeSelfApprovedOrReadAcrossIssuers",
+          "seconds": 0.054,
+          "result": "PASS"
+        },
+        {
+          "class": "com.cbs.tenancy.TenantAdministrationIntegrationTest",
+          "method": "controlPlaneCannotBeProvisionedAsABank",
+          "seconds": 0.036,
+          "result": "PASS"
+        },
+        {
+          "class": "com.cbs.tenancy.TenantAdministrationIntegrationTest",
+          "method": "reportApiEnforcesAccessScopeFiltersAndCsvResponse",
+          "seconds": 0.803,
+          "result": "PASS"
+        }
+      ]
+    }
+  ],
+  "interruptedAttempt": {
+    "phase": "w03",
+    "reportedResults": 27,
+    "assertionFailures": 0,
+    "errors": 6,
+    "reason": "Test PostgreSQL process exited; shared-memory reservation error 487 preceded exit; connection resets/refusals and fixture cleanup errors followed. Root cause not conclusively established.",
+    "logSha256": "c02c754454aea9b99c61d33b054036345620a225611a6c2f605ac2473fba78fb"
+  },
+  "ui": {
+    "tests": 98,
+    "failures": 0,
+    "skipped": 0,
+    "logSha256": "03d1fa7f335a5f07435348a71e886fb3f73f7ba6086b3a4ad489d4cb1f602029"
+  },
+  "operations": {
+    "tests": 21,
+    "failures": 0,
+    "logSha256": "16089d3565c997b7d9a74556b1a946330bd8284c7e8b93ff629cfdc3f7a94cae"
+  },
+  "w03Retry": {
+    "status": "INTERRUPTED AT USER REQUEST",
+    "logSha256": "3f6654fc1d8a07b61b7196f8e990d854d4038266515fcfb316b1dce443f3fbc8",
+    "passClaimed": false
+  },
+  "fullRegression": {
+    "status": "NOT RUN"
+  },
+  "resume": "Start a fresh isolated PostgreSQL fixture, rerun all W03 cases, then full backend verify/package. Preserve previous attempts. Continue independent bank acceptance separately."
+}
