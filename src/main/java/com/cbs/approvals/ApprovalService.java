@@ -121,6 +121,11 @@ public class ApprovalService {
     @org.springframework.beans.factory.annotation.Autowired void periods(com.cbs.accounting.PeriodCloseService periods){this.periods=periods;}
     private com.cbs.reporting.ReportDefinitionService reportDefinitions;
     @org.springframework.beans.factory.annotation.Autowired void reportDefinitions(com.cbs.reporting.ReportDefinitionService reportDefinitions){this.reportDefinitions=reportDefinitions;}
+    private com.cbs.compliance.ScreeningService screening;private com.cbs.compliance.MonitoringService monitoring;private com.cbs.compliance.ComplianceDecisions complianceDecisions;
+    @org.springframework.beans.factory.annotation.Autowired void complianceAutomation(com.cbs.compliance.ScreeningService screening,com.cbs.compliance.MonitoringService monitoring,com.cbs.compliance.ComplianceDecisions decisions){this.screening=screening;this.monitoring=monitoring;this.complianceDecisions=decisions;}
+    public Request screeningList(Actor actor,UUID key,UUID bankId,com.cbs.compliance.AutomationModels.Activation input){return submit(actor,key,bankId,Action.SCREENING_LIST,input.expectedVersion(),input.reason(),input);}
+    public Request monitoringPolicy(Actor actor,UUID key,UUID bankId,com.cbs.compliance.AutomationModels.Policy input){return submit(actor,key,bankId,Action.MONITORING_POLICY,input.expectedVersion(),input.reason(),input);}
+    public Request complianceDismiss(Actor actor,UUID key,UUID bankId,com.cbs.compliance.AutomationModels.Dismiss input){return submit(actor,key,bankId,Action.COMPLIANCE_ALERT_DISMISS,input.expectedVersion(),input.reason(),input);}
     public Request reportDefinition(Actor actor,UUID key,UUID bankId,com.cbs.reporting.ReportModels.Definition input){return submit(actor,key,bankId,Action.REPORT_DEFINITION,input.expectedVersion(),input.reason(),input);}
     public Request periodClosePolicy(Actor actor,UUID key,UUID bankId,com.cbs.accounting.PeriodCloseModels.Policy input){return submit(actor,key,bankId,Action.PERIOD_CLOSE_POLICY,input.expectedVersion(),input.reason(),input);}
     public Request periodClose(Actor actor,UUID key,UUID bankId,com.cbs.accounting.PeriodCloseModels.Run input){return submit(actor,key,bankId,Action.PERIOD_CLOSE,input.expectedVersion(),input.reason(),input);}
@@ -245,6 +250,15 @@ public class ApprovalService {
             } else if(action==Action.BRANCH_LIMIT) {
                 var bank=tenantRepository.get(id,true);var change=(com.cbs.access.BranchOperations.Limit)input;branchOperations.validate(bank,change);
                 before=branchOperations.before(id,change);after=branchOperations.values(change);label="Branch transaction limit";bankId=id;
+            } else if(action==Action.SCREENING_LIST) {
+                var bank=tenantRepository.get(id,true);var change=(com.cbs.compliance.AutomationModels.Activation)input;screening.validate(bank,change);
+                before=screening.before(bank,change);after=screening.values(bank,change);label="Screening list "+after.get("name");bankId=id;
+            } else if(action==Action.MONITORING_POLICY) {
+                var bank=tenantRepository.get(id,true);var change=(com.cbs.compliance.AutomationModels.Policy)input;monitoring.validate(bank,change);
+                before=monitoring.before(bank,change.currency());after=monitoring.values(change);label="Transaction monitoring "+change.currency();bankId=id;
+            } else if(action==Action.COMPLIANCE_ALERT_DISMISS) {
+                var bank=tenantRepository.get(id,true);var change=(com.cbs.compliance.AutomationModels.Dismiss)input;complianceDecisions.validate(bank,change);
+                before=complianceDecisions.before(bank,change);after=complianceDecisions.values(change);label=(change.type()==com.cbs.compliance.AutomationModels.ItemType.SCREENING_HIT?"Dismiss screening match":"Dismiss monitoring alert");bankId=id;
             } else if(action==Action.REPORT_DEFINITION) {
                 var bank=tenantRepository.get(id,true);var change=(com.cbs.reporting.ReportModels.Definition)input;reportDefinitions.validate(bank,change);
                 before=reportDefinitions.before(bank,change.code());after=reportDefinitions.values(bank,change);label="Report definition "+change.code();bankId=id;
@@ -442,6 +456,9 @@ public class ApprovalService {
                             String payload=jdbc.queryForObject("SELECT payload::text FROM platform.approval_request WHERE id=?",String.class,id);
                             branchOperations.apply(actor,request.targetId(),JSON.readValue(payload,com.cbs.access.BranchOperations.Limit.class),auditReason);
                         }
+                        case SCREENING_LIST -> screening.apply(actor,request.targetId(),JSON.readValue(jdbc.queryForObject("SELECT payload::text FROM platform.approval_request WHERE id=?",String.class,id),com.cbs.compliance.AutomationModels.Activation.class),id);
+                        case MONITORING_POLICY -> monitoring.apply(actor,request.targetId(),JSON.readValue(jdbc.queryForObject("SELECT payload::text FROM platform.approval_request WHERE id=?",String.class,id),com.cbs.compliance.AutomationModels.Policy.class),id);
+                        case COMPLIANCE_ALERT_DISMISS -> complianceDecisions.apply(actor,request.targetId(),JSON.readValue(jdbc.queryForObject("SELECT payload::text FROM platform.approval_request WHERE id=?",String.class,id),com.cbs.compliance.AutomationModels.Dismiss.class),request.makerSubject(),id);
                         case REPORT_DEFINITION -> reportDefinitions.apply(actor,request.targetId(),JSON.readValue(jdbc.queryForObject("SELECT payload::text FROM platform.approval_request WHERE id=?",String.class,id),com.cbs.reporting.ReportModels.Definition.class),id);
                         case PERIOD_CLOSE_POLICY -> {
                             String payload=jdbc.queryForObject("SELECT payload::text FROM platform.approval_request WHERE id=?",String.class,id);

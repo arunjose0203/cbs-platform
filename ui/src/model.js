@@ -79,7 +79,15 @@ export function errorMessage(code) {
     INVALID_REQUEST:'Check the required fields and try again.',
     INVALID_LEGAL_ENTITY:'Check the country, currency and business timezone.',
     ACCESS_DENIED:'Your role does not permit this action.',
-    SELF_DEACTIVATION_FORBIDDEN:'Another administrator must deactivate your identity.'})[code]
+    SELF_DEACTIVATION_FORBIDDEN:'Another administrator must deactivate your identity.',
+    SCREENING_LIST_INVALID:'The screening list file is invalid. Check the header and every row.',
+    SCREENING_LIST_TOO_LARGE:'A screening list version may hold at most 100,000 entries.',
+    SCREENING_LIST_DUPLICATE:'This file was already uploaded with a different category, source or threshold.',
+    SCREENING_LIST_CHANGED:'The list checksum no longer matches the uploaded draft. Reload and try again.',
+    SCREENING_LIST_NOT_DRAFT:'Only a draft list version can be activated.',
+    COMPLIANCE_ALERT_STALE:'This alert was already decided or changed. Reload it.',
+    MONITORING_POLICY_INVALID:'Fill in every field of a monitoring rule, or leave the whole rule empty. Amounts must be positive.',
+    MONITORING_POLICY_EMPTY:'Turn on at least one monitoring rule.'})[code]
     || `The request could not be completed${code ? ` (${code})` : ''}.`;
 }
 export function signInErrorMessage(error) {

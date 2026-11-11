@@ -26,16 +26,21 @@ public class ComplianceService {
         this.jdbc=jdbc;this.tenants=tenants;this.tx=new TransactionTemplate(manager);
     }
     private static LocalDate today(){return LocalDate.now(ZoneOffset.UTC);}
+    private static final String OPEN_HIT="EXISTS(SELECT 1 FROM platform.screening_hit h WHERE h.tenant_id=? AND h.status='OPEN' AND (h.customer_id=? OR h.customer_id IN (SELECT p.person_id FROM platform.customer_party p WHERE p.tenant_id=? AND p.organization_id=?)))";
     /** Called under the tenant lock, at submission, approval and before first delivery. */
     /** Bulk form of requireClear: customers (by reviewed version) that are currently restricted. */
     public static Set<UUID> restricted(JdbcTemplate jdbc,UUID bank,Map<UUID,Long> versions) {
         if(versions.isEmpty())return Set.of();
         var ids=new ArrayList<UUID>(versions.keySet());var numbers=ids.stream().map(versions::get).toArray(Long[]::new);
-        return new HashSet<>(jdbc.query(c->{var s=c.prepareStatement("SELECT DISTINCT c.customer_id FROM platform.compliance_case c JOIN unnest(?::uuid[],?::bigint[]) AS v(id,version) ON v.id=c.customer_id WHERE c.tenant_id=? AND (c.status<>'CLEARED' OR c.reviewed_customer_version<>v.version OR c.review_due<=?)");
+        var out=new HashSet<>(jdbc.query(c->{var s=c.prepareStatement("SELECT DISTINCT c.customer_id FROM platform.compliance_case c JOIN unnest(?::uuid[],?::bigint[]) AS v(id,version) ON v.id=c.customer_id WHERE c.tenant_id=? AND (c.status<>'CLEARED' OR c.reviewed_customer_version<>v.version OR c.review_due<=?)");
             s.setArray(1,c.createArrayOf("uuid",ids.toArray()));s.setArray(2,c.createArrayOf("bigint",numbers));s.setObject(3,bank);s.setObject(4,today());return s;},(r,n)->r.getObject(1,UUID.class)));
+        // An open screening match restricts the customer, and any organization the customer acts for.
+        out.addAll(jdbc.query(c->{var s=c.prepareStatement("SELECT v.id FROM unnest(?::uuid[]) AS v(id) WHERE EXISTS(SELECT 1 FROM platform.screening_hit h WHERE h.tenant_id=? AND h.status='OPEN' AND (h.customer_id=v.id OR h.customer_id IN (SELECT p.person_id FROM platform.customer_party p WHERE p.tenant_id=? AND p.organization_id=v.id)))");
+            s.setArray(1,c.createArrayOf("uuid",ids.toArray()));s.setObject(2,bank);s.setObject(3,bank);return s;},(r,n)->r.getObject(1,UUID.class)));
+        return out;
     }
     public static void requireClear(JdbcTemplate jdbc,UUID bank,UUID customer,long customerVersion) {
-        if(jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM platform.compliance_case WHERE tenant_id=? AND customer_id=? AND (status<>'CLEARED' OR reviewed_customer_version<>? OR review_due<=?))",Boolean.class,bank,customer,customerVersion,today()))
+        if(jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM platform.compliance_case WHERE tenant_id=? AND customer_id=? AND (status<>'CLEARED' OR reviewed_customer_version<>? OR review_due<=?)) OR "+OPEN_HIT,Boolean.class,bank,customer,customerVersion,today(),bank,customer,bank,customer))
             throw error(409,"CUSTOMER_COMPLIANCE_RESTRICTED");
     }
     private Map<String,Object> row(UUID bank,UUID id) {
@@ -95,6 +100,13 @@ public class ComplianceService {
             event(actor,bankId,id,"OPENED",null,Map.of("evidenceReference",input.evidenceReference(),"reason",input.reason()));
             command(actor,bankId,id,key,input);changed(actor,bank,"COMPLIANCE_CASE_OPENED",id,input.reason());return detailValues(actor,tenants.get(bankId,false),id);
         });
+    }
+    /** Opens a case from an escalated screening hit or monitoring alert, inside the caller's transaction. */
+    public UUID openFromAlert(Actor actor,Tenant bank,UUID customerId,Category category,String evidenceReference,String reason,Map<String,Object> source){
+        UUID id=UUID.randomUUID();
+        jdbc.update("INSERT INTO platform.compliance_case(id,tenant_id,customer_id,category,issuer,opened_by) VALUES (?,?,?,?,?,?)",id,bank.id(),customerId,category.name(),actor.issuer(),actor.subject());
+        var evidence=new LinkedHashMap<String,Object>(source);evidence.put("evidenceReference",evidenceReference);evidence.put("reason",reason);
+        event(actor,bank.id(),id,"OPENED",null,evidence);changed(actor,bank,"COMPLIANCE_CASE_OPENED",id,reason);return id;
     }
     public Map<String,Object> note(Actor actor,UUID bankId,UUID id,UUID key,Note input) {
         AccessService.admin(actor);return tx.execute(t->{

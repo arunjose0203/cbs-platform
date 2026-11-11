@@ -10,6 +10,7 @@ import {createComplianceUi} from './compliance-ui.js';
 import {createServicingUi} from './servicing-ui.js';
 import {createNotificationUi} from './notification-ui.js';
 import {createReportingUi} from './reporting-ui.js';
+import {createScreeningUi} from './screening-ui.js';
 import {createBranchUi} from './branch-ui.js';
 import {UserManager,WebStorageStateStore,InMemoryWebStorage} from 'oidc-client-ts';
 import {escapeHtml as e,bankActions,errorMessage,signInErrorMessage} from './model.js';
@@ -29,7 +30,7 @@ let manager, user, me, configuration, view='banks', selectedBank, submitForm, la
 let rows=[], offset=0, busy=false, noticeTimer, renderVersion=0;
 let approvalScope='INBOX', approvalAction='', approvalBank='', selectedApproval;
 const pageSize=25;
-const labels={lendingaccess:"Lending permissions",lendingapprovals:"Lending approval inbox",collections:"Loan arrears & collections",credit:'Loan applications & credit review',term:'Term deposits',loan:'Lending',fx:'FX & exchange rates',paymentcases:'Payment exceptions',statements:'M-Pesa statements',payments:'Payments & reconciliation',compliance:'Compliance cases',servicing:'Deposit servicing',notifications:'Customer alerts',reporting:'Management reports',branchwork:'Branch workspace',banks:'Bank directory',staff:'Staff & access',approvals:'Approval Inbox',settings:'Bank settings',chart:'Chart of Accounts',ledgers:'Ledger Accounts',journals:'Journals & balances',reports:'Accounting reports',dayclose:'Business Day Close',products:'Product Factory',accounts:'Deposit accounts',customers:'Customers',sessions:'My sessions',audit:'Audit trail'};
+const labels={lendingaccess:"Lending permissions",lendingapprovals:"Lending approval inbox",collections:"Loan arrears & collections",credit:'Loan applications & credit review',term:'Term deposits',loan:'Lending',fx:'FX & exchange rates',paymentcases:'Payment exceptions',statements:'M-Pesa statements',payments:'Payments & reconciliation',compliance:'Compliance cases',servicing:'Deposit servicing',notifications:'Customer alerts',reporting:'Management reports',screening:'Screening & monitoring',branchwork:'Branch workspace',banks:'Bank directory',staff:'Staff & access',approvals:'Approval Inbox',settings:'Bank settings',chart:'Chart of Accounts',ledgers:'Ledger Accounts',journals:'Journals & balances',reports:'Accounting reports',dayclose:'Business Day Close',products:'Product Factory',accounts:'Deposit accounts',customers:'Customers',sessions:'My sessions',audit:'Audit trail'};
 const lendingAccessUi=createLendingAccessUi({api,form,field,refresh:render,subject:()=>me?.staff.subject});
 const lendingApi=(path,options)=>{if(path==='/admin/tenants?limit=100')return api('/banks/lending-operations/banks',options);return api(path.replace(/^\/admin\/tenants\/([^/?]+)/,'/banks/$1/lending-operations'),options);};
 const statementImportUi=createStatementImportUi({api,form,field,refresh:render});
@@ -41,6 +42,7 @@ const fxUi=createFxUi({api,form,field,refresh:render});
 const paymentCasesUi=createPaymentCasesUi({api,form,field,refresh:render});
 const paymentsUi=createPaymentsUi({api,form,field,refresh:render});
 const complianceUi=createComplianceUi({api,form,field,refresh:render});
+const screeningUi=createScreeningUi({api,form,field,refresh:render});
 const servicingUi=createServicingUi({api,form,field,refresh:render});
 const notificationUi=createNotificationUi({api,form,field,refresh:render});
 const reportingUi=createReportingUi({api,form,field,refresh:render,download:(blob,name)=>{const url=URL.createObjectURL(blob);const link=document.createElement('a');link.href=url;link.download=name;link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}});
@@ -72,7 +74,8 @@ async function api(path,{method='GET',body,headers={},responseType='json'}={}){
     'X-Correlation-ID':crypto.randomUUID(),...(body?{'Content-Type':'application/json'}:{}),...headers},body:body?JSON.stringify(body):undefined});
   if(!response.ok){const problem=await response.json().catch(()=>({}));
     if(response.status===401||['STAFF_DISABLED','MFA_REQUIRED','LOCAL_MFA_EXCEPTION_EXPIRED'].includes(problem.code)){clearSession();signedOut();}
-    throw Object.assign(new Error(errorMessage(problem.code)),{code:problem.code,cbsProblem:true});}
+    // Screening list validation names the CSV line, which the operator needs to fix the file.
+    throw Object.assign(new Error(problem.code==='SCREENING_LIST_INVALID'&&problem.detail?problem.detail:errorMessage(problem.code)),{code:problem.code,cbsProblem:true});}
   return response.status===204?null:responseType==='text'?response.text():responseType==='blob'?response.blob():response.json();
 }
 function heading(title,description,action=''){return `<div class="heading"><div><p class="eyebrow">Administration workspace</p><h1>${e(title)}</h1><p class="intro">${e(description)}</p></div>${action}</div>`;}
@@ -98,7 +101,7 @@ async function render(){
   document.querySelector('#breadcrumb').textContent=t(labels[view]);
   document.querySelectorAll('[data-view]').forEach(b=>{b.classList.toggle('active',b.dataset.view===view);b.setAttribute('aria-current',b.dataset.view===view?'page':'false');});
   if(!me){signedOut();return;}
-  if(!me.platformAdmin&&['lendingaccess','term','fx','banks','staff','audit','approvals','settings','chart','ledgers','journals','reports','dayclose','products','customers','accounts','servicing','notifications','reporting','compliance'].includes(view)){content.innerHTML=heading(labels[view],'Platform administrator access is required for this section.')+`<div class="card empty"><h3>You are signed in as ${e(me.staff.displayName)}</h3><p>Your current identity can manage its own sessions.</p>${button('View my sessions','my-sessions')}</div>`;return;}
+  if(!me.platformAdmin&&['lendingaccess','term','fx','banks','staff','audit','approvals','settings','chart','ledgers','journals','reports','dayclose','products','customers','accounts','servicing','notifications','reporting','compliance','screening'].includes(view)){content.innerHTML=heading(labels[view],'Platform administrator access is required for this section.')+`<div class="card empty"><h3>You are signed in as ${e(me.staff.displayName)}</h3><p>Your current identity can manage its own sessions.</p>${button('View my sessions','my-sessions')}</div>`;return;}
   content.innerHTML='<div class="loading">Loading workspace…</div>';
   try{
     if(view==='lendingaccess'||view==='lendingapprovals'){await lendingAccessUi.render(content,()=>revision===renderVersion,view==='lendingaccess'?'grants':'approvals');return;}
@@ -111,6 +114,7 @@ async function render(){
     if(view==='statements'){await statementImportUi.render(content,()=>revision===renderVersion);return;}
     if(view==='payments'){await paymentsUi.render(content,()=>revision===renderVersion);return;}
     if(view==='compliance'){await complianceUi.render(content,()=>revision===renderVersion);return;}
+    if(view==='screening'){await screeningUi.render(content,()=>revision===renderVersion);return;}
     if(view==='servicing'){await servicingUi.render(content,()=>revision===renderVersion);return;}
     if(view==='notifications'){await notificationUi.render(content,()=>revision===renderVersion);return;}
     if(view==='reporting'){await reportingUi.render(content,()=>revision===renderVersion);return;}
@@ -208,6 +212,7 @@ async function action(name,id){
   if(name.startsWith('payment-case-')){await paymentCasesUi.action(name.slice(13),id);return;}
   if(name.startsWith('payments-')){await paymentsUi.action(name.slice(9),id);return;}
   if(name.startsWith('compliance-')){await complianceUi.action(name.slice(11),id);return;}
+  if(name.startsWith('screening-')){await screeningUi.action(name.slice(10),id);return;}
   if(name.startsWith('servicing-')){await servicingUi.action(name.slice(10),id);return;}
   if(name.startsWith('notification-')){await notificationUi.action(name.slice(13),id);return;}
   if(name.startsWith('reporting-')){await reportingUi.action(name.slice(10),id);return;}

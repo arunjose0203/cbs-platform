@@ -4,6 +4,16 @@
 
 Use the [Functional Gap & Acceptance Matrix](functional-gap-acceptance-matrix-2026-10-09.md) for the current 34-area functional assessment, 34 proposed acceptance cases, source/test evidence, confirmed limits and prioritized completion work. It reconciles older historical pending lists below. No module has independent bank functional sign-off recorded; existing automated test results do not replace that acceptance.
 
+## Screening and transaction monitoring — 11 November 2026
+
+[Screening and transaction monitoring](screening-and-transaction-monitoring.md) adds approved sanctions/PEP/internal screening lists. Every customer is screened when their approved profile is applied, and again when a new list version is activated (in resumable chunks). Name matching tolerates accents, word order and small misspellings, and uses birth dates to rule out namesakes. An open possible match restricts the customer, and any organization they act for, until it is escalated to a case or its dismissal is approved.
+
+Post-event transaction monitoring adds four approved rules per currency: large cash, structuring, velocity and unusual amount. They run on teller cash, funding, transfers, withdrawals and M-Pesa payouts. Alerts never block the customer, so the customer is not tipped off; escalation opens a restricting case.
+
+Lists, entries and monitoring history are immutable. Control migration V45.
+
+Verification: full backend `verify` **188 passed**, 1 opt-in volume test skipped, zero failures/errors; UI **112 passed**; operations **29 passed**; restore drill PASS with V45 through the packaged launcher. Bank acceptance remains pending.
+
 ## Production-readiness round — 11 November 2026
 
 [Production readiness](production-readiness.md#production-readiness-round--11-november-2026) adds an automated access review of every route (262 method/path pairs), per-client rate limiting with a stricter budget for failed authentication, stronger browser headers, and dependency scanning (npm audit, OSV-Scanner and Dependabot). Hot-path indexes cut daily-limit and per-account lookups from 24–82 ms to under 1 ms on 1M synthetic operations (control V44, bank V26). Also new: a staging load probe, a one-command staging bring-up, CI image and Compose checks, and UTC-pinned tests. The restore drill was re-run and passed. An end-to-end check through Caddy showed that forged forwarding headers do not get around the limits.

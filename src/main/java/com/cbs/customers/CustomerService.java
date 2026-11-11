@@ -127,6 +127,8 @@ public class CustomerService {
     private Map<String,Object> values(Profile p,String duplicateReview){
         Map<String,Object> m=new LinkedHashMap<>();m.put("fullName",p.fullName().trim());m.put("birthDate",p.birthDate().toString());m.put("nationality",p.nationality());m.put("residenceCountry",p.residenceCountry());m.put("address",p.address().trim());m.put("phone",p.phone());m.put("email",p.email());m.put("documentType",p.documentType().name());m.put("documentCountry",p.documentCountry());String number=p.documentNumber().replaceAll("[ -]","");m.put("documentNumber","••••"+number.substring(Math.max(0,number.length()-2)));m.put("documentExpiry",p.documentExpiry()==null?"":p.documentExpiry().toString());m.put("documentReference",p.documentReference());m.put("state",p.state().name());m.put("reviewReference",p.reviewReference());m.put("duplicateReview",duplicateReview);return m;
     }
+    private com.cbs.compliance.ScreeningService screening;
+    @org.springframework.beans.factory.annotation.Autowired(required=false) void screening(com.cbs.compliance.ScreeningService screening){this.screening=screening;}
     public void enqueue(Actor reviewer,UUID bankId,Change input,UUID requestId,String maker){
         AccessService.admin(reviewer);var bank=tenants.get(bankId,true);validate(bank,input);UUID id=input.customerId()==null?UUID.randomUUID():input.customerId();
         var old=input.customerId()==null?null:current(bankId,id).definition();String number=old==null?"C"+id.toString().replace("-","").toUpperCase(Locale.ROOT):old.customerNumber();
@@ -134,6 +136,8 @@ public class CustomerService {
         if(old==null)jdbc.update("INSERT INTO platform.customer_registry(id,tenant_id,customer_number,document_key,name_key,birth_date,version,request_id,delivery,customer_type) VALUES (?,?,?,?,?,?,?,?,'PENDING',?)",id,bankId,number,documentKey(p),nameKey(p.fullName()),p.birthDate(),version,requestId,p.kind().name());
         else jdbc.update("UPDATE platform.customer_registry SET document_key=?,name_key=?,birth_date=?,version=?,request_id=?,delivery='PENDING' WHERE tenant_id=? AND id=?",documentKey(p),nameKey(p.fullName()),p.birthDate(),version,requestId,bankId,id);
         jdbc.update("INSERT INTO platform.customer_delivery(request_id,tenant_id,customer_id,payload,maker_subject,reviewer_issuer,reviewer_subject,correlation_id) VALUES (?,?,?,?::jsonb,?,?,?,?)",requestId,bankId,id,JSON.writeValueAsString(d),maker,reviewer.issuer(),reviewer.subject(),reviewer.correlationId());
+        // Every approved profile version is screened against the bank's active lists before it is used.
+        if(screening!=null)screening.screenCustomer(bankId,id,version,p.fullName(),p.birthDate(),p.kind()==CustomerModels.CustomerType.INDIVIDUAL);
         tenants.change(bank,bank.status(),bank.displayName(),bank.defaultLanguage());tenants.audit(reviewer,bankId,"CUSTOMER_CHANGE_APPROVED",bank.version()+1,bank.status(),bank.status(),"Approved request "+requestId,null,null,Map.of("customerId",id,"requestId",requestId,"delivery","PENDING"));
     }
     public List<UUID> pending(){return jdbc.query("SELECT request_id FROM platform.customer_delivery WHERE NOT completed ORDER BY last_attempt_at NULLS FIRST,created_at LIMIT 20",(r,n)->r.getObject(1,UUID.class));}

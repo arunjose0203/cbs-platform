@@ -52,6 +52,8 @@ class TenantAdministrationIntegrationTest {
     @Autowired com.cbs.payments.PaymentService payments;
     @org.springframework.test.context.bean.override.mockito.MockitoBean com.cbs.payments.MpesaGateway mpesa;
     @Autowired com.cbs.compliance.ComplianceService compliance;
+    @Autowired com.cbs.compliance.ScreeningService screening;
+    @Autowired com.cbs.compliance.MonitoringService monitoring;
     @Autowired com.cbs.approvals.ApprovalService approvals;
     @Autowired com.cbs.notifications.NotificationService notifications;
     @Autowired com.cbs.mandates.MandateService mandates;
@@ -92,6 +94,141 @@ class TenantAdministrationIntegrationTest {
     @AfterAll void closeFixtures() throws SQLException {
         ((HikariDataSource) dataSource).close();
         TestDatabases.close();
+    }
+
+    private static final String SANCTIONS_CSV = "entry_ref,entity_type,name,aliases,birth_date,country,program\n"
+            + "UN-1,INDIVIDUAL,Viktor Ivanovich Petrov,\"V. Petrov; Victor Petrov\",1970-03-01,RU,Fictional asset freeze\n"
+            + "UN-2,ENTITY,\"Blue Ocean Trading Co., Ltd\",,,PA,Fictional\n";
+
+    private Map<String,Object> uploadList(UUID bank,String name,String csv,int expected) throws Exception {
+        var body=json.writeValueAsString(Map.of("name",name,"category","SANCTIONS","source","Fictional consolidated list","threshold","0.88","csv",csv));
+        var out=mvc.perform(admin(post("/api/v1/admin/tenants/"+bank+"/compliance/screening/lists")).contentType("application/json").content(body))
+                .andExpect(status().is(expected)).andReturn().getResponse().getContentAsString();
+        return json.readValue(out,Map.class);
+    }
+    private long customerVersion(UUID customer){return jdbc.queryForObject("SELECT version FROM platform.customer_registry WHERE id=?",Long.class,customer);}
+    private List<Map<String,Object>> hitsFor(UUID customer){return jdbc.queryForList("SELECT * FROM platform.screening_hit WHERE customer_id=? ORDER BY created_at",customer);}
+    private void activate(UUID bank,Map<String,Object> list) throws Exception {
+        var r=approvals.screeningList(ADMIN,UUID.randomUUID(),bank,new com.cbs.compliance.AutomationModels.Activation(service.get(ADMIN,bank).version(),UUID.fromString((String)list.get("id")),(String)list.get("sha256"),"Adopt fictional list version"));
+        assertCode(()->approvals.decide(ADMIN,r.id(),com.cbs.approvals.ApprovalModels.Decision.APPROVE,"Own"),"SELF_APPROVAL_FORBIDDEN");
+        approveHttp(r.id());
+    }
+
+    @Test void screeningListsRestrictMatchesUntilDecidedAndMonitoringRaisesAlertsWithoutTippingOff() throws Exception {
+        var f=fundingFixture("compliance-screening");var bank=f.f().bank();UUID b=bank.id();String cur=f.f().product().currency();
+        // Drafts are validated line by line and are inert until approved.
+        var bad=uploadList(b,"UN_SANCTIONS","entry_ref,entity_type,name,aliases,birth_date,country,program\nX-1,PERSON,Someone,,,,\n",422);
+        assertThat(bad.toString()).contains("SCREENING_LIST_INVALID").contains("Line 2");
+        var draft=uploadList(b,"UN_SANCTIONS",SANCTIONS_CSV,201);
+        assertThat(draft.get("status")).isEqualTo("DRAFT");assertThat(draft.get("entry_count")).isEqualTo(2);
+        assertThat(uploadList(b,"UN_SANCTIONS",SANCTIONS_CSV,201).get("id")).isEqualTo(draft.get("id"));
+        UUID early=onboard(bank,person("Victor Petrov","SCRN001",java.time.LocalDate.of(1970,5,5)));
+        assertThat(hitsFor(early)).isEmpty();
+        // A tampered checksum cannot be activated.
+        assertCode(()->approvals.screeningList(ADMIN,UUID.randomUUID(),b,new com.cbs.compliance.AutomationModels.Activation(service.get(ADMIN,b).version(),UUID.fromString((String)draft.get("id")),"0".repeat(64),"Wrong file")),"SCREENING_LIST_CHANGED");
+        activate(b,draft);
+        assertThat(jdbc.queryForObject("SELECT status FROM platform.screening_list WHERE id=?::uuid",String.class,draft.get("id"))).isEqualTo("ACTIVE");
+        // Activation queues a re-screen of every existing customer, processed in resumable chunks.
+        assertThat(screening.processRuns(10)).isGreaterThanOrEqualTo(1);
+        assertThat(jdbc.queryForObject("SELECT status FROM platform.screening_run WHERE list_id=?::uuid",String.class,draft.get("id"))).isEqualTo("DONE");
+        assertThat(hitsFor(early)).singleElement().satisfies(h->{assertThat(h.get("trigger")).isEqualTo("LIST");assertThat(h.get("entry_ref")).isEqualTo("UN-1");assertThat(h.get("status")).isEqualTo("OPEN");});
+        assertCode(()->com.cbs.compliance.ComplianceService.requireClear(jdbc,b,early,customerVersion(early)),"CUSTOMER_COMPLIANCE_RESTRICTED");
+        assertThat(com.cbs.compliance.ComplianceService.restricted(jdbc,b,Map.of(early,customerVersion(early),f.f().customer(),customerVersion(f.f().customer())))).containsExactly(early);
+        // New customers are screened when their approved profile is applied; a different birth year rules a namesake out.
+        UUID second=onboard(bank,person("PETROV, Viktor","SCRN002",java.time.LocalDate.of(1970,3,1)));
+        UUID namesake=onboard(bank,person("Viktor Petrov","SCRN003",java.time.LocalDate.of(1995,1,1)));
+        assertThat(hitsFor(second)).singleElement().satisfies(h->{assertThat(h.get("trigger")).isEqualTo("CUSTOMER");assertThat(((java.math.BigDecimal)h.get("score")).doubleValue()).isEqualTo(1.0);});
+        assertThat(hitsFor(namesake)).isEmpty();
+        // An organization is restricted while one of its directors has an open match.
+        UUID harbour=onboard(bank,person("Harbour Logistics","SCRN004",java.time.LocalDate.of(2001,1,1)));
+        UUID anyApproval=jdbc.queryForObject("SELECT id FROM platform.approval_request WHERE bank_id=? LIMIT 1",UUID.class,b);
+        jdbc.update("INSERT INTO platform.customer_party(tenant_id,organization_id,person_id,role,approval_id) VALUES (?,?,?,'DIRECTOR',?)",b,harbour,second,anyApproval);
+        assertCode(()->com.cbs.compliance.ComplianceService.requireClear(jdbc,b,harbour,customerVersion(harbour)),"CUSTOMER_COMPLIANCE_RESTRICTED");
+        // The queue, the evidence view and escalation into a restricting case.
+        mvc.perform(admin(get("/api/v1/admin/tenants/"+b+"/compliance/screening/hits?status=OPEN"))).andExpect(status().isOk()).andExpect(jsonPath("$.total").value(2));
+        UUID secondHit=(UUID)hitsFor(second).getFirst().get("id");
+        mvc.perform(admin(get("/api/v1/admin/tenants/"+b+"/compliance/screening/hits/"+secondHit))).andExpect(status().isOk())
+                .andExpect(jsonPath("$.hit.entry_names[0]").value("Viktor Ivanovich Petrov")).andExpect(jsonPath("$.hit.entry_program").value("Fictional asset freeze"));
+        var escalation=json.writeValueAsString(Map.of("expectedVersion",service.get(ADMIN,b).version(),"itemVersion",0,"evidenceReference","SCREEN/ESC-1","reason","Birth date and name match the listed person"));
+        var escalated=json.readValue(mvc.perform(admin(post("/api/v1/admin/tenants/"+b+"/compliance/screening/hits/"+secondHit+"/escalate")).contentType("application/json").content(escalation))
+                .andExpect(status().isOk()).andReturn().getResponse().getContentAsString(),Map.class);
+        UUID screeningCase=UUID.fromString((String)escalated.get("caseId"));
+        assertThat(jdbc.queryForObject("SELECT category FROM platform.compliance_case WHERE id=?",String.class,screeningCase)).isEqualTo("SCREENING_ALERT");
+        mvc.perform(admin(post("/api/v1/admin/tenants/"+b+"/compliance/screening/hits/"+secondHit+"/escalate")).contentType("application/json").content(escalation)).andExpect(status().isConflict());
+        assertCode(()->com.cbs.compliance.ComplianceService.requireClear(jdbc,b,second,customerVersion(second)),"CUSTOMER_COMPLIANCE_RESTRICTED");
+        // Dismissing a false positive needs independent approval and then lifts the restriction.
+        UUID earlyHit=(UUID)hitsFor(early).getFirst().get("id");
+        var dismiss=json.writeValueAsString(Map.of("expectedVersion",service.get(ADMIN,b).version(),"type","SCREENING_HIT","itemId",earlyHit,"itemVersion",0,"evidenceReference","SCREEN/DOB-CHECK","reason","Passport shows a different person"));
+        var request=json.readValue(mvc.perform(admin(post("/api/v1/admin/tenants/"+b+"/compliance/dismissals")).header("Idempotency-Key",UUID.randomUUID()).contentType("application/json").content(dismiss))
+                .andExpect(status().isAccepted()).andReturn().getResponse().getContentAsString(),com.cbs.approvals.ApprovalModels.Request.class);
+        assertThat(hitsFor(early).getFirst().get("status")).isEqualTo("OPEN");
+        approveHttp(request.id());
+        assertThat(hitsFor(early).getFirst().get("status")).isEqualTo("DISMISSED");
+        com.cbs.compliance.ComplianceService.requireClear(jdbc,b,early,customerVersion(early));
+        // A new list version re-screens everyone; the dismissal carries over while name and entry are unchanged.
+        var v2=uploadList(b,"UN_SANCTIONS",SANCTIONS_CSV+"UN-3,INDIVIDUAL,Amina Kiprotich,,,KE,Fictional\n",201);
+        activate(b,v2);
+        assertThat(jdbc.queryForObject("SELECT status FROM platform.screening_list WHERE id=?::uuid",String.class,draft.get("id"))).isEqualTo("SUPERSEDED");
+        screening.processRuns(10);
+        assertThat(hitsFor(early)).hasSize(1);
+        assertThat(hitsFor(namesake)).isEmpty();
+        // Lists and their entries are immutable evidence.
+        assertThatThrownBy(()->jdbc.update("UPDATE platform.screening_entry SET names='[\"x\"]' WHERE list_id=?::uuid",draft.get("id"))).hasMessageContaining("immutable");
+        assertThatThrownBy(()->jdbc.update("DELETE FROM platform.screening_list WHERE id=?::uuid",draft.get("id"))).hasMessageContaining("immutable");
+
+        // ---- Transaction monitoring on real postings ----
+        assertCode(()->approvals.monitoringPolicy(ADMIN,UUID.randomUUID(),b,new com.cbs.compliance.AutomationModels.Policy(service.get(ADMIN,b).version(),cur,null,"1000",null,null,null,null,null,null,"Half a rule")),"MONITORING_POLICY_INVALID");
+        var policy=approvals.monitoringPolicy(ADMIN,UUID.randomUUID(),b,new com.cbs.compliance.AutomationModels.Policy(service.get(ADMIN,b).version(),cur,"1000","1000",2,3,3,new java.math.BigDecimal("5"),30,3,"Fictional monitoring thresholds"));
+        approveHttp(policy.id());
+        java.time.LocalDate today=reference.get(ADMIN,b).businessDate();
+        // Simulated earlier history for the unusual-amount baseline (average 100 over three earlier days).
+        for(int d=3;d<=5;d++)jdbc.update("INSERT INTO platform.monitoring_event(source_id,account_id,direction,tenant_id,channel,amount,currency,business_date,recorded_at) VALUES (?,?,'IN',?,'FUNDING',100,?,?,clock_timestamp()-make_interval(days=>?))",UUID.randomUUID(),f.account(),b,cur,today.minusDays(d),d);
+        UUID bigFunding=fund(f,"5000");
+        for(int i=0;i<3;i++)postOperation(f,operationChange(f,com.cbs.accounts.OperationModels.Kind.WITHDRAWAL,"10",null,null));
+        UUID other=accountFor(f,f.f().customer(),"MON_002","2000");
+        postOperation(f,operationChange(f,com.cbs.accounts.OperationModels.Kind.TRANSFER,"25",other,null));
+        // Cash through a real branch till: three deposits just under the threshold, then one above it.
+        var branch=branchService.create(ADMIN,b,new com.cbs.access.AccessModels.BranchInput(bank.legalEntities().getFirst().id(),"MON","Monitoring branch","Open branch"));
+        var teller=branchStaff(b,branch.id(),"mon-teller",com.cbs.access.AccessModels.BranchRole.TELLER);
+        var checker=branchStaff(b,branch.id(),"mon-checker",com.cbs.access.AccessModels.BranchRole.BRANCH_MANAGER);
+        var owner=new Actor(TestIdentity.ISSUER,teller.subject(),false,UUID.randomUUID());var reviewer=new Actor(TestIdentity.ISSUER,checker.subject(),false,UUID.randomUUID());
+        approveHttp(approvals.assignment(ADMIN,UUID.randomUUID(),b,new com.cbs.access.BranchOperations.Assignment(service.get(ADMIN,b).version(),f.account(),branch.id(),"Assign customer")).id());
+        var till=cashLocation(bank,branch.id(),f.source(),"MON_TILL",com.cbs.cash.CashModels.Type.TILL);
+        approveHttp(approvals.limits(ADMIN,UUID.randomUUID(),b,new com.cbs.access.TransactionLimits.Change(service.get(ADMIN,b).version(),cur,"CASH_DEPOSIT","5000","10000","Fictional cash limits")).id());
+        for(UUID staff:java.util.Arrays.asList(null,teller.id()))approveHttp(approvals.branchLimit(ADMIN,UUID.randomUUID(),b,new com.cbs.access.BranchOperations.Limit(service.get(ADMIN,b).version(),branch.id(),staff,cur,"CASH_DEPOSIT","5000","10000","Fictional scoped cash limits")).id());
+        postCash(owner,reviewer,bank,cashChange(bank,branch.id(),com.cbs.cash.CashModels.Kind.OPEN,till,null,null,null,List.of()));
+        for(String amount:List.of("400","350","300"))postCash(owner,reviewer,bank,customerCashChange(bank,branch.id(),till,com.cbs.cash.CashModels.Kind.DEPOSIT,f.account(),f.liability().id(),amount));
+        UUID largeCash=postCash(owner,reviewer,bank,customerCashChange(bank,branch.id(),till,com.cbs.cash.CashModels.Kind.DEPOSIT,f.account(),f.liability().id(),"1200"));
+        // Open monitoring alerts never block the customer.
+        int raised=monitoring.scan();
+        assertThat(raised).isGreaterThanOrEqualTo(4);
+        var rules=jdbc.queryForList("SELECT rule FROM platform.monitoring_alert WHERE tenant_id=? AND account_id=?",String.class,b,f.account());
+        assertThat(rules).contains("LARGE_CASH","STRUCTURING","VELOCITY","UNUSUAL_AMOUNT");
+        assertThat(jdbc.queryForObject("SELECT details->>'sourceId' FROM platform.monitoring_alert WHERE tenant_id=? AND rule='LARGE_CASH'",String.class,b)).isEqualTo(largeCash.toString());
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM platform.monitoring_alert WHERE tenant_id=? AND rule='UNUSUAL_AMOUNT' AND details->>'sourceId'=?",Long.class,b,bigFunding.toString())).isOne();
+        assertThat(jdbc.queryForObject("SELECT (details->>'deposits')::int FROM platform.monitoring_alert WHERE tenant_id=? AND rule='STRUCTURING'",Integer.class,b)).isEqualTo(3);
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM platform.monitoring_event WHERE tenant_id=? AND account_id=? AND channel='TRANSFER' AND direction='IN'",Long.class,b,other)).isOne();
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM platform.monitoring_event WHERE tenant_id=? AND channel='CASH'",Long.class,b)).isEqualTo(4);
+        com.cbs.compliance.ComplianceService.requireClear(jdbc,b,f.f().customer(),customerVersion(f.f().customer()));
+        // A rescan re-reads the overlap window but neither duplicates history nor alerts.
+        long events=jdbc.queryForObject("SELECT count(*) FROM platform.monitoring_event WHERE tenant_id=?",Long.class,b);
+        assertThat(monitoring.scan()).isZero();
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM platform.monitoring_event WHERE tenant_id=?",Long.class,b)).isEqualTo(events);
+        // Review: one alert is dismissed with approval, another escalated into a transaction review case.
+        UUID velocity=jdbc.queryForObject("SELECT id FROM platform.monitoring_alert WHERE tenant_id=? AND rule='VELOCITY'",UUID.class,b);
+        UUID large=jdbc.queryForObject("SELECT id FROM platform.monitoring_alert WHERE tenant_id=? AND rule='LARGE_CASH'",UUID.class,b);
+        mvc.perform(admin(get("/api/v1/admin/tenants/"+b+"/compliance/monitoring/alerts/"+large))).andExpect(status().isOk())
+                .andExpect(jsonPath("$.alert.rule").value("LARGE_CASH")).andExpect(jsonPath("$.movements.length()").value(org.hamcrest.Matchers.greaterThanOrEqualTo(5)));
+        var dismissal=approvals.complianceDismiss(ADMIN,UUID.randomUUID(),b,new com.cbs.compliance.AutomationModels.Dismiss(service.get(ADMIN,b).version(),com.cbs.compliance.AutomationModels.ItemType.MONITORING_ALERT,velocity,0,"MON/PAYROLL","Known payroll pattern"));
+        approveHttp(dismissal.id());
+        assertThat(jdbc.queryForObject("SELECT status FROM platform.monitoring_alert WHERE id=?",String.class,velocity)).isEqualTo("DISMISSED");
+        var esc=json.writeValueAsString(Map.of("expectedVersion",service.get(ADMIN,b).version(),"itemVersion",0,"evidenceReference","MON/SOURCE-OF-FUNDS","reason","Source of cash not evidenced"));
+        mvc.perform(admin(post("/api/v1/admin/tenants/"+b+"/compliance/monitoring/alerts/"+large+"/escalate")).contentType("application/json").content(esc)).andExpect(status().isOk());
+        assertThat(jdbc.queryForObject("SELECT c.category FROM platform.monitoring_alert a JOIN platform.compliance_case c ON c.id=a.case_id WHERE a.id=?",String.class,large)).isEqualTo("TRANSACTION_REVIEW");
+        assertCode(()->com.cbs.compliance.ComplianceService.requireClear(jdbc,b,f.f().customer(),customerVersion(f.f().customer())),"CUSTOMER_COMPLIANCE_RESTRICTED");
+        mvc.perform(admin(get("/api/v1/admin/tenants/"+b+"/compliance/monitoring/alerts?status=ALL"))).andExpect(status().isOk()).andExpect(jsonPath("$.total").value(rules.size()));
+        mvc.perform(admin(get("/api/v1/admin/tenants/"+b+"/compliance/monitoring/policies"))).andExpect(status().isOk()).andExpect(jsonPath("$[0].summary.structuring").exists());
+        assertThatThrownBy(()->jdbc.update("DELETE FROM platform.monitoring_event WHERE tenant_id=?",b)).hasMessageContaining("immutable");
     }
 
     @Autowired org.springframework.context.ApplicationContext context;
@@ -1815,6 +1952,9 @@ class TenantAdministrationIntegrationTest {
         approveHttp(approvals.limits(ADMIN,UUID.randomUUID(),bank.id(),new com.cbs.access.TransactionLimits.Change(service.get(ADMIN,bank.id()).version(),"KES","WITHDRAWAL_REVERSAL","1000","2000","Fictional return policy")).id());
         org.mockito.Mockito.when(mpesa.configured(bank.id())).thenReturn(true);org.mockito.Mockito.when(mpesa.binding(bank.id(),f.source().id())).thenReturn(true);org.mockito.Mockito.when(mpesa.profile(bank.id())).thenReturn("fictional-sandbox-profile");
         var payout=approvals.payment(ADMIN,UUID.randomUUID(),bank.id(),paymentOrder(f,"100","LIFECYCLE-1"));approveHttp(payout.id());operations.deliver(payout.id());
+        // Monitoring classifies the payout once, as a mobile debit, not also as a plain withdrawal.
+        monitoring.scan();
+        assertThat(jdbc.queryForList("SELECT channel||'/'||direction FROM platform.monitoring_event WHERE source_id=?",String.class,payout.id())).containsExactly("MOBILE/OUT");
         assertThat(accounts.closure(ADMIN,bank.id(),f.account()).blockers()).contains("ACCOUNT_CLOSURE_PAYMENT_REVIEW");
         var lifecycleToken=new java.util.concurrent.atomic.AtomicReference<String>();org.mockito.Mockito.when(mpesa.transfer(org.mockito.ArgumentMatchers.eq(bank.id()),org.mockito.ArgumentMatchers.eq(payout.id()),org.mockito.ArgumentMatchers.any(),org.mockito.ArgumentMatchers.anyString())).thenAnswer(invocation->{lifecycleToken.set(invocation.getArgument(3));return new com.cbs.payments.PaymentModels.Acceptance("life-conversation","life-originator");});payments.dispatch(ADMIN,bank.id(),payout.id());
         var date=reference.get(ADMIN,bank.id()).businessDate();String header="receipt,date,type,credit,debit,balance,payment_reference,beneficiary\n";
