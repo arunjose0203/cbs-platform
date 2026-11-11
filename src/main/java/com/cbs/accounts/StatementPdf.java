@@ -100,7 +100,7 @@ public final class StatementPdf implements StatementService.Sink {
     }
     private static String blankZero(String v){return v==null||v.equals("0")?"":v;}
     /** Keeps characters the built-in font can encode; replaces control and unsupported characters. */
-    static String safe(String value){
+    public static String safe(String value){
         if(value==null)return "";var b=new StringBuilder(value.length());
         for(char ch:value.toCharArray()){if(Character.isISOControl(ch))b.append(' ');else if(ENCODABLE.computeIfAbsent(ch,StatementPdf::encodable))b.append(ch);else b.append('?');}
         return b.toString();

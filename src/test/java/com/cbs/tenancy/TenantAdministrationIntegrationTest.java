@@ -56,6 +56,9 @@ class TenantAdministrationIntegrationTest {
     @Autowired com.cbs.notifications.NotificationService notifications;
     @Autowired com.cbs.mandates.MandateService mandates;
     @Autowired com.cbs.accounting.PeriodCloseService periodCloses;
+    @Autowired com.cbs.reporting.FinancialStatementService financialStatements;
+    @Autowired com.cbs.reporting.ReportDefinitionService reportDefinitions;
+    @Autowired com.cbs.reporting.ManagementDashboardService managementDashboard;
     @Autowired com.cbs.reference.ReferenceDataService reference;
     @Autowired com.cbs.accounting.ChartService chart;
     @Autowired com.cbs.products.ProductService products;
@@ -2842,8 +2845,60 @@ class TenantAdministrationIntegrationTest {
             assertThatThrownBy(()->st.executeUpdate("INSERT INTO bank.journal SELECT (jsonb_populate_record(null::bank.journal,to_jsonb(j)||jsonb_build_object('id',gen_random_uuid(),'reference','LATE-'||gen_random_uuid(),'reversal_of',null))).* FROM bank.journal j WHERE j.reference LIKE 'PL-%' AND j.business_date=DATE '2026-12-31' LIMIT 1")).isInstanceOf(SQLException.class).hasMessageContaining("Period is closed");
             assertThatThrownBy(()->st.executeUpdate("DELETE FROM bank.period_close")).isInstanceOf(SQLException.class);
         }
+        // After the year-end close the income statement still shows the year; the balance sheet carries it in retained earnings.
+        var year=financialStatements.incomeStatement(ADMIN,bank.id(),entity,"INR",java.time.LocalDate.of(2026,1,1),java.time.LocalDate.of(2026,12,31),null,null);
+        assertThat(year.totals()).containsEntry("income","350").containsEntry("expense","130").containsEntry("netResult","220");
+        var sheet=financialStatements.balanceSheet(ADMIN,bank.id(),entity,"INR",java.time.LocalDate.of(2026,12,31),java.time.LocalDate.of(2026,11,30));
+        assertThat(sheet.balanced()).isTrue();
+        assertThat(sheet.rows()).anyMatch(r->r.name().startsWith("Current period result")&&r.amount().equals("0")&&r.comparative().equals("179.6"));
+        assertThat(sheet.rows()).anyMatch(r->r.code().equals("PC_RETAINED")&&r.amount().equals("220")&&r.comparative().equals("0"));
         closeDay(bank);
         assertThat(reference.get(ADMIN,bank.id()).businessDate().getYear()).isEqualTo(2027);
+    }
+    @Test void financialStatementsDefinitionsAndDashboardReconcileToTheLedger()throws Exception{
+        var f=fundingFixture("reporting");var bank=f.f().bank();fund(f,"1000");UUID entity=bank.legalEntities().getFirst().id();UUID cash=f.source().id();
+        var income=adjustmentLedger(bank,"RP_FEES",com.cbs.accounting.ChartModels.Category.INCOME);var expense=adjustmentLedger(bank,"RP_COSTS",com.cbs.accounting.ChartModels.Category.EXPENSE);var capital=adjustmentLedger(bank,"RP_CAPITAL",com.cbs.accounting.ChartModels.Category.EQUITY);
+        manualJournal(bank,cash,income,"300");manualJournal(bank,expense,cash,"120.4");manualJournal(bank,cash,capital,"500");
+        var today=reference.get(ADMIN,bank.id()).businessDate();
+        var sheet=financialStatements.balanceSheet(ADMIN,bank.id(),entity,"INR",today,java.time.LocalDate.of(2020,1,1));
+        assertThat(sheet.balanced()).isTrue();assertThat(sheet.totals()).containsEntry("assets","1679.6").containsEntry("liabilities","1000").containsEntry("equity","679.6");
+        assertThat(sheet.rows()).anyMatch(r->r.name().startsWith("Current period result")&&r.amount().equals("179.6")&&r.comparative().equals("0"));
+        assertThat(sheet.rows()).noneMatch(r->r.code().equals("RP_FEES"));
+        var pnl=financialStatements.incomeStatement(ADMIN,bank.id(),entity,"INR",today,today,null,null);
+        assertThat(pnl.totals()).containsEntry("income","300").containsEntry("expense","120.4").containsEntry("netResult","179.6");
+        assertThat(pnl.rows()).anyMatch(r->r.code().equals("RP_FEES")&&r.amount().equals("300")).anyMatch(r->r.code().equals("RP_COSTS")&&r.amount().equals("120.4"));
+        assertCode(()->financialStatements.balanceSheet(ADMIN,bank.id(),UUID.randomUUID(),"INR",today,null),"LEGAL_ENTITY_NOT_IN_BANK");
+        assertCode(()->financialStatements.incomeStatement(ADMIN,bank.id(),entity,"INR",today.plusDays(1),today,null,null),"REPORT_FILTER_INVALID");
+        String base="/api/v1/admin/tenants/"+bank.id()+"/reporting";String q="?legalEntityId="+entity+"&currency=INR&asOf="+today;
+        mvc.perform(get(base+"/balance-sheet"+q)).andExpect(status().isUnauthorized());
+        mvc.perform(get(base+"/balance-sheet"+q).header("Authorization","Bearer "+TestIdentity.token("operator",false))).andExpect(status().isForbidden());
+        var csv=mvc.perform(admin(get(base+"/balance-sheet"+q+"&format=csv"))).andExpect(status().isOk()).andExpect(header().string("Cache-Control","no-store")).andReturn().getResponse().getContentAsString(java.nio.charset.StandardCharsets.UTF_8);
+        assertThat(csv).contains("Balance sheet","\"1679.6\"","Total liabilities and equity");
+        var pdf=mvc.perform(admin(get(base+"/income-statement?legalEntityId="+entity+"&currency=INR&from="+today+"&to="+today+"&format=pdf"))).andExpect(status().isOk()).andExpect(header().string("Content-Type","application/pdf")).andReturn().getResponse().getContentAsByteArray();
+        try(var doc=org.apache.pdfbox.Loader.loadPDF(pdf)){assertThat(new org.apache.pdfbox.text.PDFTextStripper().getText(doc)).contains("Income statement","300","120.4","Net profit","179.6","Page 1 of 1");}
+        mvc.perform(admin(get(base+"/balance-sheet"+q+"&format=xml"))).andExpect(status().isBadRequest());
+        // Approved definitions turn a template into configuration.
+        UUID depositsChart=f.f().product().liabilityAccountId();
+        UUID feesChart=jdbc.queryForObject("SELECT chart_account_id FROM platform.ledger_registry WHERE id=?",UUID.class,income);UUID costsChart=jdbc.queryForObject("SELECT chart_account_id FROM platform.ledger_registry WHERE id=?",UUID.class,expense);
+        java.util.function.Function<List<com.cbs.reporting.ReportModels.Line>,com.cbs.reporting.ReportModels.Definition> def=lines->new com.cbs.reporting.ReportModels.Definition(service.get(ADMIN,bank.id()).version(),"MGMT_SUMMARY","Management summary",com.cbs.reporting.ReportModels.Basis.BALANCE,lines,"Fictional template");
+        assertCode(()->approvals.reportDefinition(ADMIN,UUID.randomUUID(),bank.id(),def.apply(List.of(new com.cbs.reporting.ReportModels.Line("A1","Unknown",List.of(UUID.randomUUID()),1)))),"REPORT_DEFINITION_ACCOUNT_UNKNOWN");
+        assertCode(()->approvals.reportDefinition(ADMIN,UUID.randomUUID(),bank.id(),def.apply(List.of(new com.cbs.reporting.ReportModels.Line("A1","x",List.of(feesChart),1),new com.cbs.reporting.ReportModels.Line("A1","y",List.of(feesChart),1)))),"REPORT_DEFINITION_INVALID");
+        var request=approvals.reportDefinition(ADMIN,UUID.randomUUID(),bank.id(),def.apply(List.of(
+            new com.cbs.reporting.ReportModels.Line("10","Customer deposits",List.of(depositsChart),1),
+            new com.cbs.reporting.ReportModels.Line("20","Fee income",List.of(feesChart),1),
+            new com.cbs.reporting.ReportModels.Line("21","Less operating costs",List.of(costsChart),-1))));
+        assertCode(()->approvals.decide(ADMIN,request.id(),com.cbs.approvals.ApprovalModels.Decision.APPROVE,"Own"),"SELF_APPROVAL_FORBIDDEN");approveHttp(request.id());
+        var result=reportDefinitions.run(ADMIN,bank.id(),"MGMT_SUMMARY",entity,"INR",null,today);
+        assertThat(result.lines()).containsExactly(List.of("10","Customer deposits","1000"),List.of("20","Fee income","300"),List.of("21","Less operating costs","-120.4"));
+        assertCode(()->reportDefinitions.run(ADMIN,bank.id(),"NOPE",entity,"INR",null,today),"REPORT_DEFINITION_NOT_FOUND");
+        mvc.perform(admin(get(base+"/definitions/MGMT_SUMMARY/run?legalEntityId="+entity+"&currency=INR&to="+today+"&format=csv"))).andExpect(status().isOk()).andExpect(content().string(org.hamcrest.Matchers.containsString("\"-120.4\"")));
+        // Dashboard figures come from the same ledger.
+        var board=managementDashboard.dashboard(ADMIN,bank.id());
+        @SuppressWarnings("unchecked") var deposits=(Map<String,Object>)board.get("deposits");
+        assertThat((List<?>)deposits.get("totals")).singleElement().satisfies(r->{@SuppressWarnings("unchecked") var m=(Map<String,Object>)r;assertThat(m).containsEntry("currency","INR").containsEntry("balance","1000").containsEntry("accounts",1);});
+        assertThat((List<?>)deposits.get("topDepositors")).singleElement().satisfies(r->{@SuppressWarnings("unchecked") var m=(Map<String,Object>)r;assertThat(m).containsEntry("balance","1000").containsEntry("shareOfDeposits","100");});
+        assertThat(board).containsKeys("loans","cash","work");
+        mvc.perform(admin(get(base+"/dashboard"))).andExpect(status().isOk()).andExpect(jsonPath("$.deposits.totals[0].balance").value("1000"));
     }
     private void verifyDenominationInventory(FundingFixture f,UUID branch,UUID vault,Actor maker,Actor reviewer)throws Exception{
         var bank=f.f().bank();

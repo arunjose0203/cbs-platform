@@ -4,6 +4,12 @@
 
 Use the [Functional Gap & Acceptance Matrix](functional-gap-acceptance-matrix-2026-10-09.md) for the current 34-area functional assessment, 34 proposed acceptance cases, source/test evidence, confirmed limits and prioritized completion work. It reconciles older historical pending lists below. No module has independent bank functional sign-off recorded; existing automated test results do not replace that acceptance.
 
+## Management and financial reporting — 11 November 2026
+
+[Management and financial reporting](management-and-financial-reporting.md): balance sheet (with unclosed current result) and income statement for any date/period with comparatives, built from posted journal lines by chart hierarchy, as JSON, CSV or PDF; a management dashboard (deposits by product/branch, top-10 concentration, loan ageing and non-performing ratio, cash holdings, work waiting); and approved report definitions mapping chart accounts to template lines as groundwork for CBK returns (official templates still needed). Control V43.
+
+Verification: full backend `verify` **172 passed**, 1 opt-in volume test skipped, zero failures/errors; UI **108 passed**; operations **21 passed**. Bank acceptance remains pending.
+
 ## Period close and signer capture — 11 November 2026
 
 [Period close and signer capture](period-close-and-signer-capture.md): teller cash withdrawals and M-Pesa payout requests now collect authorising signers for mandated, organization and minors' accounts (branch-scoped mandate lookup added). Banks with an approved close policy must close each month on its last business day: an approved, balanced trial balance per entity/currency; at fiscal year end, closing journals sweep income and expense into retained earnings with balance re-checks, an immutable receipt and safe retry. Approval seals the day in both the control plane and the bank database. No reopening of closed periods (corrections post in the open period). Control V42, bank V25.

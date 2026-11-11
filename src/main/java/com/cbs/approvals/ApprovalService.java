@@ -119,6 +119,9 @@ public class ApprovalService {
     @org.springframework.beans.factory.annotation.Autowired void mandates(com.cbs.mandates.MandateService mandates){this.mandates=mandates;}
     private com.cbs.accounting.PeriodCloseService periods;
     @org.springframework.beans.factory.annotation.Autowired void periods(com.cbs.accounting.PeriodCloseService periods){this.periods=periods;}
+    private com.cbs.reporting.ReportDefinitionService reportDefinitions;
+    @org.springframework.beans.factory.annotation.Autowired void reportDefinitions(com.cbs.reporting.ReportDefinitionService reportDefinitions){this.reportDefinitions=reportDefinitions;}
+    public Request reportDefinition(Actor actor,UUID key,UUID bankId,com.cbs.reporting.ReportModels.Definition input){return submit(actor,key,bankId,Action.REPORT_DEFINITION,input.expectedVersion(),input.reason(),input);}
     public Request periodClosePolicy(Actor actor,UUID key,UUID bankId,com.cbs.accounting.PeriodCloseModels.Policy input){return submit(actor,key,bankId,Action.PERIOD_CLOSE_POLICY,input.expectedVersion(),input.reason(),input);}
     public Request periodClose(Actor actor,UUID key,UUID bankId,com.cbs.accounting.PeriodCloseModels.Run input){return submit(actor,key,bankId,Action.PERIOD_CLOSE,input.expectedVersion(),input.reason(),input);}
     public Request customerParties(Actor actor,UUID key,UUID bankId,com.cbs.mandates.MandateModels.Parties input){return submit(actor,key,bankId,Action.CUSTOMER_PARTIES,input.expectedVersion(),input.reason(),input);}
@@ -242,6 +245,9 @@ public class ApprovalService {
             } else if(action==Action.BRANCH_LIMIT) {
                 var bank=tenantRepository.get(id,true);var change=(com.cbs.access.BranchOperations.Limit)input;branchOperations.validate(bank,change);
                 before=branchOperations.before(id,change);after=branchOperations.values(change);label="Branch transaction limit";bankId=id;
+            } else if(action==Action.REPORT_DEFINITION) {
+                var bank=tenantRepository.get(id,true);var change=(com.cbs.reporting.ReportModels.Definition)input;reportDefinitions.validate(bank,change);
+                before=reportDefinitions.before(bank,change.code());after=reportDefinitions.values(bank,change);label="Report definition "+change.code();bankId=id;
             } else if(action==Action.PERIOD_CLOSE_POLICY) {
                 var bank=tenantRepository.get(id,true);var change=(com.cbs.accounting.PeriodCloseModels.Policy)input;periods.validate(bank,change);
                 before=periods.policyBefore(id);after=periods.values(change);label="Month-end and year-end close policy";bankId=id;
@@ -436,6 +442,7 @@ public class ApprovalService {
                             String payload=jdbc.queryForObject("SELECT payload::text FROM platform.approval_request WHERE id=?",String.class,id);
                             branchOperations.apply(actor,request.targetId(),JSON.readValue(payload,com.cbs.access.BranchOperations.Limit.class),auditReason);
                         }
+                        case REPORT_DEFINITION -> reportDefinitions.apply(actor,request.targetId(),JSON.readValue(jdbc.queryForObject("SELECT payload::text FROM platform.approval_request WHERE id=?",String.class,id),com.cbs.reporting.ReportModels.Definition.class),id);
                         case PERIOD_CLOSE_POLICY -> {
                             String payload=jdbc.queryForObject("SELECT payload::text FROM platform.approval_request WHERE id=?",String.class,id);
                             periods.apply(actor,request.targetId(),JSON.readValue(payload,com.cbs.accounting.PeriodCloseModels.Policy.class),id);
