@@ -28,6 +28,9 @@ public class ProductionGuard {
   if(!env.getProperty("spring.flyway.clean-disabled",Boolean.class,false))problems.add("Flyway clean must be disabled");
   if(!env.getProperty("spring.flyway.validate-on-migrate",Boolean.class,false))problems.add("migration validation must be enabled");
   for(var bank:banks.databases().entrySet())if(!verifiedDatabase(bank.getValue().url())||bank.getValue().password()==null||bank.getValue().password().isBlank())problems.add("bank database transport or credential is not production configured");
+  if(!env.getProperty("cbs.rate-limit.enabled",Boolean.class,true))problems.add("request rate limiting must stay enabled");
+  boolean loopback=Set.of("127.0.0.1","localhost","::1").contains(env.getProperty("server.address","127.0.0.1"));
+  if(!loopback&&!"native".equalsIgnoreCase(env.getProperty("server.forward-headers-strategy","")))problems.add("server.forward-headers-strategy=native is required behind the edge proxy so limits apply per client");
   if("test".equalsIgnoreCase(env.getProperty("cbs.notifications.sender","")))problems.add("the test notification sender is forbidden");
   if(env.getProperty("spring.flyway.enabled",Boolean.class,true))problems.add("runtime Flyway migrations must be disabled; use the migration job");
   if(env.getProperty("cbs.banking.migrations-enabled",Boolean.class,true))problems.add("runtime bank migrations must be disabled");

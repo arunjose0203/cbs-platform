@@ -71,4 +71,23 @@ class FoundationHttpTest {
         assertThat(value).isNotNull();
         assertThat(UUID.fromString(value).toString()).isEqualTo(value);
     }
+
+    @Test
+    void everyResponseCarriesBrowserHardeningHeaders() throws Exception {
+        for (var request : java.util.List.of(get("/actuator/health/liveness"), get("/api/v1/tenants"))) {
+            mvc.perform(request)
+                    .andExpect(header().string("X-Content-Type-Options", "nosniff"))
+                    .andExpect(header().string("X-Frame-Options", "DENY"))
+                    .andExpect(header().string("Referrer-Policy", "no-referrer"))
+                    .andExpect(header().string("Permissions-Policy", org.hamcrest.Matchers.containsString("camera=()")))
+                    .andExpect(header().string("Content-Security-Policy", org.hamcrest.Matchers.allOf(
+                            org.hamcrest.Matchers.containsString("frame-ancestors 'none'"),
+                            org.hamcrest.Matchers.containsString("object-src 'none'"),
+                            org.hamcrest.Matchers.containsString("form-action 'self'"))))
+                    .andExpect(header().string("Cache-Control", org.hamcrest.Matchers.containsString("no-store")))
+                    .andExpect(header().doesNotExist("Strict-Transport-Security"));
+        }
+        mvc.perform(get("/actuator/health/liveness").secure(true))
+                .andExpect(header().string("Strict-Transport-Security", "max-age=31536000 ; includeSubDomains"));
+    }
 }

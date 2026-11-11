@@ -22,10 +22,11 @@ import org.springframework.security.oauth2.server.resource.web.authentication.Be
 import org.springframework.security.web.SecurityFilterChain;
 
 @Configuration(proxyBeanMethods = false)
+@org.springframework.boot.context.properties.EnableConfigurationProperties(RateLimitFilter.Settings.class)
 public class SecurityConfiguration {
     @Bean
     SecurityFilterChain securityFilterChain(HttpSecurity http, IdentityConfiguration.Settings settings,
-            ObjectProvider<JwtDecoder> decoders, ObjectProvider<AccessService> access,
+            ObjectProvider<JwtDecoder> decoders, ObjectProvider<AccessService> access, RateLimitFilter.Settings limits,
             @Value("${server.address:127.0.0.1}") String bindAddress) throws Exception {
         if (settings.allowLocalHttp() && !List.of("127.0.0.1", "localhost", "::1").contains(bindAddress)) {
             throw new IllegalStateException("Local HTTP identity mode requires CBS to bind to loopback");
@@ -39,7 +40,12 @@ public class SecurityConfiguration {
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .headers(headers -> headers.contentSecurityPolicy(csp -> csp.policyDirectives(
                         "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self' https:"
-                                + settings.localConnectOrigin() + "; object-src 'none'; base-uri 'none'; frame-ancestors 'none'")))
+                                + settings.localConnectOrigin() + "; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"))
+                        .referrerPolicy(referrer -> referrer.policy(
+                                org.springframework.security.web.header.writers.ReferrerPolicyHeaderWriter.ReferrerPolicy.NO_REFERRER))
+                        .addHeaderWriter(new org.springframework.security.web.header.writers.StaticHeadersWriter(
+                                "Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=(), usb=()"))
+                        .httpStrictTransportSecurity(hsts -> hsts.maxAgeInSeconds(31_536_000).includeSubDomains(true)))
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers(HttpMethod.GET,"/","/admin","/admin/","/admin/index.html","/admin/app.js","/admin/styles.css","/admin/chart.css","/portal/config").permitAll()
                         .requestMatchers(HttpMethod.GET, "/actuator/health", "/actuator/health/liveness",
@@ -59,6 +65,8 @@ public class SecurityConfiguration {
                                 writeProblem(response, 401, "Authentication required", "AUTHENTICATION_REQUIRED"))
                         .accessDeniedHandler((request, response, exception) ->
                                 writeProblem(response, 403, "Access denied", "ACCESS_DENIED")));
+        // Throttle before any token is parsed, after security headers are written.
+        http.addFilterAfter(new RateLimitFilter(limits), org.springframework.security.web.header.HeaderWriterFilter.class);
         if (settings.enabled()) {
             JwtAuthenticationConverter converter = new JwtAuthenticationConverter();
             converter.setJwtGrantedAuthoritiesConverter(jwt -> {

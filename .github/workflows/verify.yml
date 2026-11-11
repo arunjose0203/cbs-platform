@@ -4,9 +4,13 @@ on:
   pull_request:
 permissions:
   contents: read
+concurrency:
+  group: verify-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
   verify:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     services:
       postgres:
         image: postgres:18.3
@@ -26,6 +30,8 @@ jobs:
       CBS_DB_USER: cbs_control
       CBS_DB_PASSWORD: ci-ephemeral-only
       CBS_INTEGRATION_TESTS: 'true'
+      # Same zone as the deployed containers; the pom also pins the test JVM to UTC.
+      TZ: UTC
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -46,3 +52,20 @@ jobs:
           java-version: '21'
           cache: maven
       - run: mvn --batch-mode --no-transfer-progress verify
+      - name: Keep test reports when anything fails
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: surefire-reports
+          path: target/surefire-reports/
+          retention-days: 7
+      # Packaging check: the release image builds from the verified JAR and the staging stack resolves.
+      # Releases pin JAVA_RUNTIME_IMAGE by digest; CI uses the public tag only to prove the build works.
+      - name: Build the application image
+        run: docker build --build-arg JAVA_RUNTIME_IMAGE=eclipse-temurin:21-jre-noble -t cbs-platform:ci .
+      - name: Validate the staging Compose stack
+        run: |
+          touch /tmp/runtime.yml /tmp/ca.crt && mkdir -p /tmp/migration
+          CBS_APP_IMAGE=cbs-platform:ci CADDY_IMAGE=caddy:2 CBS_RUNTIME_CONFIG=/tmp/runtime.yml \
+          CBS_DATABASE_CA=/tmp/ca.crt CBS_MIGRATION_DIRECTORY=/tmp/migration CBS_DOMAIN=cbs.example.org \
+          ACME_EMAIL=ops@example.org docker compose -f deploy/staging/compose.yml --profile tools config --quiet

@@ -41,7 +41,7 @@ import tools.jackson.databind.ObjectMapper;
 @SpringBootTest(properties = {
         "cbs.ledger.delivery-enabled=false", "cbs.security.enabled=true", "cbs.security.issuer=https://identity.cbs.test",
         "cbs.security.jwk-set-uri=https://identity.cbs.test/jwks", "cbs.security.audience=cbs-api",
-        "cbs.servicing.chunk-size=2", "cbs.notifications.sender=test"
+        "cbs.servicing.chunk-size=2", "cbs.notifications.sender=test", "cbs.rate-limit.enabled=false"
 })
 @AutoConfigureMockMvc
 @Import(TestIdentity.Configuration.class)
@@ -92,6 +92,52 @@ class TenantAdministrationIntegrationTest {
     @AfterAll void closeFixtures() throws SQLException {
         ((HikariDataSource) dataSource).close();
         TestDatabases.close();
+    }
+
+    @Autowired org.springframework.context.ApplicationContext context;
+
+    // Access review as a test: every mapped route rejects anonymous and forged callers, the admin namespace
+    // rejects authenticated non-administrators, and the public allowlist cannot silently grow.
+    @Test void everyRouteRequiresAuthenticationExceptTheDeclaredPublicOnes() throws Exception {
+        var mapping = context.getBean("requestMappingHandlerMapping",
+                org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandlerMapping.class);
+        var declaredPublic = java.util.Set.of("GET /", "GET /admin", "GET /admin/", "GET /portal/config",
+                "POST /api/v1/payments/mpesa/callback/{id}/{token}");
+        var seenPublic = new java.util.TreeSet<String>();
+        var problems = new java.util.ArrayList<String>();
+        String operator = TestIdentity.token("operator", false);
+        int checked = 0, adminRoutes = 0;
+        for (var info : mapping.getHandlerMethods().keySet()) {
+            var methods = info.getMethodsCondition().getMethods().isEmpty()
+                    ? java.util.Set.of(org.springframework.web.bind.annotation.RequestMethod.GET)
+                    : info.getMethodsCondition().getMethods();
+            for (String pattern : info.getPatternValues()) {
+                for (var method : methods) {
+                    String route = method + " " + pattern;
+                    if (declaredPublic.contains(route)) { seenPublic.add(route); continue; }
+                    String path = pattern.replaceAll("\\{[^}]+}", "00000000-0000-4000-8000-000000000001");
+                    var verb = org.springframework.http.HttpMethod.valueOf(method.name());
+                    int anonymous = mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.request(verb, java.net.URI.create(path))).andReturn().getResponse().getStatus();
+                    int forged = mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.request(verb, java.net.URI.create(path))
+                            .header("Authorization", "Bearer not-a-real-token")).andReturn().getResponse().getStatus();
+                    if (anonymous != 401 || forged != 401) { problems.add(route + " anonymous=" + anonymous + " forged=" + forged); }
+                    if (pattern.startsWith("/api/v1/admin/")) {
+                        adminRoutes++;
+                        int staff = mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.request(verb, java.net.URI.create(path))
+                                .header("Authorization", "Bearer " + operator)).andReturn().getResponse().getStatus();
+                        if (staff != 403) { problems.add(route + " non-administrator=" + staff); }
+                    }
+                    checked++;
+                }
+            }
+        }
+        assertThat(problems).isEmpty();
+        assertThat(seenPublic).containsExactlyInAnyOrderElementsOf(declaredPublic);
+        assertThat(checked).isGreaterThanOrEqualTo(250);
+        assertThat(adminRoutes).isGreaterThanOrEqualTo(150);
+        int callback = mvc.perform(post("/api/v1/payments/mpesa/callback/" + UUID.randomUUID() + "/guess")
+                .contentType("application/json").content("{}")).andReturn().getResponse().getStatus();
+        assertThat(callback).isBetween(400, 499);
     }
 
     @Test void registrationIsAuditedAndIdempotentWithPayloadConflictProtection() throws Exception {
@@ -225,7 +271,7 @@ class TenantAdministrationIntegrationTest {
         b = provision(b);
         assertThat(a.status()).isEqualTo(Status.ACTIVE);
         assertThat(b.status()).isEqualTo(Status.ACTIVE);
-        assertThat(a.databaseBinding().schemaVersion()).isEqualTo("25");
+        assertThat(a.databaseBinding().schemaVersion()).isEqualTo("26");
         bankGet(a.id(), "operator-a", true).andExpect(status().isOk())
                 .andExpect(jsonPath("$.tenantId").value(a.id().toString())).andExpect(jsonPath("$.databaseBinding").doesNotExist());
         mvc.perform(get("/api/v1/banks/" + b.id() + "/operational-context")
@@ -894,7 +940,7 @@ class TenantAdministrationIntegrationTest {
         ledger.initialize(ADMIN,bank.id(),new ChangeRequest(0L,"Prepare ledgers"));
         assertThat(ledger.list(ADMIN,bank.id(),"",null,null,25,0).storageReady()).isTrue();
         ledger.initialize(ADMIN,bank.id(),new ChangeRequest(service.get(ADMIN,bank.id()).version(),"Recheck upgrade"));
-        assertThat(service.get(ADMIN,bank.id()).databaseBinding().schemaVersion()).isEqualTo("25");
+        assertThat(service.get(ADMIN,bank.id()).databaseBinding().schemaVersion()).isEqualTo("26");
     }
 
     private List<com.cbs.accounting.LedgerModels.Definition> journalLedgers(Tenant bank) throws Exception {

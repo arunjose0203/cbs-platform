@@ -19,3 +19,13 @@ cbs:
         url: jdbc:postgresql://BANK_HOST/cbs_bank?sslmode=verify-full
         username: cbs_bank_runtime
         password: REPLACE_FROM_SECRET_STORE
+  # Optional operating limits; the values shown are the defaults.
+  servicing:
+    chunk-size: 500                    # accounts per resumable servicing chunk
+  rate-limit:
+    enabled: true                      # the production guard refuses false
+    requests-per-minute: 600           # per client address, per application instance
+    authentication-failures-per-minute: 20
+  # notifications:
+  #   sender: <provider>               # leave unset until an SMS/email provider is contracted;
+  #                                    # alerts then stay PENDING. "test" is refused in production.

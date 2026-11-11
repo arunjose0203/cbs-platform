@@ -18,5 +18,8 @@ spring:
       validation-timeout: 3000
 server:
   shutdown: graceful
-  forward-headers-strategy: none
+  # The edge proxy (Caddy) replaces X-Forwarded-For with the real client address. Trust it only from
+  # private proxy addresses, so per-client rate limits see clients rather than the proxy. The app port
+  # must stay reachable from the edge proxy only (deploy/staging/compose.yml publishes no app port).
+  forward-headers-strategy: native
 spring.lifecycle.timeout-per-shutdown-phase: 30s

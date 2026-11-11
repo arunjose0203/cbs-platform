@@ -20,6 +20,8 @@ Before staging acceptance, configure real staff in Staff & Access → Lending pe
 8. As DBA/object owner, apply `ops/runtime-privileges.sql` to the control and each bank database using `psql -v owner=OWNER_ROLE -v runtime=RUNTIME_ROLE -f ops/runtime-privileges.sql`. Use a different runtime role for each database. Reapply after every migration. The script removes PUBLIC database access; explicitly grant approved backup/operator roles CONNECT as needed. Never grant runtime membership in an owner role.
 9. Start `app` and `edge` with Compose. Verify HTTPS, issuer discovery, MFA login, database role restrictions, readiness and all bank routes. The production guard rejects privileged runtime roles and migration credentials/configuration. Caddy exposes readiness through `/health/ready`; other actuator paths are blocked at the edge.
 
+Steps 6–9 can be run as one command once the env file exists: `deploy/staging/up.sh --env-file /etc/cbs/staging.env`. It runs preflight, stops writers, applies migrations, calls `CBS_PRIVILEGES_HOOK` to reapply grants (and stops if that is unset), starts app and edge, then waits for `https://CBS_DOMAIN/health/ready`. Use `--skip-migrations` for a restart on an unchanged schema.
+
 The image/Compose templates have no credential values. Digest pinning, server installation, firewall rules, certificate issuance and live identity checks must be verified on the actual host. Docker's engine was unavailable on the development PC during implementation.
 
 ## Coordinated encrypted backups

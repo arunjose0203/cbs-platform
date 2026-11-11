@@ -31,7 +31,7 @@ class IdentityUrlPolicyTest {
 
     @Test void localIdentityModeCannotExposeCbsOnAnExternalInterface() {
         var local = settings("http://127.0.0.1:8180/realm", "http://127.0.0.1:8180/keys", true);
-        assertThatThrownBy(() -> new SecurityConfiguration().securityFilterChain(null, local, null, null, "0.0.0.0"))
+        assertThatThrownBy(() -> new SecurityConfiguration().securityFilterChain(null, local, null, null, null, "0.0.0.0"))
                 .isInstanceOf(IllegalStateException.class).hasMessageContaining("bind to loopback");
     }
 }

@@ -4,6 +4,12 @@
 
 Use the [Functional Gap & Acceptance Matrix](functional-gap-acceptance-matrix-2026-10-09.md) for the current 34-area functional assessment, 34 proposed acceptance cases, source/test evidence, confirmed limits and prioritized completion work. It reconciles older historical pending lists below. No module has independent bank functional sign-off recorded; existing automated test results do not replace that acceptance.
 
+## Production-readiness round — 11 November 2026
+
+[Production readiness](production-readiness.md#production-readiness-round--11-november-2026) adds an automated access review of every route (262 method/path pairs), per-client rate limiting with a stricter budget for failed authentication, stronger browser headers, and dependency scanning (npm audit, OSV-Scanner and Dependabot). Hot-path indexes cut daily-limit and per-account lookups from 24–82 ms to under 1 ms on 1M synthetic operations (control V44, bank V26). Also new: a staging load probe, a one-command staging bring-up, CI image and Compose checks, and UTC-pinned tests. The restore drill was re-run and passed. An end-to-end check through Caddy showed that forged forwarding headers do not get around the limits.
+
+Verification: full backend `verify` **182 passed**, 1 opt-in volume test skipped, zero failures/errors; UI **108 passed**; operations **29 passed**; restore drill PASS (SQL and packaged launcher).
+
 ## Management and financial reporting — 11 November 2026
 
 [Management and financial reporting](management-and-financial-reporting.md): balance sheet (with unclosed current result) and income statement for any date/period with comparatives, built from posted journal lines by chart hierarchy, as JSON, CSV or PDF; a management dashboard (deposits by product/branch, top-10 concentration, loan ageing and non-performing ratio, cash holdings, work waiting); and approved report definitions mapping chart accounts to template lines as groundwork for CBK returns (official templates still needed). Control V43.

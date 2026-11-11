@@ -18,6 +18,7 @@ services:
       SPRING_PROFILES_ACTIVE: production
       SPRING_CONFIG_IMPORT: file:/run/secrets/application.yml
       CBS_BIND_ADDRESS: 0.0.0.0
+      TZ: UTC
     volumes:
       - ${CBS_RUNTIME_CONFIG:?Set private runtime YAML path}:/run/secrets/application.yml:ro
       - ${CBS_DATABASE_CA:?Set database CA file}:/home/cbs/.postgresql/root.crt:ro

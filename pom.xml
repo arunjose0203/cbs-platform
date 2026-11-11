@@ -16,6 +16,9 @@
     <description>Core banking foundation, tenant administration and identity access</description>
     <properties>
         <java.version>21</java.version>
+        <!-- Tests run in UTC on every machine. A developer JVM in a zone the PostgreSQL server does not
+             recognise (for example the legacy alias Asia/Calcutta) otherwise fails every database test. -->
+        <argLine>-Duser.timezone=UTC</argLine>
     </properties>
     <dependencies>
         <!-- PDF customer statements (Apache License 2.0). -->
