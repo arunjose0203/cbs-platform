@@ -1,5 +1,6 @@
 import {escapeHtml as e} from './model.js';
 import {t} from './i18n.js';
+import {requestSigners} from './signers.js';
 
 export function parseCounts(text){
  if(!text.trim())return [];
@@ -112,7 +113,7 @@ export function createCashUi({api,form,field,refresh,subject=()=>null}){
    else fields+=field('ledgerId','External settlement asset ledger ID','',{help:'Use the approved asset ledger for the external cash source or destination.'});
   }
   fields+=field('businessDate','Business date',data.businessDate,{type:'date'})+field('reference','Reference','',{max:80})+field('reason','Cash evidence / reason','',{full:true,max:500});
-  form(t(kind==='INVENTORY'?'Activate denomination inventory':kind==='OPEN'?'Open till':kind==='CLOSE'?'Close till':kind==='COUNT'?'Record daily cash count':kind==='TRANSFER'?'Transfer cash':kind==='RECEIVE'?'Receive external cash':kind==='DEPOSIT'?'Customer cash deposit':kind==='WITHDRAWAL'?'Customer cash withdrawal':'Dispatch external cash'),fields,d=>api(savedBase,{method:'POST',headers:{'Idempotency-Key':key},body:{expectedVersion:version,kind,branchId:savedBranch.branch_id,locationId:id,destinationId:d.destinationId||null,ledgerId:d.ledgerId||null,code:null,name:null,currency:null,type:null,amount:d.amount||null,businessDate:d.businessDate,reference:d.reference,accountId:d.accountId||null,liabilityLedgerId:kind==='DEPOSIT'?(d.liabilityLedgerId||(data.accounts||[]).find(a=>a.id===d.accountId)?.liability_ledger_id||null):null,counts:p.inventoryEnabled||kind==='INVENTORY'||kind==='OPEN'||kind==='CLOSE'||kind==='COUNT'?parseCounts(d.counts):null,reason:d.reason}}),'Submit for approval');
+  form(t(kind==='INVENTORY'?'Activate denomination inventory':kind==='OPEN'?'Open till':kind==='CLOSE'?'Close till':kind==='COUNT'?'Record daily cash count':kind==='TRANSFER'?'Transfer cash':kind==='RECEIVE'?'Receive external cash':kind==='DEPOSIT'?'Customer cash deposit':kind==='WITHDRAWAL'?'Customer cash withdrawal':'Dispatch external cash'),fields,d=>{const body={expectedVersion:version,kind,branchId:savedBranch.branch_id,locationId:id,destinationId:d.destinationId||null,ledgerId:d.ledgerId||null,code:null,name:null,currency:null,type:null,amount:d.amount||null,businessDate:d.businessDate,reference:d.reference,accountId:d.accountId||null,liabilityLedgerId:kind==='DEPOSIT'?(d.liabilityLedgerId||(data.accounts||[]).find(a=>a.id===d.accountId)?.liability_ledger_id||null):null,counts:p.inventoryEnabled||kind==='INVENTORY'||kind==='OPEN'||kind==='CLOSE'||kind==='COUNT'?parseCounts(d.counts):null,reason:d.reason};const send=signatories=>api(savedBase,{method:'POST',headers:{'Idempotency-Key':key},body:signatories?{...body,signatories}:body});return kind==='WITHDRAWAL'&&d.accountId?requestSigners({api,form,field},'/banks/'+savedBranch.bank_id+'/branches/'+savedBranch.branch_id+'/operations',d.accountId,send):send(null);},'Submit for approval');
  }
  return {render,action};
 }

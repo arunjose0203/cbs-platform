@@ -4,6 +4,12 @@
 
 Use the [Functional Gap & Acceptance Matrix](functional-gap-acceptance-matrix-2026-10-09.md) for the current 34-area functional assessment, 34 proposed acceptance cases, source/test evidence, confirmed limits and prioritized completion work. It reconciles older historical pending lists below. No module has independent bank functional sign-off recorded; existing automated test results do not replace that acceptance.
 
+## Period close and signer capture — 11 November 2026
+
+[Period close and signer capture](period-close-and-signer-capture.md): teller cash withdrawals and M-Pesa payout requests now collect authorising signers for mandated, organization and minors' accounts (branch-scoped mandate lookup added). Banks with an approved close policy must close each month on its last business day: an approved, balanced trial balance per entity/currency; at fiscal year end, closing journals sweep income and expense into retained earnings with balance re-checks, an immutable receipt and safe retry. Approval seals the day in both the control plane and the bank database. No reopening of closed periods (corrections post in the open period). Control V42, bank V25.
+
+Verification: full backend `verify` **169 passed**, 1 opt-in volume test skipped, zero failures/errors; UI **107 passed**; operations **21 passed**. Bank acceptance remains pending.
+
 ## Organizations, joint and minors' accounts — 11 November 2026
 
 [Organizations, joint and minors' accounts](organizations-joint-and-minor-accounts.md): customers can be organizations (registration certificate; type immutable) with approved directors, beneficial owners (ownership %) and representatives; an organization transacts only with a recorded director and no restricted related person. Approved account mandates add joint holders, authorised signatories or guardians with any-one / any-two / all signing rules. Withdrawals, transfers and closure settlements on mandated, organization and minors' accounts must name enough distinct, eligible authorised signers; minors' and organization accounts cannot be debited without a mandate. Statements list all holders; alerts go to every opted-in holder. Teller UI signer capture and M-Pesa payouts from mandated accounts remain open. Control V41.

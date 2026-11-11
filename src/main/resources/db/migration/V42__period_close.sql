@@ -1,0 +1,24 @@
+-- Month-end and year-end close: an approved policy (fiscal year end, retained earnings ledgers)
+-- and approved closes recorded for the last business day of each month.
+ALTER TABLE platform.approval_request DROP CONSTRAINT approval_request_action_check;
+ALTER TABLE platform.approval_request ADD CONSTRAINT approval_request_action_check CHECK(action IN
+ ('BANK_SUSPEND','BANK_RESUME','STAFF_UPDATE','BANK_SETTINGS','CHART_ACCOUNT','LEDGER_ACCOUNT','JOURNAL_POST','DAY_CLOSE','DEPOSIT_PRODUCT','CUSTOMER_CHANGE','DEPOSIT_ACCOUNT','ACCOUNT_FUNDING','ACCOUNT_OPERATION','TRANSACTION_LIMIT','ACCOUNT_BRANCH','BRANCH_LIMIT','CASH_OPERATION','CASH_DENOMINATIONS','SERVICING_POLICY','SERVICING_RUN','COMPLIANCE_REVIEW','PAYMENT_ORDER','PAYMENT_RECONCILE','STATEMENT_ACTION','PAYMENT_CASE','PAYMENT_ACCESS','FX_RATE','FX_RATE_WITHDRAW','FX_TRADE','FX_REVERSAL','CONTRACT_OPEN','CONTRACT_EVENT','FX_BOOK','FX_CLOSING_RATE','FX_VALUATION','CONTRACT_CORRECTION','TERM_SERVICING','CREDIT_POLICY','CREDIT_REVIEW','CREDIT_RELEASE','LOAN_SERVICING','LOAN_FEE','LENDING_ACCESS','NOTIFICATION_PREFERENCE','CUSTOMER_PARTIES','ACCOUNT_MANDATE','PERIOD_CLOSE_POLICY','PERIOD_CLOSE'));
+
+CREATE TABLE platform.period_close_policy (
+ tenant_id UUID PRIMARY KEY REFERENCES platform.tenant(id),
+ fiscal_year_end_month INTEGER NOT NULL CHECK(fiscal_year_end_month BETWEEN 1 AND 12),
+ payload JSONB NOT NULL,
+ approval_id UUID NOT NULL REFERENCES platform.approval_request(id),
+ updated_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
+);
+CREATE TABLE platform.period_close (
+ request_id UUID PRIMARY KEY REFERENCES platform.approval_request(id),
+ tenant_id UUID NOT NULL REFERENCES platform.tenant(id),
+ period_type VARCHAR(5) NOT NULL CHECK(period_type IN ('MONTH','YEAR')),
+ period_end DATE NOT NULL,
+ payload JSONB NOT NULL,
+ maker_subject VARCHAR(200) NOT NULL,reviewer_issuer VARCHAR(512) NOT NULL,reviewer_subject VARCHAR(200) NOT NULL CHECK(reviewer_subject<>maker_subject),correlation_id UUID NOT NULL,
+ completed BOOLEAN NOT NULL DEFAULT false,failure_code VARCHAR(80),attempts INTEGER NOT NULL DEFAULT 0,last_attempt_at TIMESTAMPTZ,completed_at TIMESTAMPTZ,
+ created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+ UNIQUE(tenant_id,period_end)
+);

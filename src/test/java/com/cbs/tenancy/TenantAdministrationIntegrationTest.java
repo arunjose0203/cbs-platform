@@ -55,6 +55,7 @@ class TenantAdministrationIntegrationTest {
     @Autowired com.cbs.approvals.ApprovalService approvals;
     @Autowired com.cbs.notifications.NotificationService notifications;
     @Autowired com.cbs.mandates.MandateService mandates;
+    @Autowired com.cbs.accounting.PeriodCloseService periodCloses;
     @Autowired com.cbs.reference.ReferenceDataService reference;
     @Autowired com.cbs.accounting.ChartService chart;
     @Autowired com.cbs.products.ProductService products;
@@ -221,7 +222,7 @@ class TenantAdministrationIntegrationTest {
         b = provision(b);
         assertThat(a.status()).isEqualTo(Status.ACTIVE);
         assertThat(b.status()).isEqualTo(Status.ACTIVE);
-        assertThat(a.databaseBinding().schemaVersion()).isEqualTo("24");
+        assertThat(a.databaseBinding().schemaVersion()).isEqualTo("25");
         bankGet(a.id(), "operator-a", true).andExpect(status().isOk())
                 .andExpect(jsonPath("$.tenantId").value(a.id().toString())).andExpect(jsonPath("$.databaseBinding").doesNotExist());
         mvc.perform(get("/api/v1/banks/" + b.id() + "/operational-context")
@@ -890,7 +891,7 @@ class TenantAdministrationIntegrationTest {
         ledger.initialize(ADMIN,bank.id(),new ChangeRequest(0L,"Prepare ledgers"));
         assertThat(ledger.list(ADMIN,bank.id(),"",null,null,25,0).storageReady()).isTrue();
         ledger.initialize(ADMIN,bank.id(),new ChangeRequest(service.get(ADMIN,bank.id()).version(),"Recheck upgrade"));
-        assertThat(service.get(ADMIN,bank.id()).databaseBinding().schemaVersion()).isEqualTo("24");
+        assertThat(service.get(ADMIN,bank.id()).databaseBinding().schemaVersion()).isEqualTo("25");
     }
 
     private List<com.cbs.accounting.LedgerModels.Definition> journalLedgers(Tenant bank) throws Exception {
@@ -2781,6 +2782,68 @@ class TenantAdministrationIntegrationTest {
         compliance.open(ADMIN,bank.id(),UUID.randomUUID(),new com.cbs.compliance.ComplianceModels.Open(service.get(ADMIN,bank.id()).version(),joint,com.cbs.compliance.ComplianceModels.Category.KYC_REVIEW,"KYC/JOINT","Fictional restriction"));
         assertCode(()->approvals.operation(ADMIN,UUID.randomUUID(),bank.id(),debit(f,orgAccount,"1",List.of(holder))),"ORGANIZATION_PARTY_RESTRICTED");
         assertCode(()->approvals.operation(ADMIN,UUID.randomUUID(),bank.id(),debit(f,account,"1",List.of(holder,joint))),"MANDATE_SIGNATORY_INELIGIBLE");
+    }
+    private void manualJournal(Tenant bank,UUID debit,UUID credit,String amount)throws Exception{
+        var input=new com.cbs.accounting.JournalModels.Change(service.get(ADMIN,bank.id()).version(),"PL-"+UUID.randomUUID(),"Fictional profit and loss entry",reference.get(ADMIN,bank.id()).businessDate(),bank.legalEntities().getFirst().id(),"INR",
+            List.of(new com.cbs.accounting.JournalModels.Line(debit,com.cbs.accounting.JournalModels.Side.DEBIT,amount),new com.cbs.accounting.JournalModels.Line(credit,com.cbs.accounting.JournalModels.Side.CREDIT,amount)),null,"Fictional entry");
+        var r=approvals.journal(ADMIN,UUID.randomUUID(),bank.id(),input);approveHttp(r.id());journals.deliver(r.id());
+    }
+    private java.math.BigDecimal net(String database,UUID ledger)throws Exception{
+        try(var c=TestDatabases.bank(database);var st=c.createStatement();var r=st.executeQuery("SELECT coalesce(debit,0)-coalesce(credit,0) FROM bank.ledger_balance WHERE ledger_id='"+ledger+"'")){return r.next()?r.getBigDecimal(1):java.math.BigDecimal.ZERO;}
+    }
+    private void closeDay(Tenant bank)throws Exception{
+        var day=days.dashboard(ADMIN,bank.id(),25,0);assertThat(day.blockers()).isEmpty();
+        var closing=approvals.closeDay(ADMIN,UUID.randomUUID(),bank.id(),new com.cbs.accounting.DayCloseModels.Change(day.version(),day.businessDate(),day.nextBusinessDate(),"Close fictional day"));approveHttp(closing.id());days.deliver(closing.id());
+    }
+    @Test void monthAndYearEndClosesSealTheDayAndMoveProfitToRetainedEarnings()throws Exception{
+        var f=fundingFixture("period-close");var bank=f.f().bank();fund(f,"1000");
+        var income=adjustmentLedger(bank,"PC_FEES",com.cbs.accounting.ChartModels.Category.INCOME);var expense=adjustmentLedger(bank,"PC_COSTS",com.cbs.accounting.ChartModels.Category.EXPENSE);
+        var retained=adjustmentLedger(bank,"PC_RETAINED",com.cbs.accounting.ChartModels.Category.EQUITY);var otherEquity=adjustmentLedger(bank,"PC_OTHER",com.cbs.accounting.ChartModels.Category.LIABILITY);
+        var entity=bank.legalEntities().getFirst().id();UUID cash=f.source().id();
+        java.util.function.Function<String,com.cbs.accounting.PeriodCloseModels.Run> run=reason->new com.cbs.accounting.PeriodCloseModels.Run(service.get(ADMIN,bank.id()).version(),reference.get(ADMIN,bank.id()).businessDate(),reason);
+        // Without a policy, closing is optional and not offered.
+        assertCode(()->periodCloses.preview(ADMIN,bank.id(),run.apply("Preview")),"PERIOD_CLOSE_POLICY_REQUIRED");
+        assertCode(()->approvals.periodClosePolicy(ADMIN,UUID.randomUUID(),bank.id(),new com.cbs.accounting.PeriodCloseModels.Policy(service.get(ADMIN,bank.id()).version(),12,List.of(new com.cbs.accounting.PeriodCloseModels.RetainedEarnings(entity,"INR",otherEquity)),"Wrong ledger")),"PERIOD_CLOSE_LEDGER_INVALID");
+        var policy=approvals.periodClosePolicy(ADMIN,UUID.randomUUID(),bank.id(),new com.cbs.accounting.PeriodCloseModels.Policy(service.get(ADMIN,bank.id()).version(),12,List.of(new com.cbs.accounting.PeriodCloseModels.RetainedEarnings(entity,"INR",retained)),"Board-approved accounting policy"));
+        assertCode(()->approvals.decide(ADMIN,policy.id(),com.cbs.approvals.ApprovalModels.Decision.APPROVE,"Own"),"SELF_APPROVAL_FORBIDDEN");approveHttp(policy.id());
+        // Mid-month: no close needed or allowed.
+        assertCode(()->periodCloses.preview(ADMIN,bank.id(),run.apply("Too early")),"PERIOD_CLOSE_NOT_PERIOD_END");
+        // Month end (30 November): the day cannot close until the month is closed; no journals are posted.
+        jdbc.update("UPDATE platform.bank_settings SET business_date=DATE '2026-11-30' WHERE tenant_id=?",bank.id());
+        manualJournal(bank,cash,income,"300");manualJournal(bank,expense,cash,"120.40");
+        assertThat(days.dashboard(ADMIN,bank.id(),25,0).blockers()).containsExactly("PERIOD_CLOSE_REQUIRED");
+        var november=periodCloses.preview(ADMIN,bank.id(),run.apply("Review November"));
+        assertThat(november.type()).isEqualTo(com.cbs.accounting.PeriodCloseModels.Type.MONTH);assertThat(november.journals()).isEmpty();
+        assertThat(november.totals()).singleElement().satisfies(t->{assertThat(t.debits()).isEqualTo(t.credits());assertThat(t.income()).isEqualTo("300");assertThat(t.expense()).isEqualTo("120.4");assertThat(t.netResult()).isEqualTo("179.6");});
+        var monthClose=approvals.periodClose(ADMIN,UUID.randomUUID(),bank.id(),run.apply("Close November"));approveHttp(monthClose.id());
+        // Approval seals the day before posting completes.
+        assertCode(()->approvals.funding(ADMIN,UUID.randomUUID(),bank.id(),fundingChange(f,"5","AFTER-CLOSE")),"PERIOD_CLOSE_FINALIZED");
+        assertThat(days.dashboard(ADMIN,bank.id(),25,0).blockers()).contains("PERIOD_CLOSE_REQUIRED");
+        periodCloses.deliver(monthClose.id());periodCloses.deliver(monthClose.id());
+        assertThat(net("periods",income)).isEqualByComparingTo("-300");
+        closeDay(bank);
+        // Fiscal year end (31 December): closing journals move the result into retained earnings.
+        jdbc.update("UPDATE platform.bank_settings SET business_date=DATE '2026-12-31' WHERE tenant_id=?",bank.id());
+        manualJournal(bank,cash,income,"50");manualJournal(bank,expense,cash,"9.6");
+        var december=periodCloses.preview(ADMIN,bank.id(),run.apply("Review year"));
+        assertThat(december.type()).isEqualTo(com.cbs.accounting.PeriodCloseModels.Type.YEAR);
+        assertThat(december.journals()).singleElement().satisfies(j->{assertThat(j.lines()).extracting(l->l.ledgerId()+":"+l.side()+":"+l.amount()).containsExactlyInAnyOrder(income+":DEBIT:350",expense+":CREDIT:130",retained+":CREDIT:220");});
+        var yearClose=approvals.periodClose(ADMIN,UUID.randomUUID(),bank.id(),run.apply("Close the year"));approveHttp(yearClose.id());
+        // A posting that sneaks in at the bank after approval is caught, not swept silently.
+        try(var c=TestDatabases.bank("periods");var st=c.createStatement()){st.execute("CREATE TRIGGER block_close BEFORE INSERT ON bank.period_close FOR EACH ROW EXECUTE FUNCTION bank.reject_ledger_event_change()");}
+        periodCloses.deliver(yearClose.id());assertThat(jdbc.queryForObject("SELECT failure_code FROM platform.period_close WHERE request_id=?",String.class,yearClose.id())).isEqualTo("PERIOD_CLOSE_DATABASE_UNAVAILABLE");
+        try(var c=TestDatabases.bank("periods");var st=c.createStatement()){st.execute("DROP TRIGGER block_close ON bank.period_close");}
+        new TransactionTemplate(transactionManager).executeWithoutResult(t->{periodCloses.deliver(yearClose.id());t.setRollbackOnly();});
+        periodCloses.deliver(yearClose.id());periodCloses.deliver(yearClose.id());
+        assertThat(jdbc.queryForObject("SELECT completed FROM platform.period_close WHERE request_id=?",Boolean.class,yearClose.id())).isTrue();
+        assertThat(net("periods",income)).isEqualByComparingTo("0");assertThat(net("periods",expense)).isEqualByComparingTo("0");assertThat(net("periods",retained)).isEqualByComparingTo("-220");
+        try(var c=TestDatabases.bank("periods");var st=c.createStatement()){
+            try(var r=st.executeQuery("SELECT count(*) FROM bank.journal WHERE reference LIKE 'YEC-%'")){r.next();assertThat(r.getInt(1)).isEqualTo(1);}
+            assertThatThrownBy(()->st.executeUpdate("INSERT INTO bank.journal SELECT (jsonb_populate_record(null::bank.journal,to_jsonb(j)||jsonb_build_object('id',gen_random_uuid(),'reference','LATE-'||gen_random_uuid(),'reversal_of',null))).* FROM bank.journal j WHERE j.reference LIKE 'PL-%' AND j.business_date=DATE '2026-12-31' LIMIT 1")).isInstanceOf(SQLException.class).hasMessageContaining("Period is closed");
+            assertThatThrownBy(()->st.executeUpdate("DELETE FROM bank.period_close")).isInstanceOf(SQLException.class);
+        }
+        closeDay(bank);
+        assertThat(reference.get(ADMIN,bank.id()).businessDate().getYear()).isEqualTo(2027);
     }
     private void verifyDenominationInventory(FundingFixture f,UUID branch,UUID vault,Actor maker,Actor reviewer)throws Exception{
         var bank=f.f().bank();

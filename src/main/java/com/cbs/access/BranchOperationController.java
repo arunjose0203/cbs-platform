@@ -21,6 +21,15 @@ public class BranchOperationController {
   var who=actor(jwt);
   return jdbc.queryForList("SELECT b.tenant_id AS bank_id,b.id AS branch_id,b.display_name AS branch_name,t.display_name AS bank_name,CASE WHEN tm.role='BANK_AUDITOR' THEN 'AUDITOR' ELSE m.role END AS role FROM platform.branch_membership m JOIN platform.staff_identity s ON s.id=m.staff_id JOIN platform.branch b ON b.id=m.branch_id AND b.tenant_id=m.tenant_id JOIN platform.tenant t ON t.id=b.tenant_id JOIN platform.tenant_membership tm ON tm.tenant_id=t.id AND tm.actor_issuer=s.issuer AND tm.actor_subject=s.subject WHERE s.issuer=? AND s.subject=? AND s.active AND m.active AND b.active AND t.status='ACTIVE' AND tm.active ORDER BY t.display_name,b.code LIMIT 100",who.issuer(),who.subject());
  }
+ private com.cbs.mandates.MandateService mandates;
+ @org.springframework.beans.factory.annotation.Autowired void mandates(com.cbs.mandates.MandateService mandates){this.mandates=mandates;}
+ /** Lets branch staff see who may authorise debits on an account assigned to their branch. */
+ @GetMapping("/banks/{bankId}/branches/{branchId}/operations/accounts/{accountId}/mandate")
+ com.cbs.mandates.MandateModels.View mandate(JwtAuthenticationToken jwt,@PathVariable UUID bankId,@PathVariable UUID branchId,@PathVariable UUID accountId){
+  branches.check(actor(jwt),bankId,branchId,AccessModels.Permission.READ_BRANCH);
+  if(!branchId.equals(scope.branch(bankId,accountId)))throw new TenantException(404,"ACCOUNT_NOT_FOUND","Account is not assigned to this branch");
+  return mandates.view(tenants.get(bankId,false),accountId);
+ }
  @PostMapping("/admin/tenants/{bankId}/account-branches") @ResponseStatus(org.springframework.http.HttpStatus.ACCEPTED)
  ApprovalModels.Request assign(JwtAuthenticationToken jwt,@PathVariable UUID bankId,@RequestHeader("Idempotency-Key") UUID key,@Valid @RequestBody BranchOperations.Assignment input){return approvals.assignment(actor(jwt),key,bankId,input);}
  @PostMapping("/admin/tenants/{bankId}/branch-limits") @ResponseStatus(org.springframework.http.HttpStatus.ACCEPTED)

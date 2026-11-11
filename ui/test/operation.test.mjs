@@ -32,3 +32,11 @@ test('debits on a joint account collect the required distinct signers',async()=>
  await submit({assetLedgerId:'cash',signer0:'h',signer1:'h',amount:'5',businessDate:'2026-11-11',reference:'W',reason:'Slip'});
  assert.deepEqual(posts[1].body.signatories,['h']);
 });
+test('signer step submits immediately for ordinary accounts and asks for signers otherwise',async()=>{
+ const {requestSigners}=await import('../src/signers.js');let html,submitForm;const sent=[];
+ const deps=m=>({api:async()=>m,form:(_t,h,fn)=>{html=h;submitForm=fn;},field:(name)=>'['+name+']'});
+ await requestSigners(deps({required:false}),'/base','acc',s=>sent.push(s));assert.deepEqual(sent,[null]);
+ await assert.rejects(requestSigners(deps({required:true,configured:false}),'/base','acc',()=>{}),/approved mandate/);
+ const keep=await requestSigners(deps({required:true,configured:true,signaturesNeeded:2,signers:[{customerId:'a',customerNumber:'C1',role:'HOLDER'},{customerId:'b',customerNumber:'C2',role:'JOINT_HOLDER'}]}),'/base','acc',s=>sent.push(s));
+ assert.deepEqual(keep,{keepOpen:true});assert.match(html,/\[signer0\]\[signer1\]/);await submitForm({signer0:'a',signer1:'b'});assert.deepEqual(sent[1],['a','b']);
+});

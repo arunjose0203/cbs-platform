@@ -27,14 +27,18 @@ public class DayCloseService {
     public static void requireOpen(JdbcTemplate jdbc,UUID bankId){
         if(jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM platform.servicing_run r JOIN platform.bank_settings b ON b.tenant_id=r.tenant_id WHERE r.tenant_id=? AND r.business_date=b.business_date)",Boolean.class,bankId))throw error(409,"SERVICING_DAY_FINALIZED");
         if(jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM platform.business_day_close WHERE tenant_id=? AND NOT completed)",Boolean.class,bankId))throw error(409,"DAY_CLOSE_IN_PROGRESS");
+        if(jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM platform.period_close p JOIN platform.bank_settings b ON b.tenant_id=p.tenant_id WHERE p.tenant_id=? AND p.period_end=b.business_date)",Boolean.class,bankId))throw error(409,"PERIOD_CLOSE_FINALIZED");
     }
+    /** True on the last working day of a calendar month. */
+    public boolean periodEnd(Tenant bank){var s=reference.read(bank);return !s.businessDate().withDayOfMonth(1).equals(next(bank).withDayOfMonth(1));}
+    public void requireReadyForPeriodClose(Tenant bank,UUID request){var problems=blockers(bank,request).stream().filter(x->!x.equals("PERIOD_CLOSE_REQUIRED")).toList();if(!problems.isEmpty())throw error(409,problems.getFirst());}
     private LocalDate next(Tenant bank){var s=reference.read(bank);return ReferenceDataService.nextWorkingDay(s.businessDate(),s.weekendDays(),s.holidays());}
     private List<String> blockers(Tenant bank,UUID ownRequest){
         List<String> result=new ArrayList<>();
         if(bank.status()!=Status.ACTIVE){result.add("LEDGER_BANK_NOT_ACTIVE");return result;}
         if(!store.ready(bank)){result.add("DAY_CLOSE_STORAGE_NOT_READY");return result;}
         if(jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM platform.business_day_close WHERE tenant_id=? AND NOT completed)",Boolean.class,bank.id()))result.add("DAY_CLOSE_IN_PROGRESS");
-        if(jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM platform.approval_request WHERE bank_id=? AND status='PENDING' AND action IN ('JOURNAL_POST','LEDGER_ACCOUNT','DAY_CLOSE','ACCOUNT_FUNDING','ACCOUNT_OPERATION','CASH_OPERATION','SERVICING_RUN','SERVICING_POLICY','CASH_DENOMINATIONS','PAYMENT_ORDER','PAYMENT_RECONCILE','STATEMENT_ACTION','PAYMENT_CASE','PAYMENT_ACCESS','FX_TRADE','FX_REVERSAL','FX_BOOK','FX_CLOSING_RATE','FX_VALUATION','CONTRACT_OPEN','CONTRACT_EVENT','CONTRACT_CORRECTION','TERM_SERVICING','LOAN_SERVICING','LOAN_FEE') AND id<>?)",Boolean.class,bank.id(),ownRequest==null?new UUID(0,0):ownRequest))result.add("DAY_CLOSE_PENDING_APPROVALS");
+        if(jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM platform.approval_request WHERE bank_id=? AND status='PENDING' AND action IN ('JOURNAL_POST','LEDGER_ACCOUNT','DAY_CLOSE','ACCOUNT_FUNDING','ACCOUNT_OPERATION','CASH_OPERATION','SERVICING_RUN','SERVICING_POLICY','CASH_DENOMINATIONS','PAYMENT_ORDER','PAYMENT_RECONCILE','STATEMENT_ACTION','PAYMENT_CASE','PAYMENT_ACCESS','FX_TRADE','FX_REVERSAL','FX_BOOK','FX_CLOSING_RATE','FX_VALUATION','CONTRACT_OPEN','CONTRACT_EVENT','CONTRACT_CORRECTION','TERM_SERVICING','LOAN_SERVICING','LOAN_FEE','PERIOD_CLOSE','PERIOD_CLOSE_POLICY') AND id<>?)",Boolean.class,bank.id(),ownRequest==null?new UUID(0,0):ownRequest))result.add("DAY_CLOSE_PENDING_APPROVALS");
         if(jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM platform.journal_delivery WHERE tenant_id=? AND NOT completed) OR EXISTS(SELECT 1 FROM platform.ledger_delivery WHERE tenant_id=? AND NOT completed)",Boolean.class,bank.id(),bank.id()))result.add("DAY_CLOSE_PENDING_DELIVERIES");
         if(jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM platform.account_operation WHERE tenant_id=? AND NOT completed)",Boolean.class,bank.id())&&!result.contains("DAY_CLOSE_PENDING_DELIVERIES"))result.add("DAY_CLOSE_PENDING_DELIVERIES");
         if(jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM platform.cash_delivery WHERE tenant_id=? AND NOT completed)",Boolean.class,bank.id()))result.add("CASH_DELIVERY_PENDING");
@@ -52,6 +56,8 @@ public class DayCloseService {
         if(jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM platform.fx_position p WHERE p.tenant_id=? AND NOT EXISTS(SELECT 1 FROM platform.fx_book_ledger l WHERE l.ledger_id=p.ledger_id))",Boolean.class,bank.id()))result.add("FX_BOOK_POLICY_REQUIRED");
         if(jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM platform.fx_book b JOIN platform.bank_settings s ON s.tenant_id=b.tenant_id WHERE b.tenant_id=? AND NOT EXISTS(SELECT 1 FROM platform.fx_valuation v WHERE v.book_id=b.id AND v.business_date=s.business_date AND v.completed))",Boolean.class,bank.id()))result.add("FX_VALUATION_REQUIRED");
         if(!store.balanced(bank))result.add("DAY_CLOSE_UNRECONCILED");
+        // Banks with an approved period-close policy must close each month before its last day closes.
+        if(periodEnd(bank)&&jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM platform.period_close_policy WHERE tenant_id=?) AND NOT EXISTS(SELECT 1 FROM platform.period_close p JOIN platform.bank_settings b ON b.tenant_id=p.tenant_id WHERE p.tenant_id=? AND p.period_end=b.business_date AND p.completed)",Boolean.class,bank.id(),bank.id()))result.add("PERIOD_CLOSE_REQUIRED");
         return result;
     }
     public void requireReadyForServicing(Tenant bank,UUID request){var problems=blockers(bank,request).stream().filter(x->!x.equals("SERVICING_REQUIRED")).toList();if(!problems.isEmpty())throw error(409,problems.getFirst());}

@@ -23,6 +23,10 @@ public class LedgerDeliveryWorker {
     private final DayCloseService days;
     private final com.cbs.customers.CustomerService customers;
     private com.cbs.notifications.NotificationService notifications;
+    private PeriodCloseService periods;
+    @org.springframework.beans.factory.annotation.Autowired void periods(PeriodCloseService periods){this.periods=periods;}
+    @Scheduled(fixedDelay=30000,initialDelay=35000)
+    public void postPeriodCloses(){try{for(var id:periods.pending())try{periods.deliver(id);}catch(RuntimeException ignored){org.slf4j.LoggerFactory.getLogger(getClass()).warn("Period close remains pending");}}catch(RuntimeException ignored){org.slf4j.LoggerFactory.getLogger(getClass()).warn("Period close polling failed");}}
     @org.springframework.beans.factory.annotation.Autowired void notifications(com.cbs.notifications.NotificationService notifications){this.notifications=notifications;}
     /** Sends queued customer alerts; a missing provider leaves them queued. */
     @Scheduled(fixedDelay=15000,initialDelay=20000)
