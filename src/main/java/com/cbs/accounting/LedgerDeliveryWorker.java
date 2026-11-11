@@ -22,6 +22,11 @@ public class LedgerDeliveryWorker {
     private final JournalService journals;
     private final DayCloseService days;
     private final com.cbs.customers.CustomerService customers;
+    private com.cbs.notifications.NotificationService notifications;
+    @org.springframework.beans.factory.annotation.Autowired void notifications(com.cbs.notifications.NotificationService notifications){this.notifications=notifications;}
+    /** Sends queued customer alerts; a missing provider leaves them queued. */
+    @Scheduled(fixedDelay=15000,initialDelay=20000)
+    public void sendNotifications(){try{notifications.dispatch();}catch(RuntimeException ignored){org.slf4j.LoggerFactory.getLogger(getClass()).warn("Customer alert delivery will be retried");}}
     public LedgerDeliveryWorker(com.cbs.fx.FxValuationService valuations,com.cbs.contracts.ContractService contracts,com.cbs.fx.FxTradeService fx,com.cbs.payments.PaymentReturnService returns,com.cbs.servicing.ServicingService servicing,com.cbs.cash.CashService cash,LedgerService ledgers,JournalService journals,DayCloseService days,com.cbs.customers.CustomerService customers,com.cbs.accounts.AccountService accounts,com.cbs.accounts.FundingService funding,com.cbs.accounts.OperationService operations){this.valuations=valuations;this.contracts=contracts;this.fx=fx;this.returns=returns;this.servicing=servicing;this.cash=cash;this.operations=operations;this.funding=funding;this.accounts=accounts;this.customers=customers;this.ledgers=ledgers;this.journals=journals;this.days=days;}
     @Scheduled(fixedDelay=30000,initialDelay=30000)
     public void postOperations(){

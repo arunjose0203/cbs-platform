@@ -113,6 +113,9 @@ public class ApprovalService {
     public Request cash(Actor actor,UUID key,UUID bank,com.cbs.cash.CashModels.Change input){return submit(actor,key,bank,Action.CASH_OPERATION,input.expectedVersion(),input.reason(),input);}
     public Request assignment(Actor actor,UUID key,UUID bank,com.cbs.access.BranchOperations.Assignment input){return submit(actor,key,bank,Action.ACCOUNT_BRANCH,input.expectedVersion(),input.reason(),input);}
     public Request branchLimit(Actor actor,UUID key,UUID bank,com.cbs.access.BranchOperations.Limit input){return submit(actor,key,bank,Action.BRANCH_LIMIT,input.expectedVersion(),input.reason(),input);}
+    private com.cbs.notifications.NotificationService notifications;
+    @org.springframework.beans.factory.annotation.Autowired void notifications(com.cbs.notifications.NotificationService notifications){this.notifications=notifications;}
+    public Request notificationPreference(Actor actor,UUID key,UUID bankId,com.cbs.notifications.NotificationModels.Preference input){return submit(actor,key,bankId,Action.NOTIFICATION_PREFERENCE,input.expectedVersion(),input.reason(),input);}
     public Request limits(Actor actor,UUID key,UUID bankId,com.cbs.access.TransactionLimits.Change input){return submit(actor,key,bankId,Action.TRANSACTION_LIMIT,input.expectedVersion(),input.reason(),input);}
     public Request operation(Actor actor,UUID key,UUID bankId,com.cbs.accounts.OperationModels.Change input){return submit(actor,key,bankId,Action.ACCOUNT_OPERATION,input.expectedVersion(),input.reason(),input);}
     public Request branchOperation(Actor actor,UUID key,UUID bankId,UUID branchId,com.cbs.accounts.OperationModels.Change input){
@@ -231,6 +234,9 @@ public class ApprovalService {
             } else if(action==Action.BRANCH_LIMIT) {
                 var bank=tenantRepository.get(id,true);var change=(com.cbs.access.BranchOperations.Limit)input;branchOperations.validate(bank,change);
                 before=branchOperations.before(id,change);after=branchOperations.values(change);label="Branch transaction limit";bankId=id;
+            } else if(action==Action.NOTIFICATION_PREFERENCE) {
+                var bank=tenantRepository.get(id,true);var change=(com.cbs.notifications.NotificationModels.Preference)input;notifications.validate(bank,change);
+                before=notifications.before(id,change.customerId());after=notifications.values(change);label="Customer alert preference";bankId=id;
             } else if(action==Action.TRANSACTION_LIMIT) {
                 var bank=tenantRepository.get(id,true);var change=(com.cbs.access.TransactionLimits.Change)input;
                 com.cbs.access.TransactionLimits.validate(bank,change);before=com.cbs.access.TransactionLimits.current(jdbc,id,change.currency(),change.operation());after=com.cbs.access.TransactionLimits.values(change);label=bank.displayName()+" — transaction limits";bankId=id;
@@ -409,6 +415,10 @@ public class ApprovalService {
                         case BRANCH_LIMIT -> {
                             String payload=jdbc.queryForObject("SELECT payload::text FROM platform.approval_request WHERE id=?",String.class,id);
                             branchOperations.apply(actor,request.targetId(),JSON.readValue(payload,com.cbs.access.BranchOperations.Limit.class),auditReason);
+                        }
+                        case NOTIFICATION_PREFERENCE -> {
+                            String payload=jdbc.queryForObject("SELECT payload::text FROM platform.approval_request WHERE id=?",String.class,id);
+                            notifications.apply(actor,request.targetId(),JSON.readValue(payload,com.cbs.notifications.NotificationModels.Preference.class),id);
                         }
                         case TRANSACTION_LIMIT -> {
                             String payload=jdbc.queryForObject("SELECT payload::text FROM platform.approval_request WHERE id=?",String.class,id);

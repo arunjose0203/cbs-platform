@@ -23,8 +23,8 @@ public class OperationService {
  private final com.cbs.access.BranchOperations branches;
  private final JdbcTemplate jdbc;private final TenantRepository tenants;private final AccountService accounts;
  private final CustomerService customers;private final BankOperationStore store;private final JournalService journals;
- private final ReferenceDataService reference;private final TransactionTemplate tx;private final AccountClosureService closures;
- public OperationService(com.cbs.access.BranchOperations branches,JdbcTemplate jdbc,TenantRepository tenants,AccountService accounts,CustomerService customers,BankOperationStore store,JournalService journals,ReferenceDataService reference,PlatformTransactionManager manager,AccountClosureService closures){this.closures=closures;this.branches=branches;this.jdbc=jdbc;this.tenants=tenants;this.accounts=accounts;this.customers=customers;this.store=store;this.journals=journals;this.reference=reference;this.tx=new TransactionTemplate(manager);}
+ private final ReferenceDataService reference;private final TransactionTemplate tx;private final AccountClosureService closures;private final com.cbs.notifications.NotificationService notifications;
+ public OperationService(com.cbs.access.BranchOperations branches,JdbcTemplate jdbc,TenantRepository tenants,AccountService accounts,CustomerService customers,BankOperationStore store,JournalService journals,ReferenceDataService reference,PlatformTransactionManager manager,AccountClosureService closures,com.cbs.notifications.NotificationService notifications){this.closures=closures;this.notifications=notifications;this.branches=branches;this.jdbc=jdbc;this.tenants=tenants;this.accounts=accounts;this.customers=customers;this.store=store;this.journals=journals;this.reference=reference;this.tx=new TransactionTemplate(manager);}
  public static void requireIdle(JdbcTemplate jdbc,UUID account){
   if(jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM platform.contract_delivery WHERE account_id=? AND NOT completed)",Boolean.class,account))throw error("ACCOUNT_OPERATION_PENDING");
   if(jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM platform.fx_trade WHERE (source_account=? OR target_account=?) AND NOT completed)",Boolean.class,account,account))throw error("ACCOUNT_OPERATION_PENDING");
@@ -122,7 +122,19 @@ public class OperationService {
   jdbc.update("UPDATE platform.journal_delivery SET failure_code=? WHERE request_id=?",failure,id);if(failure!=null)return;
   jdbc.update("UPDATE platform.account_operation SET completed=true,completed_at=clock_timestamp() WHERE request_id=?",id);
   jdbc.update("UPDATE platform.journal_delivery SET completed=true,completed_at=clock_timestamp(),failure_code=NULL WHERE request_id=?",id);
+  alert(bank.id(),job.entry());
   tenants.audit(new Actor(job.issuer(),job.checker(),true,job.correlationId()),bank.id(),"ACCOUNT_OPERATION_POSTED",bank.version(),bank.status(),bank.status(),"Posted approved request "+id,null,null,Map.of("requestId",id,"operation",job.entry().change().kind().name()));
  });}
+ /** Records customer alerts for posted money movements (holds and releases move no money). */
+ private void alert(UUID bankId,Entry e){
+  var c=e.change();if(e.journal()==null)return;var N=com.cbs.notifications.NotificationModels.Event.class;
+  java.util.function.BiConsumer<UUID,com.cbs.notifications.NotificationModels.Event> note=(account,event)->notifications.record(new com.cbs.notifications.NotificationModels.Movement(bankId,account,event,e.id(),c.amount(),e.journal().currency(),c.businessDate(),c.reference()));
+  switch(c.kind()){
+   case WITHDRAWAL,FUNDING_REVERSAL,CLOSURE_SETTLEMENT->note.accept(c.accountId(),com.cbs.notifications.NotificationModels.Event.DEBIT);
+   case WITHDRAWAL_REVERSAL->note.accept(c.accountId(),com.cbs.notifications.NotificationModels.Event.CREDIT);
+   case TRANSFER,TRANSFER_REVERSAL->{note.accept(c.accountId(),com.cbs.notifications.NotificationModels.Event.DEBIT);note.accept(c.destinationId(),com.cbs.notifications.NotificationModels.Event.CREDIT);}
+   default->{}
+  }
+ }
  private static TenantException error(String code){return new TenantException(409,code,"Account operation could not be completed");}
 }

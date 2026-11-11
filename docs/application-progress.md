@@ -4,6 +4,12 @@
 
 Use the [Functional Gap & Acceptance Matrix](functional-gap-acceptance-matrix-2026-10-09.md) for the current 34-area functional assessment, 34 proposed acceptance cases, source/test evidence, confirmed limits and prioritized completion work. It reconciles older historical pending lists below. No module has independent bank functional sign-off recorded; existing automated test results do not replace that acceptance.
 
+## Statements and customer alerts — 11 November 2026
+
+[Statements and alerts](statements-and-alerts.md): CSV statement exports now stream with no 10,000-entry cap; printable A4 PDF statements in English, French and Swahili with exact (never truncated) amounts, totals and page numbering. Customer credit/debit alerts use an approved, independently reviewed contact preference (SMS/email, language, events, consent reference) and a transactional outbox written with each posting; alerts carry no balances or full account numbers. Delivery retries up to 5 times with an audited manual resend. No real SMS/email provider is connected yet (alerts stay queued); a test sender exists for development and is refused in production. Control V40.
+
+Verification: full backend `verify` **167 passed**, 1 opt-in volume test skipped, zero failures/errors; UI **103 passed**; operations **21 passed**. Bank acceptance remains pending.
+
 ## Daily processing at bank scale — 11 November 2026
 
 [Chunked daily processing](servicing-chunked-batches.md): the 1,000-account cap is removed. Approved runs post in resumable chunks (default 500 accounts, one bank transaction and immutable receipt per chunk); a failed chunk stops the run with its code and a retry resumes there, with the day sealed until all chunks post. Frozen accounts, ineligible or compliance-restricted customers and accounts unable to afford the day's fee are excluded individually with recorded, approved reasons instead of blocking the run; excluded accounts receive nothing for that period (bank decision pending on accrual for frozen accounts and catch-up). Interval limit raised from 31 to 366 days. Preparation reads balances in bulk. Requires bank schema V24 and control V39.

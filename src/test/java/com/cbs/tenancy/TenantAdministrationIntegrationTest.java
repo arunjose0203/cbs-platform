@@ -41,7 +41,7 @@ import tools.jackson.databind.ObjectMapper;
 @SpringBootTest(properties = {
         "cbs.ledger.delivery-enabled=false", "cbs.security.enabled=true", "cbs.security.issuer=https://identity.cbs.test",
         "cbs.security.jwk-set-uri=https://identity.cbs.test/jwks", "cbs.security.audience=cbs-api",
-        "cbs.servicing.chunk-size=2"
+        "cbs.servicing.chunk-size=2", "cbs.notifications.sender=test"
 })
 @AutoConfigureMockMvc
 @Import(TestIdentity.Configuration.class)
@@ -53,6 +53,7 @@ class TenantAdministrationIntegrationTest {
     @org.springframework.test.context.bean.override.mockito.MockitoBean com.cbs.payments.MpesaGateway mpesa;
     @Autowired com.cbs.compliance.ComplianceService compliance;
     @Autowired com.cbs.approvals.ApprovalService approvals;
+    @Autowired com.cbs.notifications.NotificationService notifications;
     @Autowired com.cbs.reference.ReferenceDataService reference;
     @Autowired com.cbs.accounting.ChartService chart;
     @Autowired com.cbs.products.ProductService products;
@@ -2637,6 +2638,58 @@ class TenantAdministrationIntegrationTest {
             try(var r=st.executeQuery("SELECT count(*) FROM bank.servicing_event e WHERE e.opening_balance+e.net_amount<>(SELECT posted FROM bank.customer_position p WHERE p.account_id=e.account_id)")){r.next();assertThat(r.getInt(1)).isZero();}
         }
         System.out.printf("VOLUME accounts=%d chunks=%d open+fund=%.1fs preview=%.1fs approve=%.1fs deliver=%.1fs%n",n,preview.chunkCount(),(opened-started)/1e9,(t1-t0)/1e9,(t2-t1)/1e9,(t3-t2)/1e9);
+    }
+    @Test void statementsStreamAsCsvAndPdfAndAlertsFollowApprovedPreferences()throws Exception{
+        var f=fundingFixture("statement-alerts");var bank=f.f().bank();
+                java.util.function.Function<com.cbs.notifications.NotificationModels.Preference,com.cbs.approvals.ApprovalModels.Request> submit=p->approvals.notificationPreference(ADMIN,UUID.randomUUID(),bank.id(),p);
+        java.util.function.BiFunction<String,String,com.cbs.notifications.NotificationModels.Preference> pref=(channel,destination)->new com.cbs.notifications.NotificationModels.Preference(service.get(ADMIN,bank.id()).version(),f.f().customer(),com.cbs.notifications.NotificationModels.Channel.valueOf(channel),destination,"sw",java.util.EnumSet.allOf(com.cbs.notifications.NotificationModels.Event.class),"CONSENT/FORM-7","Customer signed alert consent");
+        // No preference: postings create no alert.
+        fund(f,"1000");assertThat(jdbc.queryForObject("SELECT count(*) FROM platform.notification WHERE tenant_id=?",Integer.class,bank.id())).isZero();
+        assertCode(()->submit.apply(pref.apply("SMS","0712345678")),"NOTIFICATION_DESTINATION_INVALID");
+        assertCode(()->submit.apply(pref.apply("EMAIL","not-an-email")),"NOTIFICATION_DESTINATION_INVALID");
+        assertCode(()->submit.apply(pref.apply("NONE","+254712345678")),"NOTIFICATION_DESTINATION_INVALID");
+        var request=submit.apply(pref.apply("SMS","+254712345678"));
+        assertCode(()->approvals.decide(ADMIN,request.id(),com.cbs.approvals.ApprovalModels.Decision.APPROVE,"Own"),"SELF_APPROVAL_FORBIDDEN");
+        assertThat(notifications.preference(ADMIN,bank.id(),f.f().customer())).isNull();
+        approveHttp(request.id());
+        assertThat(notifications.preference(ADMIN,bank.id(),f.f().customer()).destination()).isEqualTo("+254712345678");
+        // Credit and debit alerts are recorded with the posting, once, in the customer's language and without balances.
+        var funded=fund(f,"250.75");funding.deliver(funded);
+        var withdrawal=postOperation(f,operationChange(f,com.cbs.accounts.OperationModels.Kind.WITHDRAWAL,"40.5",null,null));
+        postOperation(f,operationChange(f,com.cbs.accounts.OperationModels.Kind.HOLD,"1",null,null));
+        var rows=jdbc.queryForList("SELECT event,source_id,body,status,destination FROM platform.notification WHERE tenant_id=? ORDER BY created_at",bank.id());
+        assertThat(rows).hasSize(2);
+        assertThat(rows.get(0)).containsEntry("event","CREDIT").containsEntry("source_id",funded).containsEntry("status","PENDING");
+        assertThat((String)rows.get(0).get("body")).contains("250.75","zimeingizwa","Kumb.").doesNotContain("1250.75");
+        assertThat(rows.get(1)).containsEntry("event","DEBIT").containsEntry("source_id",withdrawal);assertThat((String)rows.get(1).get("body")).contains("40.5","zimetolewa");
+        var accountNumber=accounts.detail(ADMIN,bank.id(),f.account()).definition().accountNumber();
+        assertThat((String)rows.get(0).get("body")).contains(accountNumber.substring(accountNumber.length()-4)).doesNotContain(accountNumber.length()>4?accountNumber:"#");
+        // The test sender delivers; the list masks destinations.
+        assertThat(notifications.dispatch()).isEqualTo(2);assertThat(notifications.dispatch()).isZero();
+        var page=notifications.list(ADMIN,bank.id(),"SENT",null,25,0);assertThat(page.total()).isEqualTo(2);
+        assertThat(page.items()).allSatisfy(n->{assertThat(n.destination()).isEqualTo("+254******678");assertThat(n.provider()).isEqualTo("TEST");assertThat(n.providerReference()).startsWith("TEST-");});
+        // A failing destination is retried, then marked failed; an administrator can queue it again.
+        approveHttp(submit.apply(new com.cbs.notifications.NotificationModels.Preference(service.get(ADMIN,bank.id()).version(),f.f().customer(),com.cbs.notifications.NotificationModels.Channel.SMS,"+254700000000","en",java.util.EnumSet.of(com.cbs.notifications.NotificationModels.Event.CREDIT),"CONSENT/FORM-8","Changed phone")).id());
+        fund(f,"10");postOperation(f,operationChange(f,com.cbs.accounts.OperationModels.Kind.WITHDRAWAL,"5",null,null));
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM platform.notification WHERE tenant_id=? AND status='PENDING'",Integer.class,bank.id())).isEqualTo(1);
+        for(int i=0;i<5;i++)notifications.dispatch();
+        var failed=notifications.list(ADMIN,bank.id(),"FAILED",null,25,0).items();assertThat(failed).singleElement().satisfies(n->{assertThat(n.attempts()).isEqualTo(5);assertThat(n.failureCode()).isEqualTo("TEST_PROVIDER_REJECTED");assertThat(n.body()).contains("credited");});
+        notifications.retry(ADMIN,bank.id(),failed.getFirst().id());assertCode(()->notifications.retry(ADMIN,bank.id(),failed.getFirst().id()),"NOTIFICATION_NOT_RETRYABLE");
+        assertThat(notifications.list(ADMIN,bank.id(),"PENDING",null,25,0).total()).isEqualTo(1);
+        String base="/api/v1/admin/tenants/"+bank.id();
+        mvc.perform(get(base+"/notifications")).andExpect(status().isUnauthorized());
+        mvc.perform(admin(get(base+"/notifications?status=SENT"))).andExpect(status().isOk()).andExpect(jsonPath("$.providerConfigured").value(true)).andExpect(jsonPath("$.items[0].destination").value("+254******678"));
+        // Statements: whole-range CSV and a PDF with exact balances; bad inputs are rejected before any bytes are sent.
+        var date=reference.get(ADMIN,bank.id()).businessDate();var closing=statements.read(ADMIN,bank.id(),f.account(),date,date,25,0);
+        String path=base+"/accounts/"+f.account()+"/statement";
+        mvc.perform(get(path+"/pdf?from="+date+"&to="+date)).andExpect(status().isUnauthorized());
+        var csv=mvc.perform(admin(get(path+"/export?from="+date+"&to="+date))).andExpect(status().isOk()).andExpect(header().string("Cache-Control","no-store")).andReturn().getResponse().getContentAsString(java.nio.charset.StandardCharsets.UTF_8);
+        assertThat(csv.lines().count()).isEqualTo(4+closing.total());assertThat(csv).contains(closing.closingBalance());
+        var pdf=mvc.perform(admin(get(path+"/pdf?from="+date+"&to="+date+"&language=fr"))).andExpect(status().isOk()).andExpect(header().string("Content-Type","application/pdf")).andExpect(header().string("Cache-Control","no-store")).andReturn().getResponse().getContentAsByteArray();
+        try(var doc=org.apache.pdfbox.Loader.loadPDF(pdf)){var text=new org.apache.pdfbox.text.PDFTextStripper().getText(doc);assertThat(text).contains("Relevé de compte",accountNumber,closing.closingBalance(),"Page 1 sur");}
+        mvc.perform(admin(get(path+"/pdf?from="+date+"&to="+date+"&language=de"))).andExpect(status().isBadRequest());
+        mvc.perform(admin(get(path+"/pdf?from="+date+"&to="+date.plusDays(400)))).andExpect(status().isBadRequest());
+        assertThat(jdbc.queryForList("SELECT change_details->>'format' FROM platform.tenant_audit WHERE tenant_id=? AND action='ACCOUNT_STATEMENT_EXPORTED'",String.class,bank.id())).contains("CSV","PDF");
     }
     private void verifyDenominationInventory(FundingFixture f,UUID branch,UUID vault,Actor maker,Actor reviewer)throws Exception{
         var bank=f.f().bank();

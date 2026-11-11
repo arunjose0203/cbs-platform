@@ -18,8 +18,8 @@ import tools.jackson.databind.json.JsonMapper;
 @ConditionalOnProperty(name="cbs.tenancy.enabled",havingValue="true",matchIfMissing=true)
 public class FundingService {
  private static final JsonMapper JSON=JsonMapper.builder().build();
- private final JdbcTemplate jdbc;private final TenantRepository tenants;private final AccountService accounts;private final CustomerService customers;private final BankFundingStore store;private final JournalService journals;private final TransactionTemplate tx;
- public FundingService(JdbcTemplate jdbc,TenantRepository tenants,AccountService accounts,CustomerService customers,BankFundingStore store,JournalService journals,PlatformTransactionManager manager){this.jdbc=jdbc;this.tenants=tenants;this.accounts=accounts;this.customers=customers;this.store=store;this.journals=journals;this.tx=new TransactionTemplate(manager);}
+ private final com.cbs.notifications.NotificationService notifications;private final JdbcTemplate jdbc;private final TenantRepository tenants;private final AccountService accounts;private final CustomerService customers;private final BankFundingStore store;private final JournalService journals;private final TransactionTemplate tx;
+ public FundingService(JdbcTemplate jdbc,TenantRepository tenants,AccountService accounts,CustomerService customers,BankFundingStore store,JournalService journals,PlatformTransactionManager manager,com.cbs.notifications.NotificationService notifications){this.notifications=notifications;this.jdbc=jdbc;this.tenants=tenants;this.accounts=accounts;this.customers=customers;this.store=store;this.journals=journals;this.tx=new TransactionTemplate(manager);}
  public Dashboard dashboard(Actor actor,UUID bankId,UUID accountId,int limit,int offset){
   AccessService.admin(actor);AccessService.page(limit,offset);return tx.execute(t->{
    jdbc.query("SELECT id FROM platform.tenant WHERE id=? FOR SHARE",r->{},bankId);var bank=tenants.get(bankId,false);var a=accounts.detail(actor,bankId,accountId);
@@ -89,6 +89,7 @@ public class FundingService {
   if(failure!=null)return;
   for(String table:List.of("funding_delivery","account_delivery","journal_delivery"))jdbc.update("UPDATE platform."+table+" SET completed=true,completed_at=clock_timestamp(),failure_code=NULL WHERE request_id=?",id);
   jdbc.update("UPDATE platform.account_registry SET delivery='APPLIED' WHERE id=? AND request_id=?",job.entry().accountId(),id);
+  var posted=job.entry();notifications.record(new com.cbs.notifications.NotificationModels.Movement(bank.id(),posted.accountId(),com.cbs.notifications.NotificationModels.Event.CREDIT,id,posted.amount(),posted.journal().currency(),posted.journal().businessDate(),posted.journal().reference()));
   tenants.audit(new Actor(job.issuer(),job.checker(),true,job.correlationId()),bank.id(),"FUNDING_POSTED",bank.version(),bank.status(),bank.status(),"Posted approved funding "+id,null,null,Map.of("accountId",job.entry().accountId(),"requestId",id));
  });}
  private static TenantException error(int status,String code){return new TenantException(status,code,"Account funding could not be completed");}

@@ -12,6 +12,20 @@ public final class StatementCsv {
   for(var line:statement.items())row(out,line.transactionId().toString(),line.businessDate().toString(),line.reference(),line.narration(),line.debit(),line.credit(),line.balance());
   return out.toString();
  }
+ /** Streams a statement as CSV to the writer, line by line. */
+ public static StatementService.Sink sink(java.io.Writer writer){
+  return new StatementService.Sink(){
+   public void header(StatementService.Header h)throws java.io.IOException{
+    var out=new StringBuilder("\uFEFF");
+    row(out,"Account",h.accountNumber(),"Currency",h.currency());
+    row(out,"From",h.from().toString(),"To",h.to().toString());
+    row(out,"Opening balance",h.openingBalance(),"Closing balance",h.closingBalance());
+    row(out,"Transaction ID","Business date","Reference","Narration","Debit","Credit","Balance");writer.write(out.toString());
+   }
+   public void line(StatementService.Line line)throws java.io.IOException{var out=new StringBuilder();row(out,line.transactionId().toString(),line.businessDate().toString(),line.reference(),line.narration(),line.debit(),line.credit(),line.balance());writer.write(out.toString());}
+   public void finish()throws java.io.IOException{writer.flush();}
+  };
+ }
  private static void row(StringBuilder out,String... values){
   for(int i=0;i<values.length;i++){
    if(i>0)out.append(',');
