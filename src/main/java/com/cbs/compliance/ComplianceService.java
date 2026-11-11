@@ -27,6 +27,13 @@ public class ComplianceService {
     }
     private static LocalDate today(){return LocalDate.now(ZoneOffset.UTC);}
     /** Called under the tenant lock, at submission, approval and before first delivery. */
+    /** Bulk form of requireClear: customers (by reviewed version) that are currently restricted. */
+    public static Set<UUID> restricted(JdbcTemplate jdbc,UUID bank,Map<UUID,Long> versions) {
+        if(versions.isEmpty())return Set.of();
+        var ids=new ArrayList<UUID>(versions.keySet());var numbers=ids.stream().map(versions::get).toArray(Long[]::new);
+        return new HashSet<>(jdbc.query(c->{var s=c.prepareStatement("SELECT DISTINCT c.customer_id FROM platform.compliance_case c JOIN unnest(?::uuid[],?::bigint[]) AS v(id,version) ON v.id=c.customer_id WHERE c.tenant_id=? AND (c.status<>'CLEARED' OR c.reviewed_customer_version<>v.version OR c.review_due<=?)");
+            s.setArray(1,c.createArrayOf("uuid",ids.toArray()));s.setArray(2,c.createArrayOf("bigint",numbers));s.setObject(3,bank);s.setObject(4,today());return s;},(r,n)->r.getObject(1,UUID.class)));
+    }
     public static void requireClear(JdbcTemplate jdbc,UUID bank,UUID customer,long customerVersion) {
         if(jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM platform.compliance_case WHERE tenant_id=? AND customer_id=? AND (status<>'CLEARED' OR reviewed_customer_version<>? OR review_due<=?))",Boolean.class,bank,customer,customerVersion,today()))
             throw error(409,"CUSTOMER_COMPLIANCE_RESTRICTED");

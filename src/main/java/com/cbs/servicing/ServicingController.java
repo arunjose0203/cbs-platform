@@ -16,7 +16,7 @@ public class ServicingController {
  @GetMapping Map<String,Object> dashboard(JwtAuthenticationToken jwt,@PathVariable UUID bankId){return service.dashboard(actor(jwt),bankId);}
  @PostMapping("/policies") @ResponseStatus(org.springframework.http.HttpStatus.ACCEPTED)
  ApprovalModels.Request policy(JwtAuthenticationToken jwt,@PathVariable UUID bankId,@RequestHeader("Idempotency-Key") UUID key,@Valid @RequestBody ServicingModels.Policy input){return approvals.servicingPolicy(actor(jwt),key,bankId,input);}
- @PostMapping("/preview") ServicingModels.Batch preview(JwtAuthenticationToken jwt,@PathVariable UUID bankId,@Valid @RequestBody ServicingModels.Run input){return service.preview(actor(jwt),bankId,input);}
+ @PostMapping("/preview") ServicingModels.Preview preview(JwtAuthenticationToken jwt,@PathVariable UUID bankId,@Valid @RequestBody ServicingModels.Run input){return service.preview(actor(jwt),bankId,input);}
  @PostMapping("/runs") @ResponseStatus(org.springframework.http.HttpStatus.ACCEPTED)
  ApprovalModels.Request run(JwtAuthenticationToken jwt,@PathVariable UUID bankId,@RequestHeader("Idempotency-Key") UUID key,@Valid @RequestBody ServicingModels.Run input){return approvals.servicingRun(actor(jwt),key,bankId,input);}
  @PostMapping("/runs/{id}/retry") Map<String,String> retry(JwtAuthenticationToken jwt,@PathVariable UUID bankId,@PathVariable UUID id){service.retry(actor(jwt),bankId,id);return Map.of("status","RETRY_CHECKED");}

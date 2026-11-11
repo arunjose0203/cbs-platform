@@ -47,7 +47,7 @@ def main():
             for d,folder in ((control,'migration'),(bank,'bank-migration')):
                 files=sorted((repo/'src/main/resources/db'/folder).glob('V*__*.sql'),key=lambda p:int(p.name.split('__')[0][1:]))
                 for path in files:r.query(config,d,path.read_text(encoding='utf-8'))
-        r.query(config,control,f"INSERT INTO platform.tenant(id,bank_code,display_name,default_language,status) VALUES('{tenant}','DRILL','Fictional recovery bank','en','ACTIVE'); INSERT INTO platform.database_binding(tenant_id,database_reference,schema_version) VALUES('{tenant}','drill','23');")
+        r.query(config,control,f"INSERT INTO platform.tenant(id,bank_code,display_name,default_language,status) VALUES('{tenant}','DRILL','Fictional recovery bank','en','ACTIVE'); INSERT INTO platform.database_binding(tenant_id,database_reference,schema_version) VALUES('{tenant}','drill','24');")
         for request in (jid,str(uuid.uuid4())):
             r.query(config,control,f"INSERT INTO platform.approval_request(id,issuer,maker_subject,idempotency_key,action,target_id,bank_id,target_label,expected_version,reason,payload,before_values,proposed_values,status,reviewer_subject,decided_at) VALUES('{request}','https://identity.invalid','maker','{request}','JOURNAL_POST','{request}','{tenant}','Fictional journal',0,'Recovery drill','{{}}','{{}}','{{}}','APPROVED','checker',now()); INSERT INTO platform.journal_delivery(request_id,tenant_id,reference,payload,maker_subject,reviewer_issuer,reviewer_subject,correlation_id) VALUES('{request}','{tenant}','{request}','{{}}','maker','https://identity.invalid','checker','{request}');")
         ledgers=[str(uuid.uuid4()),str(uuid.uuid4())]

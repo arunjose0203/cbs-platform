@@ -40,7 +40,8 @@ import tools.jackson.databind.ObjectMapper;
 @EnabledIfEnvironmentVariable(named = "CBS_INTEGRATION_TESTS", matches = "true")
 @SpringBootTest(properties = {
         "cbs.ledger.delivery-enabled=false", "cbs.security.enabled=true", "cbs.security.issuer=https://identity.cbs.test",
-        "cbs.security.jwk-set-uri=https://identity.cbs.test/jwks", "cbs.security.audience=cbs-api"
+        "cbs.security.jwk-set-uri=https://identity.cbs.test/jwks", "cbs.security.audience=cbs-api",
+        "cbs.servicing.chunk-size=2"
 })
 @AutoConfigureMockMvc
 @Import(TestIdentity.Configuration.class)
@@ -218,7 +219,7 @@ class TenantAdministrationIntegrationTest {
         b = provision(b);
         assertThat(a.status()).isEqualTo(Status.ACTIVE);
         assertThat(b.status()).isEqualTo(Status.ACTIVE);
-        assertThat(a.databaseBinding().schemaVersion()).isEqualTo("23");
+        assertThat(a.databaseBinding().schemaVersion()).isEqualTo("24");
         bankGet(a.id(), "operator-a", true).andExpect(status().isOk())
                 .andExpect(jsonPath("$.tenantId").value(a.id().toString())).andExpect(jsonPath("$.databaseBinding").doesNotExist());
         mvc.perform(get("/api/v1/banks/" + b.id() + "/operational-context")
@@ -887,7 +888,7 @@ class TenantAdministrationIntegrationTest {
         ledger.initialize(ADMIN,bank.id(),new ChangeRequest(0L,"Prepare ledgers"));
         assertThat(ledger.list(ADMIN,bank.id(),"",null,null,25,0).storageReady()).isTrue();
         ledger.initialize(ADMIN,bank.id(),new ChangeRequest(service.get(ADMIN,bank.id()).version(),"Recheck upgrade"));
-        assertThat(service.get(ADMIN,bank.id()).databaseBinding().schemaVersion()).isEqualTo("23");
+        assertThat(service.get(ADMIN,bank.id()).databaseBinding().schemaVersion()).isEqualTo("24");
     }
 
     private List<com.cbs.accounting.LedgerModels.Definition> journalLedgers(Tenant bank) throws Exception {
@@ -2509,7 +2510,9 @@ class TenantAdministrationIntegrationTest {
         // Approved policy corrections retain history and supersede the same effective date.
         java.util.function.Function<String,com.cbs.servicing.ServicingModels.Policy> withFee=fee->new com.cbs.servicing.ServicingModels.Policy(service.get(ADMIN,bank.id()).version(),policy.productId(),policy.productRevision(),policy.legalEntityId(),date,policy.annualRatePercent(),365,fee,"10","20","HALF_EVEN",expense,payable,income,tax,"Correct fictional daily fee");
         var expensive=approvals.servicingPolicy(ADMIN,UUID.randomUUID(),bank.id(),withFee.apply("2000"));approveHttp(expensive.id());
-        assertCode(()->servicing.preview(ADMIN,bank.id(),new com.cbs.servicing.ServicingModels.Run(service.get(ADMIN,bank.id()).version(),date,"Preview excessive fee")),"INSUFFICIENT_AVAILABLE_BALANCE");
+        // An unaffordable daily fee now excludes only that account, visibly, instead of blocking the whole run.
+        var excessive=servicing.preview(ADMIN,bank.id(),new com.cbs.servicing.ServicingModels.Run(service.get(ADMIN,bank.id()).version(),date,"Preview excessive fee"));
+        assertThat(excessive.items()).isEmpty();assertThat(excessive.exclusions()).singleElement().satisfies(x->{assertThat(x.accountId()).isEqualTo(f.account());assertThat(x.reason()).isEqualTo("INSUFFICIENT_AVAILABLE_BALANCE");});
         var corrected=approvals.servicingPolicy(ADMIN,UUID.randomUUID(),bank.id(),withFee.apply("0.50"));approveHttp(corrected.id());
         assertThat(jdbc.queryForObject("SELECT count(*) FROM platform.servicing_policy WHERE tenant_id=?",Integer.class,bank.id())).isEqualTo(3);
         var input=new com.cbs.servicing.ServicingModels.Run(service.get(ADMIN,bank.id()).version(),date,"Close fictional daily processing");
@@ -2542,6 +2545,98 @@ class TenantAdministrationIntegrationTest {
             try(var rs=st.executeQuery("SELECT count(*) FROM bank.servicing_event")){rs.next();assertThat(rs.getInt(1)).isEqualTo(1);}
             assertThatThrownBy(()->st.executeUpdate("DELETE FROM bank.servicing_event")).isInstanceOf(SQLException.class);
         }
+    }
+    /** Opens, delivers and funds one more account for the fixture's customer and product. */
+    private UUID extraFundedAccount(FundingFixture f,String code,String amount)throws Exception{
+        var bank=f.f().bank();
+        var opening=approvals.account(ADMIN,UUID.randomUUID(),bank.id(),accountChange(f.f(),null,com.cbs.accounts.AccountModels.State.AWAITING_FUNDING));approveHttp(opening.id());accounts.deliver(opening.id());
+        UUID account=jdbc.queryForObject("SELECT id FROM platform.account_registry WHERE tenant_id=? AND request_id=?",UUID.class,bank.id(),opening.id());
+        var liability=approvals.ledger(ADMIN,UUID.randomUUID(),bank.id(),ledgerChange(bank,null,code,f.f().product().liabilityAccountId(),"Customer liability "+code,true));approveHttp(liability.id());ledger.deliver(liability.id());
+        var ledgerId=ledger.list(ADMIN,bank.id(),code,null,null,25,0).items().getFirst().definition().id();
+        com.cbs.approvals.ApprovalModels.Request r;try{r=approvals.funding(ADMIN,UUID.randomUUID(),bank.id(),new com.cbs.accounts.FundingModels.Change(service.get(ADMIN,bank.id()).version(),account,f.source().id(),ledgerId,amount,reference.get(ADMIN,bank.id()).businessDate(),"F-"+code,"Verified fictional receipt"));}catch(TenantException e){throw new AssertionError("funding "+e.code());}approveHttp(r.id());funding.deliver(r.id());
+        return account;
+    }
+    @Test void servicingPostsInResumableChunksAndExcludesOnlyIneligibleAccounts()throws Exception{
+        var f=fundingFixture("servicing-chunks");var bank=f.f().bank();fund(f,"1000");
+        var eligible=new java.util.ArrayList<UUID>(List.of(f.account()));
+        for(int i=2;i<=5;i++)eligible.add(extraFundedAccount(f,"CUSTOMER_00"+i,String.valueOf(1000*i)));
+        UUID low=extraFundedAccount(f,"CUSTOMER_006","100");
+        // Leave just above the product minimum, too little for the day's fee and fee tax.
+        var drain=approvals.operation(ADMIN,UUID.randomUUID(),bank.id(),new com.cbs.accounts.OperationModels.Change(service.get(ADMIN,bank.id()).version(),com.cbs.accounts.OperationModels.Kind.WITHDRAWAL,low,null,f.source().id(),null,"89.80",reference.get(ADMIN,bank.id()).businessDate(),"W-LOW","Fictional withdrawal"));approveHttp(drain.id());operations.deliver(drain.id());UUID frozen=extraFundedAccount(f,"CUSTOMER_007","500");
+        var freeze=approvals.account(ADMIN,UUID.randomUUID(),bank.id(),accountChange(f.f(),frozen,com.cbs.accounts.AccountModels.State.FROZEN));approveHttp(freeze.id());accounts.deliver(freeze.id());
+        var expense=adjustmentLedger(bank,"CH_EXP",com.cbs.accounting.ChartModels.Category.EXPENSE);var payable=adjustmentLedger(bank,"CH_PAY",com.cbs.accounting.ChartModels.Category.LIABILITY);
+        var income=adjustmentLedger(bank,"CH_FEE",com.cbs.accounting.ChartModels.Category.INCOME);var tax=adjustmentLedger(bank,"CH_TAX",com.cbs.accounting.ChartModels.Category.LIABILITY);
+        var date=reference.get(ADMIN,bank.id()).businessDate();
+        approveHttp(approvals.servicingPolicy(ADMIN,UUID.randomUUID(),bank.id(),new com.cbs.servicing.ServicingModels.Policy(service.get(ADMIN,bank.id()).version(),f.f().product().id(),f.f().product().revision(),bank.legalEntities().getFirst().id(),date,"3.65",365,"0.50","10","20","HALF_EVEN",expense,payable,income,tax,"Fictional chunking policy")).id());
+        var input=new com.cbs.servicing.ServicingModels.Run(service.get(ADMIN,bank.id()).version(),date,"Fictional chunked daily processing");
+        var preview=servicing.preview(ADMIN,bank.id(),input);
+        assertThat(preview.accountCount()).isEqualTo(5);assertThat(preview.chunkSize()).isEqualTo(2);assertThat(preview.chunkCount()).isEqualTo(3);
+        assertThat(preview.items()).extracting(i->i.account().id()).containsExactlyInAnyOrderElementsOf(eligible);
+        assertThat(preview.exclusions()).extracting(x->x.accountId()+":"+x.reason()).containsExactlyInAnyOrder(low+":INSUFFICIENT_AVAILABLE_BALANCE",frozen+":ACCOUNT_FROZEN");
+        var net=preview.items().stream().map(i->new java.math.BigDecimal(i.calculation().netChange())).reduce(java.math.BigDecimal.ZERO,java.math.BigDecimal::add);
+        assertThat(preview.totals()).singleElement().satisfies(t->{assertThat(t.accounts()).isEqualTo(5);assertThat(new java.math.BigDecimal(t.netChange())).isEqualByComparingTo(net);});
+        var expected=new java.util.HashMap<UUID,java.math.BigDecimal>();for(var i:preview.items())expected.put(i.account().id(),new java.math.BigDecimal(i.openingBalance()).add(new java.math.BigDecimal(i.calculation().netChange())));
+        var run=approvals.servicingRun(ADMIN,UUID.randomUUID(),bank.id(),input);approveHttp(run.id());
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM platform.servicing_chunk WHERE run_id=?",Integer.class,run.id())).isEqualTo(3);
+        assertThat(jdbc.queryForList("SELECT reason FROM platform.servicing_exclusion WHERE run_id=? ORDER BY reason",String.class,run.id())).containsExactly("ACCOUNT_FROZEN","INSUFFICIENT_AVAILABLE_BALANCE");
+        // Make the second chunk fail inside the bank: the first stays posted, the day stays sealed.
+        var second=jdbc.queryForObject("SELECT (payload->'items'->0->'account'->>'id')::uuid FROM platform.servicing_chunk WHERE run_id=? AND chunk_no=1",UUID.class,run.id());
+        try(var c=TestDatabases.bank("chunks");var st=c.createStatement()){st.execute("CREATE FUNCTION bank.fail_chunk() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.account_id='"+second+"' THEN RAISE EXCEPTION 'injected'; END IF; RETURN NEW; END $$");st.execute("CREATE TRIGGER fail_chunk BEFORE INSERT ON bank.servicing_event FOR EACH ROW EXECUTE FUNCTION bank.fail_chunk()");}
+        servicing.deliver(run.id());
+        assertThat(jdbc.queryForList("SELECT completed FROM platform.servicing_chunk WHERE run_id=? ORDER BY chunk_no",Boolean.class,run.id())).containsExactly(true,false,false);
+        assertThat(jdbc.queryForObject("SELECT failure_code FROM platform.servicing_run WHERE request_id=?",String.class,run.id())).isEqualTo("SERVICING_DATABASE_UNAVAILABLE");
+        assertThat(jdbc.queryForObject("SELECT completed FROM platform.servicing_run WHERE request_id=?",Boolean.class,run.id())).isFalse();
+        assertCode(()->approvals.funding(ADMIN,UUID.randomUUID(),bank.id(),fundingChange(f,"10","DURING-CHUNKS")),"SERVICING_DAY_FINALIZED");
+        assertThat(days.dashboard(ADMIN,bank.id(),25,0).blockers()).contains("SERVICING_REQUIRED");
+        assertThat(accounts.closure(ADMIN,bank.id(),f.account()).blockers()).contains("ACCOUNT_CLOSURE_SERVICING_REQUIRED");
+        try(var c=TestDatabases.bank("chunks");var st=c.createStatement()){st.execute("DROP TRIGGER fail_chunk ON bank.servicing_event");st.execute("DROP FUNCTION bank.fail_chunk()");}
+        // Lost acknowledgement: bank commits, platform rolls back; the retry acknowledges from receipts.
+        new TransactionTemplate(transactionManager).executeWithoutResult(t->{servicing.deliver(run.id());t.setRollbackOnly();});
+        assertThat(jdbc.queryForObject("SELECT completed FROM platform.servicing_run WHERE request_id=?",Boolean.class,run.id())).isFalse();
+        servicing.deliver(run.id());servicing.deliver(run.id());
+        assertThat(jdbc.queryForObject("SELECT completed FROM platform.servicing_run WHERE request_id=?",Boolean.class,run.id())).isTrue();
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM platform.journal_delivery d JOIN platform.servicing_posting p ON p.request_id=d.request_id WHERE p.run_id=? AND NOT d.completed",Integer.class,run.id())).isZero();
+        for(var e:expected.entrySet()){var p=operations.dashboard(ADMIN,bank.id(),e.getKey(),25,0).position();assertThat(new java.math.BigDecimal(p.posted())).isEqualByComparingTo(e.getValue());assertThat(p.reconciled()).isTrue();}
+        assertThat(new java.math.BigDecimal(operations.dashboard(ADMIN,bank.id(),low,25,0).position().posted())).isEqualByComparingTo("10.20");
+        assertThat(new java.math.BigDecimal(operations.dashboard(ADMIN,bank.id(),frozen,25,0).position().posted())).isEqualByComparingTo("500");
+        try(var c=TestDatabases.bank("chunks");var st=c.createStatement()){
+            try(var r=st.executeQuery("SELECT (SELECT count(*) FROM bank.servicing_event),(SELECT count(*) FROM bank.servicing_chunk),(SELECT count(*) FROM bank.servicing_item),(SELECT count(*) FROM bank.servicing_run)")){r.next();assertThat(r.getInt(1)).isEqualTo(5);assertThat(r.getInt(2)).isEqualTo(3);assertThat(r.getInt(3)).isEqualTo(5);assertThat(r.getInt(4)).isEqualTo(1);}
+            assertThatThrownBy(()->st.executeUpdate("UPDATE bank.servicing_item SET chunk_no=0")).isInstanceOf(SQLException.class);
+            assertThatThrownBy(()->st.executeUpdate("INSERT INTO bank.journal SELECT (jsonb_populate_record(null::bank.journal,to_jsonb(j)||jsonb_build_object('id',gen_random_uuid(),'reference','TAMPER-'||gen_random_uuid(),'reversal_of',null))).* FROM bank.journal j WHERE j.reference LIKE 'SVC-%' LIMIT 1")).isInstanceOf(SQLException.class).hasMessageContaining("finalized");
+        }
+        var day=days.dashboard(ADMIN,bank.id(),25,0);assertThat(day.blockers()).doesNotContain("SERVICING_REQUIRED");
+        var closing=approvals.closeDay(ADMIN,UUID.randomUUID(),bank.id(),new com.cbs.accounting.DayCloseModels.Change(day.version(),day.businessDate(),day.nextBusinessDate(),"Close chunked day"));approveHttp(closing.id());days.deliver(closing.id());
+        assertThat(days.dashboard(ADMIN,bank.id(),25,0).businessDate()).isEqualTo(day.nextBusinessDate());
+    }
+    /**
+     * Volume check beyond the former 1,000-account cap. Opt-in (slow): CBS_VOLUME_TESTS=true,
+     * optional CBS_VOLUME_ACCOUNTS (default 1050). Every account is opened and funded through the
+     * normal approval workflow; the run's postings are reconciled account by account and in total.
+     */
+    @Test @EnabledIfEnvironmentVariable(named="CBS_VOLUME_TESTS",matches="true")
+    void servicingVolumeBeyondFormerCapReconcilesEveryAccount()throws Exception{
+        int n=Integer.parseInt(System.getenv().getOrDefault("CBS_VOLUME_ACCOUNTS","1050"));
+        var f=fundingFixture("servicing-volume");var bank=f.f().bank();fund(f,"1000");
+        long started=System.nanoTime();
+        for(int i=2;i<=n;i++)extraFundedAccount(f,"VOL_"+i,String.valueOf(100+i)+"."+String.format("%02d",i%100));
+        long opened=System.nanoTime();
+        var expense=adjustmentLedger(bank,"VOL_EXP",com.cbs.accounting.ChartModels.Category.EXPENSE);var payable=adjustmentLedger(bank,"VOL_PAY",com.cbs.accounting.ChartModels.Category.LIABILITY);
+        var income=adjustmentLedger(bank,"VOL_FEE",com.cbs.accounting.ChartModels.Category.INCOME);var tax=adjustmentLedger(bank,"VOL_TAX",com.cbs.accounting.ChartModels.Category.LIABILITY);
+        var date=reference.get(ADMIN,bank.id()).businessDate();
+        approveHttp(approvals.servicingPolicy(ADMIN,UUID.randomUUID(),bank.id(),new com.cbs.servicing.ServicingModels.Policy(service.get(ADMIN,bank.id()).version(),f.f().product().id(),f.f().product().revision(),bank.legalEntities().getFirst().id(),date,"7.3",365,"0.05","15","16","HALF_EVEN",expense,payable,income,tax,"Fictional volume policy")).id());
+        var input=new com.cbs.servicing.ServicingModels.Run(service.get(ADMIN,bank.id()).version(),date,"Fictional volume run");
+        long t0=System.nanoTime();var preview=servicing.preview(ADMIN,bank.id(),input);long t1=System.nanoTime();
+        assertThat(preview.accountCount()).isEqualTo(n);assertThat(preview.exclusions()).isEmpty();assertThat(preview.itemsTruncated()).isEqualTo(n>200);
+        var run=approvals.servicingRun(ADMIN,UUID.randomUUID(),bank.id(),input);approveHttp(run.id());long t2=System.nanoTime();
+        servicing.deliver(run.id());long t3=System.nanoTime();
+        assertThat(jdbc.queryForObject("SELECT completed FROM platform.servicing_run WHERE request_id=?",Boolean.class,run.id())).isTrue();
+        var expectedNet=new java.math.BigDecimal(preview.totals().getFirst().netChange());
+        try(var c=TestDatabases.bank("volume");var st=c.createStatement()){
+            try(var r=st.executeQuery("SELECT count(*),sum(net_amount) FROM bank.servicing_event")){r.next();assertThat(r.getInt(1)).isEqualTo(n);assertThat(r.getBigDecimal(2)).isEqualByComparingTo(expectedNet);}
+            try(var r=st.executeQuery("SELECT count(*) FROM bank.customer_position p LEFT JOIN bank.ledger_balance l ON l.ledger_id=p.ledger_id WHERE p.posted<>coalesce(l.credit,0)-coalesce(l.debit,0)")){r.next();assertThat(r.getInt(1)).isZero();}
+            try(var r=st.executeQuery("SELECT count(*) FROM bank.servicing_event e WHERE e.opening_balance+e.net_amount<>(SELECT posted FROM bank.customer_position p WHERE p.account_id=e.account_id)")){r.next();assertThat(r.getInt(1)).isZero();}
+        }
+        System.out.printf("VOLUME accounts=%d chunks=%d open+fund=%.1fs preview=%.1fs approve=%.1fs deliver=%.1fs%n",n,preview.chunkCount(),(opened-started)/1e9,(t1-t0)/1e9,(t2-t1)/1e9,(t3-t2)/1e9);
     }
     private void verifyDenominationInventory(FundingFixture f,UUID branch,UUID vault,Actor maker,Actor reviewer)throws Exception{
         var bank=f.f().bank();

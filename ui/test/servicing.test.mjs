@@ -15,3 +15,12 @@ test('servicing policy leaves financial rates blank and preserves entered decima
  await f.submit({productId:'product',productRevision:'2',dayBasis:'360',annualRatePercent:'0.12345678',feePerBusinessDay:'9007199254740993.17',reason:'Bank approved'});
  assert.equal(f.posted.body.annualRatePercent,'0.12345678');assert.equal(f.posted.body.feePerBusinessDay,'9007199254740993.17');assert.equal(f.posted.body.productRevision,2);assert.equal(f.posted.body.dayBasis,360);assert.equal(f.posted.body.expectedVersion,4);
 });
+test('chunked preview shows exact totals, every exclusion with its reason, and run progress',async()=>{
+ let html;const runs=[{business_date:'2026-10-07',request_id:'run',completed:false,failure_code:'SERVICING_DATABASE_UNAVAILABLE',attempts:1,chunks:3,chunks_posted:1,excluded:2}];
+ const ui=createServicingUi({api:async(path,options)=>{
+  if(options)return {nextBusinessDate:'2026-10-08',accountCount:1500,chunkCount:3,itemsTruncated:true,totals:[{currency:'KES',accounts:1500,grossInterest:'9007199254740993.17',interestTax:'1',fee:'2',feeTax:'0.4',netChange:'9007199254740989.77'}],exclusions:[{accountId:'x',accountNumber:'<frozen>',reason:'ACCOUNT_FROZEN'},{accountId:'y',accountNumber:'A2',reason:'INSUFFICIENT_AVAILABLE_BALANCE'}],items:[]};
+  if(path.endsWith('/servicing'))return {...data,runs};return path.includes('?')?{items:[bank]}:bank;},form:(_t,h)=>{html=h;},field:(_n,label)=>label,refresh:async()=>{}});
+ const host={innerHTML:''};await ui.render(host,()=>true);assert.match(host.innerHTML,/1 \/ 3 chunks posted/);assert.match(host.innerHTML,/2 accounts excluded/);
+ await ui.action('preview');assert.match(html,/1500 accounts in 3 posting chunks/);assert.match(html,/9007199254740993\.17/);assert.match(html,/9007199254740989\.77/);
+ assert.match(html,/&lt;frozen&gt; · Account is frozen\./);assert.match(html,/2 accounts excluded from this run/);assert.match(html,/totals cover every account/);
+});

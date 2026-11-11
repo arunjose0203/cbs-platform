@@ -17,10 +17,25 @@ public final class ServicingModels {
  public record Run(@PositiveOrZero long expectedVersion,@NotNull LocalDate businessDate,@NotBlank @Size(max=500) String reason) {}
  public record Calculation(String exactAccrual,String grossInterest,String interestTax,String fee,String feeTax,String netChange,String carryAfter) {}
  public record Item(UUID id,UUID policyId,Policy policy,AccountModels.Definition account,String openingBalance,String held,String carryBefore,Calculation calculation,JournalModels.Entry journal) {}
- public record Batch(UUID id,UUID bankId,LocalDate businessDate,LocalDate nextBusinessDate,List<Item> items) {}
+ /**
+  * Run header. Legacy runs carry every item inline (chunkCount null). Chunked runs keep
+  * items in separately posted chunks; null fields are omitted so legacy payloads stay byte-identical.
+  */
+ @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
+ public record Batch(UUID id,UUID bankId,LocalDate businessDate,LocalDate nextBusinessDate,List<Item> items,Integer itemCount,Integer chunkCount,Integer excludedCount) {
+  public Batch(UUID id,UUID bankId,LocalDate businessDate,LocalDate nextBusinessDate,List<Item> items){this(id,bankId,businessDate,nextBusinessDate,items,null,null,null);}
+  public boolean chunked(){return chunkCount!=null;}
+ }
+ public record Chunk(UUID runId,int number,List<Item> items) {}
+ /** An account deliberately left out of one day's run, approved as part of the run. */
+ public record Exclusion(UUID accountId,String accountNumber,String reason) {}
+ public record Totals(String currency,int accounts,String grossInterest,String interestTax,String fee,String feeTax,String netChange) {}
+ public record Preview(UUID id,LocalDate businessDate,LocalDate nextBusinessDate,int accountCount,int chunkSize,int chunkCount,List<Totals> totals,List<Exclusion> exclusions,List<Item> items,boolean itemsTruncated) {}
+ /** Longest interval one run may cover (calendar days to the next working date). */
+ public static final int MAX_PERIOD_DAYS=366;
  public record Dispatch(Batch batch,String maker,String issuer,String checker,UUID correlationId) {}
  public static Calculation calculate(Policy p,String currency,BigDecimal balance,BigDecimal carry,int days){
-  if(days<1||days>31||balance.signum()<0||!Set.of(360,365).contains(p.dayBasis()))throw new IllegalArgumentException("Invalid accrual period");
+  if(days<1||days>MAX_PERIOD_DAYS||balance.signum()<0||!Set.of(360,365).contains(p.dayBasis()))throw new IllegalArgumentException("Invalid accrual period");
   for(String rate:List.of(p.annualRatePercent(),p.interestTaxPercent(),p.feeTaxPercent()))if(new BigDecimal(rate).signum()<0||new BigDecimal(rate).compareTo(new BigDecimal("100"))>0)throw new IllegalArgumentException("Invalid rate");
   int scale=Currency.getInstance(currency).getDefaultFractionDigits();if(scale<0)throw new IllegalArgumentException("Invalid currency");
   var mode=RoundingMode.valueOf(p.roundingMode());

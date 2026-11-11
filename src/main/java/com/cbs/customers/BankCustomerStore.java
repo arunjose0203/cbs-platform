@@ -17,6 +17,15 @@ public class BankCustomerStore {
     public boolean ready(Tenant bank){
         try(var c=connection(bank);var s=c.createStatement();var r=s.executeQuery("SELECT to_regclass('bank.customer') IS NOT NULL AND to_regclass('bank.customer_event') IS NOT NULL")){r.next();return r.getBoolean(1);}catch(SQLException e){throw unavailable();}
     }
+    /** Bulk read for batch eligibility checks: one connection, one query. */
+    public Map<UUID,Definition> readAll(Tenant bank,Collection<UUID> ids){
+        var result=new HashMap<UUID,Definition>();if(ids.isEmpty())return result;
+        try(var c=connection(bank);var s=c.prepareStatement("SELECT id,payload FROM bank.customer WHERE tenant_id=? AND id=ANY(?)")){
+            s.setObject(1,bank.id());s.setArray(2,c.createArrayOf("uuid",ids.toArray()));
+            try(var r=s.executeQuery()){while(r.next())result.put(r.getObject(1,UUID.class),JSON.readValue(r.getString(2),Definition.class));}
+            return result;
+        }catch(SQLException e){throw unavailable();}
+    }
     public Definition read(Tenant bank,UUID id){
         try(var c=connection(bank);var s=c.prepareStatement("SELECT payload FROM bank.customer WHERE tenant_id=? AND id=?")){
             s.setObject(1,bank.id());s.setObject(2,id);try(var r=s.executeQuery()){return r.next()?JSON.readValue(r.getString(1),Definition.class):null;}

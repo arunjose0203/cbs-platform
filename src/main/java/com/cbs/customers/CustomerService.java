@@ -51,6 +51,26 @@ public class CustomerService {
     }
     // Internal account-opening checks; caller holds the tenant lock.
     public String number(UUID bankId,UUID id){return current(bankId,id).definition().customerNumber();}
+    /**
+     * Bulk eligibility for batch processing, mirroring requireEligible: returns the failure code
+     * of each ineligible customer. A bank/platform mismatch is a reconciliation error, not ineligibility.
+     */
+    public Map<UUID,String> ineligible(Tenant bank,Collection<UUID> ids){
+        var result=new HashMap<UUID,String>();if(ids.isEmpty())return result;var unique=new ArrayList<>(new LinkedHashSet<>(ids));
+        var rows=new HashMap<UUID,Detail>();
+        jdbc.query(c->{var s=c.prepareStatement("SELECT r.id,d.payload,r.delivery,r.request_id,d.failure_code FROM platform.customer_registry r JOIN platform.customer_delivery d ON d.request_id=r.request_id WHERE r.tenant_id=? AND r.id=ANY(?)");s.setObject(1,bank.id());s.setArray(2,c.createArrayOf("uuid",unique.toArray()));return s;},
+            r->{rows.put(r.getObject(1,UUID.class),new Detail(JSON.readValue(r.getString(2),Definition.class),r.getString(3),r.getObject(4,UUID.class),r.getString(5)));});
+        var stored=store.readAll(bank,unique);var versions=new HashMap<UUID,Long>();
+        for(UUID id:unique){
+            var row=rows.get(id);if(row==null)throw error(404,"CUSTOMER_NOT_FOUND");
+            if(!row.delivery().equals("APPLIED")){result.put(id,"ACCOUNT_CUSTOMER_NOT_READY");continue;}
+            if(!row.definition().equals(stored.get(id)))throw error(503,"CUSTOMER_RECONCILIATION_REQUIRED");
+            try{checkEligible(row.definition());}catch(TenantException e){result.put(id,e.code());continue;}
+            versions.put(id,row.definition().version());
+        }
+        for(UUID id:com.cbs.compliance.ComplianceService.restricted(jdbc,bank.id(),versions))result.put(id,"CUSTOMER_COMPLIANCE_RESTRICTED");
+        return result;
+    }
     public void requireEligible(Tenant bank,UUID id){
         var row=current(bank.id(),id);
         if(!row.delivery().equals("APPLIED"))throw error(409,"ACCOUNT_CUSTOMER_NOT_READY");

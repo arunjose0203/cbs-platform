@@ -60,7 +60,7 @@ class DatabaseIntegrationTest {
 
     @Test
     void migrationAppliesAndCanBeRunAgainWithoutChanges() {
-        assertThat(flyway.info().current().getVersion().toString()).isEqualTo("38");
+        assertThat(flyway.info().current().getVersion().toString()).isEqualTo("39");
         assertThat(flyway.migrate().migrationsExecuted).isZero();
         assertThat(jdbc.queryForObject(
                 "select count(*) from information_schema.schemata where schema_name = 'platform'",
