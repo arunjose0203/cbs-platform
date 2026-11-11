@@ -25,6 +25,8 @@ public class BranchOperations {
  public BranchOperations(JdbcTemplate jdbc,BranchService branches,AccessService access,TenantRepository tenants){this.jdbc=jdbc;this.branches=branches;this.access=access;this.tenants=tenants;}
  public UUID branch(UUID bank,UUID account){var rows=jdbc.queryForList("SELECT branch_id FROM platform.account_branch WHERE tenant_id=? AND account_id=?",UUID.class,bank,account);return rows.isEmpty()?null:rows.getFirst();}
  public Scope authorize(Actor actor,UUID bank,Change change,boolean review){
+  // Final settlement before closure stays an administrator workflow, like the closure itself.
+  if(change.kind()==com.cbs.accounts.OperationModels.Kind.CLOSURE_SETTLEMENT){AccessService.admin(actor);return null;}
   UUID branch=branch(bank,change.accountId());
   if(branch==null){AccessService.admin(actor);return null;}
   branches.check(actor,bank,branch,review?APPROVE_BRANCH:CASH_TRANSACT);

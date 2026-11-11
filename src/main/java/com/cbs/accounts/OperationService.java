@@ -23,8 +23,8 @@ public class OperationService {
  private final com.cbs.access.BranchOperations branches;
  private final JdbcTemplate jdbc;private final TenantRepository tenants;private final AccountService accounts;
  private final CustomerService customers;private final BankOperationStore store;private final JournalService journals;
- private final ReferenceDataService reference;private final TransactionTemplate tx;
- public OperationService(com.cbs.access.BranchOperations branches,JdbcTemplate jdbc,TenantRepository tenants,AccountService accounts,CustomerService customers,BankOperationStore store,JournalService journals,ReferenceDataService reference,PlatformTransactionManager manager){this.branches=branches;this.jdbc=jdbc;this.tenants=tenants;this.accounts=accounts;this.customers=customers;this.store=store;this.journals=journals;this.reference=reference;this.tx=new TransactionTemplate(manager);}
+ private final ReferenceDataService reference;private final TransactionTemplate tx;private final AccountClosureService closures;
+ public OperationService(com.cbs.access.BranchOperations branches,JdbcTemplate jdbc,TenantRepository tenants,AccountService accounts,CustomerService customers,BankOperationStore store,JournalService journals,ReferenceDataService reference,PlatformTransactionManager manager,AccountClosureService closures){this.closures=closures;this.branches=branches;this.jdbc=jdbc;this.tenants=tenants;this.accounts=accounts;this.customers=customers;this.store=store;this.journals=journals;this.reference=reference;this.tx=new TransactionTemplate(manager);}
  public static void requireIdle(JdbcTemplate jdbc,UUID account){
   if(jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM platform.contract_delivery WHERE account_id=? AND NOT completed)",Boolean.class,account))throw error("ACCOUNT_OPERATION_PENDING");
   if(jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM platform.fx_trade WHERE (source_account=? OR target_account=?) AND NOT completed)",Boolean.class,account,account))throw error("ACCOUNT_OPERATION_PENDING");
@@ -39,7 +39,7 @@ public class OperationService {
   });
  }
  private AccountModels.Definition account(Tenant bank,UUID id,boolean release){
-  requireIdle(jdbc,id);var row=accounts.current(bank.id(),id);var a=row.definition();
+  requireIdle(jdbc,id);AccountClosureService.requireNotSettling(jdbc,id);var row=accounts.current(bank.id(),id);var a=row.definition();
   if(!row.delivery().equals("APPLIED")||(!release&&a.state()!=AccountModels.State.ACTIVE)||a.state()==AccountModels.State.CLOSED)throw error("FUNDING_ACCOUNT_NOT_READY");
   accounts.requireMatching(bank,a);if(!release)customers.requireEligible(bank,a.customerId());return a;
  }
@@ -55,7 +55,7 @@ public class OperationService {
   var a=account(bank,input.accountId(),input.kind()==Kind.RELEASE);var amount=new BigDecimal(input.amount());
   if(amount.signum()<=0||amount.stripTrailingZeros().scale()>Currency.getInstance(a.terms().currency()).getDefaultFractionDigits())throw error("JOURNAL_AMOUNT_INVALID");
   boolean reverseOperation=input.kind()==Kind.WITHDRAWAL_REVERSAL||input.kind()==Kind.TRANSFER_REVERSAL;
-  if((input.kind()==Kind.TRANSFER||input.kind()==Kind.TRANSFER_REVERSAL)!=(input.destinationId()!=null)||(input.kind()==Kind.WITHDRAWAL)!=(input.assetLedgerId()!=null)||(input.kind()==Kind.RELEASE||input.kind()==Kind.FUNDING_REVERSAL||reverseOperation)!=(input.originalId()!=null))throw error("OPERATION_FIELDS_INVALID");
+  if((input.kind()==Kind.TRANSFER||input.kind()==Kind.TRANSFER_REVERSAL)!=(input.destinationId()!=null)||(input.kind()==Kind.WITHDRAWAL||input.kind()==Kind.CLOSURE_SETTLEMENT)!=(input.assetLedgerId()!=null)||(input.kind()==Kind.RELEASE||input.kind()==Kind.FUNDING_REVERSAL||reverseOperation)!=(input.originalId()!=null))throw error("OPERATION_FIELDS_INVALID");
   if(reverseOperation)if(!payment&&jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM platform.payment_order WHERE id=?)",Boolean.class,input.originalId()))throw error("PAYMENT_MANAGED");
   com.cbs.access.TransactionLimits.check(jdbc,bank.id(),a.terms().currency(),input.kind().name(),input.businessDate(),amount);
   AccountModels.Definition target=null;UUID credit=null,reversal=null;
@@ -76,7 +76,12 @@ public class OperationService {
   if(input.kind()==Kind.TRANSFER){
    if(input.accountId().equals(input.destinationId()))throw error("OPERATION_FIELDS_INVALID");target=account(bank,input.destinationId(),false);
    if(!a.terms().currency().equals(target.terms().currency())||!a.legalEntityId().equals(target.legalEntityId()))throw error("TRANSFER_SCOPE_MISMATCH");credit=store.position(bank,target).ledgerId();
-  }else if(input.kind()==Kind.WITHDRAWAL){
+  }else if(input.kind()==Kind.WITHDRAWAL||input.kind()==Kind.CLOSURE_SETTLEMENT){
+   if(input.kind()==Kind.CLOSURE_SETTLEMENT){
+    // Pays out the whole posted balance, including any product minimum; holds must be released first.
+    var check=closures.requireSettleable(bank,a);
+    if(amount.compareTo(new BigDecimal(check.posted()))!=0||new BigDecimal(source.held()).signum()!=0)throw error("CLOSURE_SETTLEMENT_AMOUNT_MISMATCH");
+   }
    credit=input.assetLedgerId();if(!jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM platform.ledger_registry l JOIN platform.chart_account c ON c.id=l.chart_account_id WHERE l.id=? AND l.tenant_id=? AND c.category='ASSET' AND c.normal_balance='DEBIT')",Boolean.class,credit,bank.id()))throw error("FUNDING_SOURCE_INVALID");
   }else if(input.kind()==Kind.FUNDING_REVERSAL){
    var rows=jdbc.query("SELECT payload FROM platform.funding_delivery WHERE request_id=? AND account_id=? AND tenant_id=? AND completed",(r,n)->JSON.readValue(r.getString(1),FundingModels.Entry.class),input.originalId(),a.id(),bank.id());

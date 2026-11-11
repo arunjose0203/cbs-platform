@@ -4,7 +4,7 @@ Assessment date: **9 October 2026**. Application baseline: **fe23ba3**. Target: 
 
 **Decision: no module is independently functionally accepted yet.** There is substantial implementation and local automated evidence. This matrix is the proposed acceptance baseline, not a certificate of completeness, a regulatory assessment, or a percentage score.
 
-Implementation follow-up: [W02 validation and W03 deposit closure](w02-w03-functional-validation.md) records a reproduced approval-delivery defect, its fix and bounded zero-balance closure. The evidence baseline below predates that increment. Bank acceptance remains pending.
+Implementation follow-up (11 November): [W03 final closure settlement](w03-closure-settlement.md) adds approved positive-balance settlement before closure (F14). Earlier: [W02 validation and W03 deposit closure](w02-w03-functional-validation.md) records a reproduced approval-delivery defect, its fix and bounded zero-balance closure. The evidence baseline below predates that increment. Bank acceptance remains pending.
 
 ## How to read and maintain this matrix
 

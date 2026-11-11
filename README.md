@@ -18,8 +18,9 @@ access, including an administration portal.
 - Local PostgreSQL Compose definition and CI verification workflow.
 - HTTP/security checks and optional real-PostgreSQL integration checks.
 
-Ledger, customer accounts, currency processing, translations and the full
-maker-checker workflow are planned. See the [Module 02 setup guide](docs/module-02-access.md)
+Ledger, customer accounts, teller cash, servicing, payments, FX, term deposits and
+lending are implemented in bounded scope; see [application progress](docs/application-progress.md)
+for current status. Bank acceptance is pending. See the [Module 02 setup guide](docs/module-02-access.md)
 for portal sign-in and identity configuration, and the [Module 01 API guide](docs/module-01-api.md)
 for tenant/database administration.
 

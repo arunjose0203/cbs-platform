@@ -218,7 +218,7 @@ class TenantAdministrationIntegrationTest {
         b = provision(b);
         assertThat(a.status()).isEqualTo(Status.ACTIVE);
         assertThat(b.status()).isEqualTo(Status.ACTIVE);
-        assertThat(a.databaseBinding().schemaVersion()).isEqualTo("22");
+        assertThat(a.databaseBinding().schemaVersion()).isEqualTo("23");
         bankGet(a.id(), "operator-a", true).andExpect(status().isOk())
                 .andExpect(jsonPath("$.tenantId").value(a.id().toString())).andExpect(jsonPath("$.databaseBinding").doesNotExist());
         mvc.perform(get("/api/v1/banks/" + b.id() + "/operational-context")
@@ -887,7 +887,7 @@ class TenantAdministrationIntegrationTest {
         ledger.initialize(ADMIN,bank.id(),new ChangeRequest(0L,"Prepare ledgers"));
         assertThat(ledger.list(ADMIN,bank.id(),"",null,null,25,0).storageReady()).isTrue();
         ledger.initialize(ADMIN,bank.id(),new ChangeRequest(service.get(ADMIN,bank.id()).version(),"Recheck upgrade"));
-        assertThat(service.get(ADMIN,bank.id()).databaseBinding().schemaVersion()).isEqualTo("22");
+        assertThat(service.get(ADMIN,bank.id()).databaseBinding().schemaVersion()).isEqualTo("23");
     }
 
     private List<com.cbs.accounting.LedgerModels.Definition> journalLedgers(Tenant bank) throws Exception {
@@ -1987,6 +1987,65 @@ class TenantAdministrationIntegrationTest {
         }
     }
 
+    @Test void positiveBalanceClosureSettlesWholeBalanceForfeitsCarryAndThenCloses() throws Exception {
+        var f=fundingFixture("closure-settle");var bank=f.f().bank();var K=com.cbs.accounts.OperationModels.Kind.CLOSURE_SETTLEMENT;
+        fund(f,"1000");
+        // Fictional servicing at 1% p.a. leaves a sub-unit interest carry after one day.
+        var expense=adjustmentLedger(bank,"CS_EXP",com.cbs.accounting.ChartModels.Category.EXPENSE);var payable=adjustmentLedger(bank,"CS_PAY",com.cbs.accounting.ChartModels.Category.LIABILITY);
+        var income=adjustmentLedger(bank,"CS_FEE",com.cbs.accounting.ChartModels.Category.INCOME);var tax=adjustmentLedger(bank,"CS_TAX",com.cbs.accounting.ChartModels.Category.LIABILITY);
+        var date=reference.get(ADMIN,bank.id()).businessDate();
+        approveHttp(approvals.servicingPolicy(ADMIN,UUID.randomUUID(),bank.id(),new com.cbs.servicing.ServicingModels.Policy(service.get(ADMIN,bank.id()).version(),f.f().product().id(),f.f().product().revision(),bank.legalEntities().getFirst().id(),date,"1",365,"0","10","0","HALF_EVEN",expense,payable,income,tax,"Fictional closure settlement policy")).id());
+        var runInput=new com.cbs.servicing.ServicingModels.Run(service.get(ADMIN,bank.id()).version(),date,"Fictional servicing before closure");
+        var run=approvals.servicingRun(ADMIN,UUID.randomUUID(),bank.id(),runInput);approveHttp(run.id());servicing.deliver(run.id());
+        assertThat(jdbc.queryForObject("SELECT completed FROM platform.servicing_run WHERE request_id=?",Boolean.class,run.id())).isTrue();
+        var day=days.dashboard(ADMIN,bank.id(),25,0);var closing=approvals.closeDay(ADMIN,UUID.randomUUID(),bank.id(),new com.cbs.accounting.DayCloseModels.Change(day.version(),day.businessDate(),day.nextBusinessDate(),"Close fictional serviced day"));approveHttp(closing.id());days.deliver(closing.id());
+        var before=accounts.closure(ADMIN,bank.id(),f.account());
+        assertThat(new java.math.BigDecimal(before.carry()).signum()).isNotZero();assertThat(before.settled()).isFalse();
+        assertThat(before.blockers()).containsExactlyInAnyOrder("FUNDING_BALANCE_NOT_ZERO","ACCOUNT_CLOSURE_CARRY_SETTLEMENT");
+        String balance=before.posted();assertThat(new java.math.BigDecimal(balance)).isGreaterThan(new java.math.BigDecimal("1000"));
+        java.util.function.BiFunction<String,UUID,com.cbs.accounts.OperationModels.Change> settle=(amount,asset)->new com.cbs.accounts.OperationModels.Change(service.get(ADMIN,bank.id()).version(),K,f.account(),null,asset,null,amount,reference.get(ADMIN,bank.id()).businessDate(),"CLOSE-"+UUID.randomUUID(),"Fictional customer closure request");
+        // Mandatory, independently approved limit; missing policy denies the payout.
+        assertCode(()->approvals.operation(ADMIN,UUID.randomUUID(),bank.id(),settle.apply(balance,f.source().id())),"TRANSACTION_LIMIT_REQUIRED");
+        approveHttp(approvals.limits(ADMIN,UUID.randomUUID(),bank.id(),new com.cbs.access.TransactionLimits.Change(service.get(ADMIN,bank.id()).version(),f.f().product().currency(),"CLOSURE_SETTLEMENT","999999999999999999","999999999999999999","Fictional integration test limit")).id());
+        // Ordinary withdrawals still protect the product minimum; only the final settlement may take it.
+        assertCode(()->approvals.operation(ADMIN,UUID.randomUUID(),bank.id(),new com.cbs.accounts.OperationModels.Change(service.get(ADMIN,bank.id()).version(),com.cbs.accounts.OperationModels.Kind.WITHDRAWAL,f.account(),null,f.source().id(),null,balance,reference.get(ADMIN,bank.id()).businessDate(),"W-ALL","Fictional full withdrawal")),"INSUFFICIENT_AVAILABLE_BALANCE");
+        assertCode(()->approvals.operation(ADMIN,UUID.randomUUID(),bank.id(),settle.apply(balance,null)),"OPERATION_FIELDS_INVALID");
+        assertCode(()->approvals.operation(ADMIN,UUID.randomUUID(),bank.id(),settle.apply(new java.math.BigDecimal(balance).subtract(new java.math.BigDecimal("0.01")).toPlainString(),f.source().id())),"CLOSURE_SETTLEMENT_AMOUNT_MISMATCH");
+        var hold=postOperation(f,operationChange(f,com.cbs.accounts.OperationModels.Kind.HOLD,"1",null,null));
+        assertCode(()->approvals.operation(ADMIN,UUID.randomUUID(),bank.id(),settle.apply(balance,f.source().id())),"ACCOUNT_CLOSURE_HOLDS");
+        postOperation(f,operationChange(f,com.cbs.accounts.OperationModels.Kind.RELEASE,"1",null,hold));
+        // Independent approval, the bank-side guard against a changed balance, and lost-acknowledgement recovery.
+        var key=UUID.randomUUID();var request=approvals.operation(ADMIN,key,bank.id(),settle.apply(balance,f.source().id()));
+        assertCode(()->approvals.decide(ADMIN,request.id(),com.cbs.approvals.ApprovalModels.Decision.APPROVE,"Own"),"SELF_APPROVAL_FORBIDDEN");
+        approveHttp(request.id());
+        assertCode(()->approvals.operation(ADMIN,UUID.randomUUID(),bank.id(),settle.apply(balance,f.source().id())),"ACCOUNT_OPERATION_PENDING");
+        try(var c=TestDatabases.bank("settle");var st=c.createStatement()){
+            assertThatThrownBy(()->st.executeUpdate("INSERT INTO bank.closure_settlement(request_id,account_id,amount,forfeited_carry) VALUES ('"+UUID.randomUUID()+"','"+f.account()+"',1,0)")).isInstanceOf(SQLException.class);
+        }
+        new TransactionTemplate(transactionManager).executeWithoutResult(t->{operations.deliver(request.id());t.setRollbackOnly();});
+        operations.deliver(request.id());operations.deliver(request.id());
+        assertThat(jdbc.queryForObject("SELECT completed FROM platform.account_operation WHERE request_id=?",Boolean.class,request.id())).isTrue();
+        var position=operations.dashboard(ADMIN,bank.id(),f.account(),25,0).position();
+        assertThat(new java.math.BigDecimal(position.posted())).isEqualByComparingTo("0");assertThat(position.reconciled()).isTrue();
+        var after=accounts.closure(ADMIN,bank.id(),f.account());
+        assertThat(after.settled()).isTrue();assertThat(after.blockers()).isEmpty();assertThat(after.carry()).isEqualTo(before.carry());
+        try(var c=TestDatabases.bank("settle");var st=c.createStatement()){
+            try(var r=st.executeQuery("SELECT count(*),sum(amount),min(forfeited_carry) FROM bank.closure_settlement")){r.next();assertThat(r.getInt(1)).isEqualTo(1);assertThat(r.getBigDecimal(2)).isEqualByComparingTo(balance);assertThat(r.getBigDecimal(3)).isEqualByComparingTo(before.carry());}
+            try(var r=st.executeQuery("SELECT coalesce(debit,0)-coalesce(credit,0) FROM bank.ledger_balance WHERE ledger_id='"+f.source().id()+"'")){r.next();assertThat(r.getBigDecimal(1)).isEqualByComparingTo(new java.math.BigDecimal("1000").subtract(new java.math.BigDecimal(balance)));}
+            assertThatThrownBy(()->st.executeUpdate("UPDATE bank.closure_settlement SET forfeited_carry=0")).isInstanceOf(SQLException.class);
+            assertThatThrownBy(()->st.executeUpdate("INSERT INTO bank.journal_line(journal_id,line_number,ledger_id,side,amount) VALUES ('"+UUID.randomUUID()+"',1,'"+f.liability().id()+"','CREDIT',1)")).isInstanceOf(SQLException.class).hasMessageContaining("pending closure");
+        }
+        // Only the closure may follow: no new money, holds or second settlement.
+        assertCode(()->approvals.funding(ADMIN,UUID.randomUUID(),bank.id(),fundingChange(f,"10","AFTER-SETTLEMENT")),"ACCOUNT_PENDING_CLOSURE");
+        assertCode(()->approvals.operation(ADMIN,UUID.randomUUID(),bank.id(),operationChange(f,com.cbs.accounts.OperationModels.Kind.HOLD,"1",null,null)),"ACCOUNT_PENDING_CLOSURE");
+        assertCode(()->approvals.operation(ADMIN,UUID.randomUUID(),bank.id(),settle.apply("1",f.source().id())),"ACCOUNT_PENDING_CLOSURE");
+        var next=servicing.preview(ADMIN,bank.id(),new com.cbs.servicing.ServicingModels.Run(service.get(ADMIN,bank.id()).version(),reference.get(ADMIN,bank.id()).businessDate(),"Settled accounts are excluded"));
+        assertThat(next.items()).noneMatch(i->i.account().id().equals(f.account()));
+        var closure=approvals.account(ADMIN,UUID.randomUUID(),bank.id(),accountChange(f.f(),f.account(),com.cbs.accounts.AccountModels.State.CLOSED));approveHttp(closure.id());accounts.deliver(closure.id());
+        assertThat(accounts.detail(ADMIN,bank.id(),f.account()).definition().state()).isEqualTo(com.cbs.accounts.AccountModels.State.CLOSED);
+        assertThat(operations.dashboard(ADMIN,bank.id(),f.account(),25,0).items()).anyMatch(i->i.entry().change().kind()==K&&i.status().equals("POSTED"));
+    }
+
     private record FundingFixture(AccountFixture f,UUID account,com.cbs.accounting.LedgerModels.Definition source,com.cbs.accounting.LedgerModels.Definition liability) {}
     private FundingFixture fundingFixture(String binding)throws Exception{
         var f=accountFixture(binding);var bank=f.bank();var opening=approvals.account(ADMIN,UUID.randomUUID(),bank.id(),accountChange(f,null,com.cbs.accounts.AccountModels.State.AWAITING_FUNDING));approveHttp(opening.id());accounts.deliver(opening.id());
@@ -2445,7 +2504,8 @@ class TenantAdministrationIntegrationTest {
         var configuration=approvals.servicingPolicy(ADMIN,UUID.randomUUID(),bank.id(),policy);
         assertCode(()->approvals.decide(ADMIN,configuration.id(),com.cbs.approvals.ApprovalModels.Decision.APPROVE,"Own policy"),"SELF_APPROVAL_FORBIDDEN");approveHttp(configuration.id());
         assertThat(days.dashboard(ADMIN,bank.id(),25,0).blockers()).contains("SERVICING_REQUIRED");
-        assertThat(accounts.closure(ADMIN,bank.id(),f.account()).blockers()).contains("ACCOUNT_CLOSURE_SERVICING_REQUIRED");
+        // An applicable servicing policy no longer blocks closure by itself; the funded balance does.
+        assertThat(accounts.closure(ADMIN,bank.id(),f.account()).blockers()).contains("FUNDING_BALANCE_NOT_ZERO").doesNotContain("ACCOUNT_CLOSURE_SERVICING_REQUIRED");
         // Approved policy corrections retain history and supersede the same effective date.
         java.util.function.Function<String,com.cbs.servicing.ServicingModels.Policy> withFee=fee->new com.cbs.servicing.ServicingModels.Policy(service.get(ADMIN,bank.id()).version(),policy.productId(),policy.productRevision(),policy.legalEntityId(),date,policy.annualRatePercent(),365,fee,"10","20","HALF_EVEN",expense,payable,income,tax,"Correct fictional daily fee");
         var expensive=approvals.servicingPolicy(ADMIN,UUID.randomUUID(),bank.id(),withFee.apply("2000"));approveHttp(expensive.id());

@@ -4,6 +4,12 @@
 
 Use the [Functional Gap & Acceptance Matrix](functional-gap-acceptance-matrix-2026-10-09.md) for the current 34-area functional assessment, 34 proposed acceptance cases, source/test evidence, confirmed limits and prioritized completion work. It reconciles older historical pending lists below. No module has independent bank functional sign-off recorded; existing automated test results do not replace that acceptance.
 
+## W03 resume and final closure settlement — 11 November 2026
+
+[Closure settlement report](w03-closure-settlement.md): the interrupted W03 retry was completed on a fresh isolated database (full backend 160 passed before changes). Positive-balance closure now works in two independently approved steps: a `CLOSURE_SETTLEMENT` that pays out the whole balance (including the product minimum) to an approved asset ledger and records any sub-unit interest carry as forfeited, followed by the existing closure. Interest is settled through the last completed daily run; a servicing policy alone no longer blocks closure. Settled accounts accept nothing but closure and are skipped by daily servicing. Contract/payment-history accounts, pro-rata closing-day interest and settlement reversal remain out of scope. Requires bank schema V23 (Prepare account storage) and control V38; a `CLOSURE_SETTLEMENT` transaction limit must be approved.
+
+Verification: full backend `verify` **161 passed**, zero failures/errors/skips; UI **100 passed**; operations **21 passed**. Bank acceptance remains pending.
+
 ## W02 / W03 functional work
 
 [Validation and closure report](w02-w03-functional-validation.md): fixed first journal delivery after approval-participant deactivation, retained lost-acknowledgement recovery, and added Closure Check plus independently approved zero-balance closure. Final payout, interest/fee/tax settlement and linked contract/payment closure remain partial. Bank acceptance is still pending. Existing banks need bank schema V22.

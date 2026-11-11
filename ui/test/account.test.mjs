@@ -43,3 +43,29 @@ test('closed and pending accounts cannot be managed; opening prerequisites and t
  await ui.render({innerHTML:''},()=>true);await ui.action('edit','d');assert.equal(forms.length,0);await ui.action('new');assert.equal(forms[0][0],'Opening prerequisites');
  setLanguage('fr');assert.equal(t('Deposit accounts'),'Comptes de dépôt');setLanguage('sw');assert.equal(t('Deposit accounts'),'Akaunti za amana');setLanguage('en');
 });
+test('positive balance offers final settlement of the exact posted balance, then nothing else',async()=>{
+ let submit;const forms=[],posts=[];const ui=createAccountUi({field:(name)=>'['+name+']',form:(...a)=>{forms.push(a);submit=a[2];},api:async(path,options)=>{
+  if(options){posts.push({path,...options});return {};}
+  if(path==='/admin/tenants?limit=100')return {items:banks};
+  if(path.endsWith('/closure'))return {version:11,posted:'9007199254740993.17',held:'0',ledgerBalance:'9007199254740993.17',carry:'0.004',settled:false,blockers:['FUNDING_BALANCE_NOT_ZERO','ACCOUNT_CLOSURE_CARRY_SETTLEMENT']};
+  if(path.endsWith('/d'))return {definition:{id:'d',legalEntityId:'entity',terms:{currency:'KES'}}};
+  if(path.includes('/ledger-accounts?'))return {items:[{delivery:'APPLIED',definition:{id:'cash',code:'1100',name:'Vault <b>',legalEntityId:'entity',chartAccountId:'asset'}},{delivery:'APPLIED',definition:{id:'other',code:'9',name:'Other entity',legalEntityId:'x',chartAccountId:'asset'}}]};
+  if(path.includes('/chart-of-accounts?'))return {items:[{id:'asset',normalBalance:'DEBIT'}]};
+  if(path.endsWith('/settings'))return {businessDate:'2026-11-11'};
+  return {version:1,storageReady:true,total:0,items:[]};
+ }});
+ await ui.render({innerHTML:''},()=>true);await ui.action('closure','d');
+ assert.equal(forms[0][0],'Final settlement before closure');assert.match(forms[0][1],/0\.004/);assert.equal(forms[0][3],'Submit for approval');
+ await submit({assetLedgerId:'cash',reference:'CLOSE-1',reason:'Customer request'});await submit({assetLedgerId:'cash',reference:'CLOSE-1',reason:'Customer request'});
+ assert.equal(posts[0].path,'/admin/tenants/a/account-operations');assert.equal(posts[0].body.kind,'CLOSURE_SETTLEMENT');assert.equal(posts[0].body.amount,'9007199254740993.17');
+ assert.equal(posts[0].body.expectedVersion,11);assert.equal(posts[0].body.businessDate,'2026-11-11');assert.equal(posts[0].headers['Idempotency-Key'],posts[1].headers['Idempotency-Key']);
+});
+test('settled account no longer offers another settlement',async()=>{
+ const forms=[];const ui=createAccountUi({field:()=>'',form:(...a)=>forms.push(a),api:async(path)=>{
+  if(path==='/admin/tenants?limit=100')return {items:banks};
+  if(path.endsWith('/closure'))return {version:12,posted:'0',held:'0',ledgerBalance:'0',carry:'0.004',settled:true,blockers:['ACCOUNT_OPERATION_PENDING']};
+  if(path.endsWith('/d'))return {definition:{id:'d',terms:{currency:'KES'}}};
+  return {version:1,storageReady:true,total:0,items:[]};
+ }});
+ await ui.render({innerHTML:''},()=>true);await ui.action('closure','d');assert.equal(forms[0][0],'Account closure check');assert.equal(forms[0][3],'Done');
+});

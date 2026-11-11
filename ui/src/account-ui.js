@@ -46,7 +46,22 @@ export function createAccountUi({api,form,field,refresh}){
       const balances=`<dl class="metadata field full">${Object.entries({Posted:check.posted,Held:check.held,'Ledger balance':check.ledgerBalance}).map(([k,v])=>`<div><dt>${e(t(k))}</dt><dd>${e(v)} ${e(d.terms.currency)}</dd></div>`).join('')}</dl>`;
       const blockers=check.blockers.map(code=>note(errorMessage(code))).join('');
       let key=crypto.randomUUID(),previous='';
-      form('Account closure check',balances+blockers+note('Closure preserves history and does not pay out balances or settle interest, fees, contracts or payment returns.')+(blocked?'':field('reason','Reason for this change','',{full:true,max:500})),values=>{
+      // A positive balance is paid out by a separately approved final settlement before closure.
+      const settleable=['FUNDING_BALANCE_NOT_ZERO','ACCOUNT_CLOSURE_CARRY_SETTLEMENT'];
+      if(blocked&&!check.settled&&Number(check.posted)>0&&check.blockers.every(code=>settleable.includes(code))){
+        const [ledgers,chart,settings]=await Promise.all([api(`/admin/tenants/${target}/ledger-accounts?active=true&currency=${d.terms.currency}&limit=100`),api(`/admin/tenants/${target}/chart-of-accounts?category=ASSET&active=true&kind=POSTING&limit=100`),api(`/admin/tenants/${target}/settings`)]);
+        if(epoch!==generation||!current())return;
+        const assets=new Set(chart.items.filter(x=>x.normalBalance==='DEBIT').map(x=>x.id));
+        const rows=ledgers.items.filter(x=>x.delivery==='APPLIED'&&x.definition.legalEntityId===d.legalEntityId&&assets.has(x.definition.chartAccountId));
+        const carry=Number(check.carry||0)!==0?`<p class="field full reference-note">${e(t('Residual interest below the smallest currency unit is forfeited:'))} ${e(check.carry)}</p>`:'';
+        if(!rows.length){form('Final settlement prerequisites',balances+note('Approve an asset ledger in the account currency and legal entity to pay out the final balance.'),async()=>{},'Done');return;}
+        form('Final settlement before closure',balances+carry+field('assetLedgerId','Paying asset ledger','',{full:true,choices:rows.map(x=>({value:x.definition.id,label:x.definition.code+' · '+x.definition.name}))})+field('reference','Reference','',{full:true,max:80})+field('reason','Reason and evidence','',{full:true,max:500})+note('Pays out the whole posted balance, including the product minimum, and freezes the account until closure is approved. Interest is settled through the last completed daily processing run. Release holds first.'),values=>{
+          const body={expectedVersion:check.version,kind:'CLOSURE_SETTLEMENT',accountId:d.id,destinationId:null,assetLedgerId:values.assetLedgerId,originalId:null,amount:check.posted,businessDate:settings.businessDate,reference:values.reference,reason:values.reason};
+          const payload=JSON.stringify(body);if(previous&&previous!==payload)key=crypto.randomUUID();previous=payload;
+          return api(`/admin/tenants/${target}/account-operations`,{method:'POST',headers:{'Idempotency-Key':key},body});
+        },'Submit for approval');return;
+      }
+      form('Account closure check',balances+blockers+note('Closure preserves history. Pay out any remaining balance through final settlement first; contracts and payment returns are not settled here.')+(blocked?'':field('reason','Reason for this change','',{full:true,max:500})),values=>{
         if(blocked)return;
         const body={expectedVersion:check.version,accountId:d.id,customerId:d.customerId,productId:d.terms.id,productRevision:d.terms.revision,legalEntityId:d.legalEntityId,name:d.name,state:'CLOSED',reason:values.reason};
         const payload=JSON.stringify(body);if(previous&&previous!==payload)key=crypto.randomUUID();previous=payload;

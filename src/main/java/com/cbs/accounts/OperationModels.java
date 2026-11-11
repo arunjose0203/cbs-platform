@@ -7,7 +7,7 @@ import com.cbs.accounting.JournalModels;
 
 public final class OperationModels {
  private OperationModels() {}
- public enum Kind { TRANSFER, WITHDRAWAL, FUNDING_REVERSAL, WITHDRAWAL_REVERSAL, TRANSFER_REVERSAL, HOLD, RELEASE }
+ public enum Kind { TRANSFER, WITHDRAWAL, FUNDING_REVERSAL, WITHDRAWAL_REVERSAL, TRANSFER_REVERSAL, HOLD, RELEASE, CLOSURE_SETTLEMENT }
  public record Change(@Min(0) long expectedVersion,@NotNull Kind kind,@NotNull UUID accountId,
    UUID destinationId,UUID assetLedgerId,UUID originalId,
    @NotBlank @Pattern(regexp="[0-9]{1,18}(\\.[0-9]{1,6})?") String amount,

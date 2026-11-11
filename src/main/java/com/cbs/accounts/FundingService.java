@@ -35,6 +35,7 @@ public class FundingService {
   if(bank.version()!=input.expectedVersion())throw error(409,"STALE_VERSION");if(bank.status()!=Status.ACTIVE)throw error(409,"ACCOUNT_BANK_NOT_ACTIVE");
   if(!store.ready(bank))throw error(409,"FUNDING_STORAGE_NOT_READY");
   OperationService.requireIdle(jdbc,input.accountId());
+  AccountClosureService.requireNotSettling(jdbc,input.accountId());
   var row=accounts.current(bank.id(),input.accountId());var a=row.definition();
   if(!row.delivery().equals("APPLIED")||!List.of(AccountModels.State.AWAITING_FUNDING,AccountModels.State.ACTIVE).contains(a.state()))throw error(409,"FUNDING_ACCOUNT_NOT_READY");
   accounts.requireMatching(bank,a);customers.requireEligible(bank,a.customerId());
