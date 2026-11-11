@@ -8,7 +8,11 @@ import java.util.*;
 public final class CustomerModels {
     private CustomerModels() { }
     public enum State { PROSPECT, ACTIVE, BLOCKED }
-    public enum DocumentType { NATIONAL_ID, PASSPORT }
+    public enum DocumentType { NATIONAL_ID, PASSPORT, REGISTRATION_CERTIFICATE }
+    /** INDIVIDUAL is assumed when absent, so existing profiles are unchanged. */
+    public enum CustomerType { INDIVIDUAL, ORGANIZATION }
+    /** Age of majority used for minors' accounts. */
+    public static final int MAJORITY_AGE=18;
     public record Profile(
         @NotBlank @Size(max=160) @Pattern(regexp="[^\\p{Cntrl}]+") String fullName,
         @NotNull LocalDate birthDate,
@@ -23,13 +27,22 @@ public final class CustomerModels {
         LocalDate documentExpiry,
         @NotBlank @Size(max=160) @Pattern(regexp="[A-Za-z0-9][A-Za-z0-9._/-]{0,159}") String documentReference,
         @NotNull State state,
-        @NotNull @Size(max=160) @Pattern(regexp="[A-Za-z0-9._/-]*") String reviewReference) { }
+        @NotNull @Size(max=160) @Pattern(regexp="[A-Za-z0-9._/-]*") String reviewReference,
+        // For organizations: fullName is the registered name, birthDate the incorporation date,
+        // nationality the country of registration and the document the registration certificate.
+        @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL) CustomerType type) {
+        public Profile(String fullName,LocalDate birthDate,String nationality,String residenceCountry,String address,String phone,String email,DocumentType documentType,String documentCountry,String documentNumber,LocalDate documentExpiry,String documentReference,State state,String reviewReference){
+            this(fullName,birthDate,nationality,residenceCountry,address,phone,email,documentType,documentCountry,documentNumber,documentExpiry,documentReference,state,reviewReference,null);
+        }
+        public CustomerType kind(){return type==null?CustomerType.INDIVIDUAL:type;}
+        public boolean minorOn(LocalDate date){return kind()==CustomerType.INDIVIDUAL&&birthDate.plusYears(MAJORITY_AGE).isAfter(date);}
+    }
     public record Change(@Min(0) long expectedVersion,UUID customerId,@NotNull @Valid Profile profile,
         @NotNull @Size(max=500) @Pattern(regexp="[^\\p{Cntrl}]*") String duplicateReview,
         @NotBlank @Size(max=500) @Pattern(regexp="[^\\p{Cntrl}]+") String reason) { }
     public record Definition(UUID id,UUID bankId,String customerNumber,long version,Profile profile) { }
     public record Dispatch(UUID requestId,Definition definition,String makerSubject,String reviewerIssuer,String reviewerSubject,UUID correlationId) { }
-    public record Summary(UUID id,String customerNumber,String fullName,State state,long version,String delivery,UUID requestId,String failureCode) { }
+    public record Summary(UUID id,String customerNumber,String fullName,State state,long version,String delivery,UUID requestId,String failureCode,CustomerType type) { }
     public record Directory(UUID bankId,long version,boolean storageReady,List<Summary> items,long total,int limit,int offset) { }
     public record Detail(Definition definition,String delivery,UUID requestId,String failureCode) { }
 }

@@ -57,11 +57,15 @@ public class NotificationService {
     // ---- Outbox ----
     /** Called inside the transaction that completes a posting. Idempotent per movement and account. */
     public void record(Movement m){
-        var rows=jdbc.query("SELECT a.customer_id,a.account_number,p.channel,p.destination,p.language,p.events,t.display_name FROM platform.account_registry a JOIN platform.notification_preference p ON p.tenant_id=a.tenant_id AND p.customer_id=a.customer_id JOIN platform.tenant t ON t.id=a.tenant_id WHERE a.tenant_id=? AND a.id=? AND p.channel<>'NONE'",
-            (r,n)->new Object[]{r.getObject(1,UUID.class),r.getString(2),Channel.valueOf(r.getString(3)),r.getString(4),r.getString(5),events(r.getArray(6)),r.getString(7)},m.bankId(),m.accountId());
-        if(rows.isEmpty())return;var row=rows.getFirst();@SuppressWarnings("unchecked") var wanted=(Set<Event>)row[5];if(!wanted.contains(m.event()))return;
+        // Every holder with a preference is alerted: primary customer, joint holders and guardians.
+        var rows=jdbc.query("WITH holders AS (SELECT customer_id FROM platform.account_registry WHERE id=? UNION SELECT customer_id FROM platform.account_party WHERE account_id=? AND role IN ('JOINT_HOLDER','GUARDIAN')) SELECT p.customer_id,a.account_number,p.channel,p.destination,p.language,p.events,t.display_name FROM holders h JOIN platform.notification_preference p ON p.customer_id=h.customer_id JOIN platform.account_registry a ON a.id=? AND p.tenant_id=a.tenant_id JOIN platform.tenant t ON t.id=a.tenant_id WHERE a.tenant_id=? AND p.channel<>'NONE' ORDER BY p.customer_id",
+            (r,n)->new Object[]{r.getObject(1,UUID.class),r.getString(2),Channel.valueOf(r.getString(3)),r.getString(4),r.getString(5),events(r.getArray(6)),r.getString(7)},m.accountId(),m.accountId(),m.accountId(),m.bankId());
+        for(var row:rows)recordFor(m,row);
+    }
+    private void recordFor(Movement m,Object[] row){
+        @SuppressWarnings("unchecked") var wanted=(Set<Event>)row[5];if(!wanted.contains(m.event()))return;
         String language=(String)row[4];var values=Map.of("bank",(String)row[6],"currency",m.currency(),"amount",m.amount(),"last4",NotificationTemplates.last4((String)row[1]),"date",m.businessDate().toString(),"reference",m.reference()==null?"":m.reference());
-        Channel channel=(Channel)row[2];UUID id=UUID.nameUUIDFromBytes((m.event()+":"+m.sourceId()+":"+m.accountId()).getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        Channel channel=(Channel)row[2];UUID id=UUID.nameUUIDFromBytes((m.event()+":"+m.sourceId()+":"+m.accountId()+":"+row[0]).getBytes(java.nio.charset.StandardCharsets.UTF_8));
         jdbc.update("INSERT INTO platform.notification(id,tenant_id,customer_id,account_id,event,source_id,channel,destination,language,subject,body) VALUES (?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT DO NOTHING",
             id,m.bankId(),row[0],m.accountId(),m.event().name(),m.sourceId(),channel.name(),row[3],language,channel==Channel.EMAIL?NotificationTemplates.subject(language,values):null,NotificationTemplates.body(language,m.event(),values));
     }

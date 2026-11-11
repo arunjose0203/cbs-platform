@@ -250,7 +250,7 @@ public class CashService {
   return (String)row.get("reporter");
  }
  private com.cbs.accounts.FundingModels.Change fundingChange(Change input,Location l){return new com.cbs.accounts.FundingModels.Change(input.expectedVersion(),input.accountId(),l.ledgerId(),input.liabilityLedgerId(),input.amount(),input.businessDate(),input.reference(),input.reason());}
- private com.cbs.accounts.OperationModels.Change withdrawalChange(Change input,Location l){return new com.cbs.accounts.OperationModels.Change(input.expectedVersion(),com.cbs.accounts.OperationModels.Kind.WITHDRAWAL,input.accountId(),null,l.ledgerId(),null,input.amount(),input.businessDate(),input.reference(),input.reason());}
+ private com.cbs.accounts.OperationModels.Change withdrawalChange(Change input,Location l){return new com.cbs.accounts.OperationModels.Change(input.expectedVersion(),com.cbs.accounts.OperationModels.Kind.WITHDRAWAL,input.accountId(),null,l.ledgerId(),null,input.amount(),input.businessDate(),input.reference(),input.reason(),input.signatories());}
  public void record(Actor maker,UUID bank,Change input,UUID id){
   if(input.kind()==Kind.WITHDRAWAL)accountBranches.record(maker,bank,withdrawalChange(input,location(bank,input.locationId())),id);
   if(input.kind()==Kind.REVERSAL){var operation=cashReversalOperation(tenants.get(bank,false),input,original(bank,input.originalId(),maker.issuer()));if(operation!=null)accountBranches.record(maker,bank,operation,id);}

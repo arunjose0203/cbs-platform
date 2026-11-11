@@ -21,15 +21,15 @@ import org.apache.pdfbox.pdmodel.font.Standard14Fonts;
  */
 public final class StatementPdf implements StatementService.Sink {
     private static final Map<String,Map<String,String>> LABELS=Map.of(
-        "en",Map.ofEntries(Map.entry("title","Account statement"),Map.entry("account","Account"),Map.entry("name","Account name"),Map.entry("customer","Customer number"),Map.entry("currency","Currency"),Map.entry("period","Period"),
+        "en",Map.ofEntries(Map.entry("title","Account statement"),Map.entry("holders","Account holders"),Map.entry("account","Account"),Map.entry("name","Account name"),Map.entry("customer","Customer number"),Map.entry("currency","Currency"),Map.entry("period","Period"),
             Map.entry("opening","Opening balance"),Map.entry("debits","Total debits"),Map.entry("credits","Total credits"),Map.entry("closing","Closing balance"),Map.entry("entries","Entries"),
             Map.entry("date","Date"),Map.entry("reference","Reference"),Map.entry("narration","Narration"),Map.entry("debit","Debit"),Map.entry("credit","Credit"),Map.entry("balance","Balance"),
             Map.entry("none","No transactions in this period."),Map.entry("page","Page %d of %d"),Map.entry("generated","Generated %s UTC"),Map.entry("to","to")),
-        "fr",Map.ofEntries(Map.entry("title","Relevé de compte"),Map.entry("account","Compte"),Map.entry("name","Intitulé du compte"),Map.entry("customer","Numéro client"),Map.entry("currency","Devise"),Map.entry("period","Période"),
+        "fr",Map.ofEntries(Map.entry("title","Relevé de compte"),Map.entry("holders","Titulaires"),Map.entry("account","Compte"),Map.entry("name","Intitulé du compte"),Map.entry("customer","Numéro client"),Map.entry("currency","Devise"),Map.entry("period","Période"),
             Map.entry("opening","Solde d'ouverture"),Map.entry("debits","Total des débits"),Map.entry("credits","Total des crédits"),Map.entry("closing","Solde de clôture"),Map.entry("entries","Écritures"),
             Map.entry("date","Date"),Map.entry("reference","Référence"),Map.entry("narration","Libellé"),Map.entry("debit","Débit"),Map.entry("credit","Crédit"),Map.entry("balance","Solde"),
             Map.entry("none","Aucune opération sur cette période."),Map.entry("page","Page %d sur %d"),Map.entry("generated","Généré le %s UTC"),Map.entry("to","au")),
-        "sw",Map.ofEntries(Map.entry("title","Taarifa ya akaunti"),Map.entry("account","Akaunti"),Map.entry("name","Jina la akaunti"),Map.entry("customer","Namba ya mteja"),Map.entry("currency","Sarafu"),Map.entry("period","Kipindi"),
+        "sw",Map.ofEntries(Map.entry("title","Taarifa ya akaunti"),Map.entry("holders","Wamiliki"),Map.entry("account","Akaunti"),Map.entry("name","Jina la akaunti"),Map.entry("customer","Namba ya mteja"),Map.entry("currency","Sarafu"),Map.entry("period","Kipindi"),
             Map.entry("opening","Salio la mwanzo"),Map.entry("debits","Jumla ya matoleo"),Map.entry("credits","Jumla ya maingizo"),Map.entry("closing","Salio la mwisho"),Map.entry("entries","Miamala"),
             Map.entry("date","Tarehe"),Map.entry("reference","Kumbukumbu"),Map.entry("narration","Maelezo"),Map.entry("debit","Toleo"),Map.entry("credit","Ingizo"),Map.entry("balance","Salio"),
             Map.entry("none","Hakuna miamala katika kipindi hiki."),Map.entry("page","Ukurasa %d kati ya %d"),Map.entry("generated","Imetolewa %s UTC"),Map.entry("to","hadi")));
@@ -79,7 +79,7 @@ public final class StatementPdf implements StatementService.Sink {
         String title=label.get("title");text(title,bold,12,PDRectangle.A4.getWidth()-MARGIN-width(title,bold,12),TOP-14);
         y-=10;
         if(first){
-            String[][] facts={{label.get("account"),header.accountNumber()},{label.get("name"),header.accountName()},{label.get("customer"),header.customerNumber()},{label.get("currency"),header.currency()},{label.get("period"),header.from()+" "+label.get("to")+" "+header.to()}};
+            String[][] facts={{label.get("account"),header.accountNumber()},{label.get("name"),header.accountName()},{label.get("holders"),header.holders()==null?"":String.join(", ",header.holders())},{label.get("customer"),header.customerNumber()},{label.get("currency"),header.currency()},{label.get("period"),header.from()+" "+label.get("to")+" "+header.to()}};
             for(var f:facts){y-=12;text(f[0],bold,9,MARGIN,y);text(fit(f[1],regular,9,380),regular,9,MARGIN+110,y);}
             y-=10;
             String[][] totals={{label.get("opening"),header.openingBalance()},{label.get("debits"),header.totalDebits()},{label.get("credits"),header.totalCredits()},{label.get("closing"),header.closingBalance()},{label.get("entries"),String.valueOf(header.total())}};

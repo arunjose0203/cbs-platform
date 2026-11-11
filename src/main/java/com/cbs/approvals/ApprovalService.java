@@ -115,6 +115,10 @@ public class ApprovalService {
     public Request branchLimit(Actor actor,UUID key,UUID bank,com.cbs.access.BranchOperations.Limit input){return submit(actor,key,bank,Action.BRANCH_LIMIT,input.expectedVersion(),input.reason(),input);}
     private com.cbs.notifications.NotificationService notifications;
     @org.springframework.beans.factory.annotation.Autowired void notifications(com.cbs.notifications.NotificationService notifications){this.notifications=notifications;}
+    private com.cbs.mandates.MandateService mandates;
+    @org.springframework.beans.factory.annotation.Autowired void mandates(com.cbs.mandates.MandateService mandates){this.mandates=mandates;}
+    public Request customerParties(Actor actor,UUID key,UUID bankId,com.cbs.mandates.MandateModels.Parties input){return submit(actor,key,bankId,Action.CUSTOMER_PARTIES,input.expectedVersion(),input.reason(),input);}
+    public Request accountMandate(Actor actor,UUID key,UUID bankId,com.cbs.mandates.MandateModels.Mandate input){return submit(actor,key,bankId,Action.ACCOUNT_MANDATE,input.expectedVersion(),input.reason(),input);}
     public Request notificationPreference(Actor actor,UUID key,UUID bankId,com.cbs.notifications.NotificationModels.Preference input){return submit(actor,key,bankId,Action.NOTIFICATION_PREFERENCE,input.expectedVersion(),input.reason(),input);}
     public Request limits(Actor actor,UUID key,UUID bankId,com.cbs.access.TransactionLimits.Change input){return submit(actor,key,bankId,Action.TRANSACTION_LIMIT,input.expectedVersion(),input.reason(),input);}
     public Request operation(Actor actor,UUID key,UUID bankId,com.cbs.accounts.OperationModels.Change input){return submit(actor,key,bankId,Action.ACCOUNT_OPERATION,input.expectedVersion(),input.reason(),input);}
@@ -234,6 +238,12 @@ public class ApprovalService {
             } else if(action==Action.BRANCH_LIMIT) {
                 var bank=tenantRepository.get(id,true);var change=(com.cbs.access.BranchOperations.Limit)input;branchOperations.validate(bank,change);
                 before=branchOperations.before(id,change);after=branchOperations.values(change);label="Branch transaction limit";bankId=id;
+            } else if(action==Action.CUSTOMER_PARTIES) {
+                var bank=tenantRepository.get(id,true);var change=(com.cbs.mandates.MandateModels.Parties)input;mandates.validate(bank,change);
+                before=mandates.partiesBefore(id,change.organizationId());after=mandates.values(bank,change);label="Organization directors and owners";bankId=id;
+            } else if(action==Action.ACCOUNT_MANDATE) {
+                var bank=tenantRepository.get(id,true);var change=(com.cbs.mandates.MandateModels.Mandate)input;mandates.validate(bank,change);
+                before=mandates.mandateBefore(id,change.accountId());after=mandates.values(bank,change);label="Account mandate and signing rule";bankId=id;
             } else if(action==Action.NOTIFICATION_PREFERENCE) {
                 var bank=tenantRepository.get(id,true);var change=(com.cbs.notifications.NotificationModels.Preference)input;notifications.validate(bank,change);
                 before=notifications.before(id,change.customerId());after=notifications.values(change);label="Customer alert preference";bankId=id;
@@ -415,6 +425,14 @@ public class ApprovalService {
                         case BRANCH_LIMIT -> {
                             String payload=jdbc.queryForObject("SELECT payload::text FROM platform.approval_request WHERE id=?",String.class,id);
                             branchOperations.apply(actor,request.targetId(),JSON.readValue(payload,com.cbs.access.BranchOperations.Limit.class),auditReason);
+                        }
+                        case CUSTOMER_PARTIES -> {
+                            String payload=jdbc.queryForObject("SELECT payload::text FROM platform.approval_request WHERE id=?",String.class,id);
+                            mandates.apply(actor,request.targetId(),JSON.readValue(payload,com.cbs.mandates.MandateModels.Parties.class),id);
+                        }
+                        case ACCOUNT_MANDATE -> {
+                            String payload=jdbc.queryForObject("SELECT payload::text FROM platform.approval_request WHERE id=?",String.class,id);
+                            mandates.apply(actor,request.targetId(),JSON.readValue(payload,com.cbs.mandates.MandateModels.Mandate.class),id);
                         }
                         case NOTIFICATION_PREFERENCE -> {
                             String payload=jdbc.queryForObject("SELECT payload::text FROM platform.approval_request WHERE id=?",String.class,id);

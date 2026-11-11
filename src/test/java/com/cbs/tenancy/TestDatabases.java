@@ -17,7 +17,7 @@ final class TestDatabases {
         if (DATABASES.isEmpty()) {
             String prefix = "cbs_m01_" + UUID.randomUUID().toString().replace("-", "");
             try (Connection admin = adminConnection()) {
-                for (String suffix : new String[] {"control", "a", "b", "failure", "recovery", "ledger", "ledgerother", "ledgerupgrade", "dayclose", "dayfailure", "dayguards", "customer", "customerother", "customerfail", "account", "accountguards", "accountrecovery", "funding", "fundguards", "closure", "settle", "chunks", "volume", "alerts", "fundrecovery", "fundfailure", "operations", "optransfer", "branchops", "cash", "servicing", "compliance", "payments", "lifecycle", "fx", "fxtrade", "contracts", "corrections", "termservicing", "credit", "arrears", "lendingaccess"}) {
+                for (String suffix : new String[] {"control", "a", "b", "failure", "recovery", "ledger", "ledgerother", "ledgerupgrade", "dayclose", "dayfailure", "dayguards", "customer", "customerother", "customerfail", "account", "accountguards", "accountrecovery", "funding", "fundguards", "closure", "settle", "chunks", "volume", "alerts", "mandates", "fundrecovery", "fundfailure", "operations", "optransfer", "branchops", "cash", "servicing", "compliance", "payments", "lifecycle", "fx", "fxtrade", "contracts", "corrections", "termservicing", "credit", "arrears", "lendingaccess"}) {
                     String name = prefix + "_" + suffix;
                     String password = UUID.randomUUID().toString().replace("-", "");
                     try (var statement = admin.createStatement()) {
@@ -47,7 +47,7 @@ final class TestDatabases {
         bind(registry,"ledger-other","ledgerother");
         bind(registry,"ledger-upgrade","ledgerupgrade");
         bind(registry,"fx-main","fx");bind(registry,"fx-trade","fxtrade");bind(registry,"credit-main","credit");bind(registry,"arrears-main","arrears");bind(registry,"lending-access","lendingaccess");bind(registry,"contracts-main","contracts");bind(registry,"contracts-corrections","corrections");bind(registry,"contracts-servicing","termservicing");bind(registry,"payments-main","payments");bind(registry,"payments-lifecycle","lifecycle");bind(registry,"compliance-main","compliance");bind(registry,"servicing-main","servicing");bind(registry,"cash-main","cash");bind(registry,"branch-operations","branchops");bind(registry,"operations-main","operations");bind(registry,"operations-transfer","optransfer");
-        bind(registry,"closure-main","closure");bind(registry,"closure-settle","settle");bind(registry,"servicing-chunks","chunks");bind(registry,"servicing-volume","volume");bind(registry,"statement-alerts","alerts");bind(registry,"funding-main","funding");bind(registry,"funding-guards","fundguards");bind(registry,"funding-recovery","fundrecovery");bind(registry,"funding-failure","fundfailure");
+        bind(registry,"closure-main","closure");bind(registry,"closure-settle","settle");bind(registry,"servicing-chunks","chunks");bind(registry,"servicing-volume","volume");bind(registry,"statement-alerts","alerts");bind(registry,"customer-mandates","mandates");bind(registry,"funding-main","funding");bind(registry,"funding-guards","fundguards");bind(registry,"funding-recovery","fundrecovery");bind(registry,"funding-failure","fundfailure");
         bind(registry,"account-main","account");bind(registry,"account-guards","accountguards");bind(registry,"account-recovery","accountrecovery");
         bind(registry,"customer-main","customer");bind(registry,"customer-guards","customerother");bind(registry,"customer-recovery","customerfail");
         bind(registry,"day-main","dayclose");bind(registry,"day-failure","dayfailure");bind(registry,"day-guards","dayguards");
@@ -80,7 +80,7 @@ final class TestDatabases {
     static void close() throws SQLException {
         try (Connection admin = adminConnection(); var statement = admin.createStatement()) {
             for (Database target : DATABASES.values()) {
-                if (!target.name().matches("cbs_m01_[0-9a-f]{32}_(control|a|b|failure|recovery|ledger|ledgerother|ledgerupgrade|dayclose|dayfailure|dayguards|customer|customerother|customerfail|account|accountguards|accountrecovery|funding|fundguards|closure|settle|chunks|volume|alerts|fundrecovery|fundfailure|operations|optransfer|branchops|cash|servicing|compliance|payments|lifecycle|fx|fxtrade|contracts|corrections|termservicing|credit|arrears|lendingaccess)")) { throw new IllegalStateException("Unsafe fixture name"); }
+                if (!target.name().matches("cbs_m01_[0-9a-f]{32}_(control|a|b|failure|recovery|ledger|ledgerother|ledgerupgrade|dayclose|dayfailure|dayguards|customer|customerother|customerfail|account|accountguards|accountrecovery|funding|fundguards|closure|settle|chunks|volume|alerts|mandates|fundrecovery|fundfailure|operations|optransfer|branchops|cash|servicing|compliance|payments|lifecycle|fx|fxtrade|contracts|corrections|termservicing|credit|arrears|lendingaccess)")) { throw new IllegalStateException("Unsafe fixture name"); }
                 statement.execute("DROP DATABASE IF EXISTS " + target.name() + " WITH (FORCE)");
                 statement.execute("DROP ROLE IF EXISTS " + target.name());
             }

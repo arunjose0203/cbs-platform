@@ -18,6 +18,7 @@ public final class StatementCsv {
    public void header(StatementService.Header h)throws java.io.IOException{
     var out=new StringBuilder("\uFEFF");
     row(out,"Account",h.accountNumber(),"Currency",h.currency());
+    if(h.holders()!=null&&!h.holders().isEmpty())row(out,"Account holders",String.join("; ",h.holders()));
     row(out,"From",h.from().toString(),"To",h.to().toString());
     row(out,"Opening balance",h.openingBalance(),"Closing balance",h.closingBalance());
     row(out,"Transaction ID","Business date","Reference","Narration","Debit","Credit","Balance");writer.write(out.toString());

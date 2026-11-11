@@ -54,6 +54,7 @@ class TenantAdministrationIntegrationTest {
     @Autowired com.cbs.compliance.ComplianceService compliance;
     @Autowired com.cbs.approvals.ApprovalService approvals;
     @Autowired com.cbs.notifications.NotificationService notifications;
+    @Autowired com.cbs.mandates.MandateService mandates;
     @Autowired com.cbs.reference.ReferenceDataService reference;
     @Autowired com.cbs.accounting.ChartService chart;
     @Autowired com.cbs.products.ProductService products;
@@ -2665,7 +2666,8 @@ class TenantAdministrationIntegrationTest {
         var accountNumber=accounts.detail(ADMIN,bank.id(),f.account()).definition().accountNumber();
         assertThat((String)rows.get(0).get("body")).contains(accountNumber.substring(accountNumber.length()-4)).doesNotContain(accountNumber.length()>4?accountNumber:"#");
         // The test sender delivers; the list masks destinations.
-        assertThat(notifications.dispatch()).isEqualTo(2);assertThat(notifications.dispatch()).isZero();
+        // The dispatcher serves every bank; check this bank's alerts only.
+        notifications.dispatch();notifications.dispatch();assertThat(notifications.list(ADMIN,bank.id(),"PENDING",null,25,0).total()).isZero();
         var page=notifications.list(ADMIN,bank.id(),"SENT",null,25,0);assertThat(page.total()).isEqualTo(2);
         assertThat(page.items()).allSatisfy(n->{assertThat(n.destination()).isEqualTo("+254******678");assertThat(n.provider()).isEqualTo("TEST");assertThat(n.providerReference()).startsWith("TEST-");});
         // A failing destination is retried, then marked failed; an administrator can queue it again.
@@ -2684,12 +2686,101 @@ class TenantAdministrationIntegrationTest {
         String path=base+"/accounts/"+f.account()+"/statement";
         mvc.perform(get(path+"/pdf?from="+date+"&to="+date)).andExpect(status().isUnauthorized());
         var csv=mvc.perform(admin(get(path+"/export?from="+date+"&to="+date))).andExpect(status().isOk()).andExpect(header().string("Cache-Control","no-store")).andReturn().getResponse().getContentAsString(java.nio.charset.StandardCharsets.UTF_8);
-        assertThat(csv.lines().count()).isEqualTo(4+closing.total());assertThat(csv).contains(closing.closingBalance());
+        assertThat(csv.lines().count()).isEqualTo(5+closing.total());assertThat(csv).contains(closing.closingBalance());
         var pdf=mvc.perform(admin(get(path+"/pdf?from="+date+"&to="+date+"&language=fr"))).andExpect(status().isOk()).andExpect(header().string("Content-Type","application/pdf")).andExpect(header().string("Cache-Control","no-store")).andReturn().getResponse().getContentAsByteArray();
         try(var doc=org.apache.pdfbox.Loader.loadPDF(pdf)){var text=new org.apache.pdfbox.text.PDFTextStripper().getText(doc);assertThat(text).contains("Relevé de compte",accountNumber,closing.closingBalance(),"Page 1 sur");}
         mvc.perform(admin(get(path+"/pdf?from="+date+"&to="+date+"&language=de"))).andExpect(status().isBadRequest());
         mvc.perform(admin(get(path+"/pdf?from="+date+"&to="+date.plusDays(400)))).andExpect(status().isBadRequest());
         assertThat(jdbc.queryForList("SELECT change_details->>'format' FROM platform.tenant_audit WHERE tenant_id=? AND action='ACCOUNT_STATEMENT_EXPORTED'",String.class,bank.id())).contains("CSV","PDF");
+    }
+    private UUID onboard(Tenant bank,com.cbs.customers.CustomerModels.Profile profile)throws Exception{
+        var r=approvals.customer(ADMIN,UUID.randomUUID(),bank.id(),customerChange(bank,null,profile,""));approveHttp(r.id());customers.deliver(r.id());
+        return jdbc.queryForObject("SELECT id FROM platform.customer_registry WHERE tenant_id=? AND request_id=?",UUID.class,bank.id(),r.id());
+    }
+    private com.cbs.customers.CustomerModels.Profile person(String name,String doc,java.time.LocalDate born){
+        return new com.cbs.customers.CustomerModels.Profile(name,born,"KE","KE","Fictional test address","+254700000001","demo@example.test",com.cbs.customers.CustomerModels.DocumentType.NATIONAL_ID,"KE",doc,null,"DOC/"+doc,com.cbs.customers.CustomerModels.State.ACTIVE,"REVIEW/"+doc);
+    }
+    /** Opens and funds an account for any customer of the fixture's bank. */
+    private UUID accountFor(FundingFixture f,UUID customer,String code,String amount)throws Exception{
+        var bank=f.f().bank();
+        var opening=approvals.account(ADMIN,UUID.randomUUID(),bank.id(),new com.cbs.accounts.AccountModels.Change(service.get(ADMIN,bank.id()).version(),null,customer,f.f().product().id(),f.f().product().revision(),bank.legalEntities().getFirst().id(),"Account "+code,com.cbs.accounts.AccountModels.State.AWAITING_FUNDING,"Open fictional account"));approveHttp(opening.id());accounts.deliver(opening.id());
+        UUID account=jdbc.queryForObject("SELECT id FROM platform.account_registry WHERE tenant_id=? AND request_id=?",UUID.class,bank.id(),opening.id());
+        var liability=approvals.ledger(ADMIN,UUID.randomUUID(),bank.id(),ledgerChange(bank,null,code,f.f().product().liabilityAccountId(),"Customer liability "+code,true));approveHttp(liability.id());ledger.deliver(liability.id());
+        var ledgerId=ledger.list(ADMIN,bank.id(),code,null,null,25,0).items().getFirst().definition().id();
+        var r=approvals.funding(ADMIN,UUID.randomUUID(),bank.id(),new com.cbs.accounts.FundingModels.Change(service.get(ADMIN,bank.id()).version(),account,f.source().id(),ledgerId,amount,reference.get(ADMIN,bank.id()).businessDate(),"F-"+code,"Verified fictional receipt"));approveHttp(r.id());funding.deliver(r.id());
+        return account;
+    }
+    private com.cbs.accounts.OperationModels.Change debit(FundingFixture f,UUID account,String amount,List<UUID> signers){
+        return new com.cbs.accounts.OperationModels.Change(service.get(ADMIN,f.f().bank().id()).version(),com.cbs.accounts.OperationModels.Kind.WITHDRAWAL,account,null,f.source().id(),null,amount,reference.get(ADMIN,f.f().bank().id()).businessDate(),"W-"+UUID.randomUUID(),"Fictional withdrawal slip",signers);
+    }
+    private com.cbs.mandates.MandateModels.Mandate mandate(Tenant bank,UUID account,com.cbs.mandates.MandateModels.SigningRule rule,com.cbs.mandates.MandateModels.AccountParty... parties){
+        return new com.cbs.mandates.MandateModels.Mandate(service.get(ADMIN,bank.id()).version(),account,rule,List.of(parties),"Signed mandate form");
+    }
+    @Test void jointMinorAndOrganizationAccountsEnforceApprovedMandates()throws Exception{
+        var f=fundingFixture("customer-mandates");var bank=f.f().bank();UUID holder=f.f().customer();
+        approveHttp(approvals.limits(ADMIN,UUID.randomUUID(),bank.id(),new com.cbs.access.TransactionLimits.Change(service.get(ADMIN,bank.id()).version(),f.f().product().currency(),"FUNDING","999999999","999999999","Fictional limit")).id());
+        var R=com.cbs.mandates.MandateModels.AccountRole.class;var day=reference.get(ADMIN,bank.id()).businessDate();
+        UUID joint=onboard(bank,person("Second Holder","JH-0002",java.time.LocalDate.of(1985,3,3)));
+        UUID other=onboard(bank,person("Unrelated Person","UP-0003",java.time.LocalDate.of(1980,4,4)));
+        UUID minor=onboard(bank,person("Young Saver","MN-0004",day.minusYears(9)));
+        // Organizations use a registration certificate; the type cannot be mixed up or changed later.
+        var orgProfile=new com.cbs.customers.CustomerModels.Profile("Fictional Traders Ltd",java.time.LocalDate.of(2012,6,1),"KE","KE","Fictional business park","+254700000009","accounts@example.test",com.cbs.customers.CustomerModels.DocumentType.REGISTRATION_CERTIFICATE,"KE","PVT-12345",null,"DOC/PVT-12345",com.cbs.customers.CustomerModels.State.ACTIVE,"REVIEW/PVT",com.cbs.customers.CustomerModels.CustomerType.ORGANIZATION);
+        assertCode(()->approvals.customer(ADMIN,UUID.randomUUID(),bank.id(),customerChange(bank,null,new com.cbs.customers.CustomerModels.Profile("Fictional Traders Ltd",java.time.LocalDate.of(2012,6,1),"KE","KE","Park","+254700000009","a@example.test",com.cbs.customers.CustomerModels.DocumentType.NATIONAL_ID,"KE","PVT-99999",null,"DOC/X",com.cbs.customers.CustomerModels.State.ACTIVE,"REVIEW/X",com.cbs.customers.CustomerModels.CustomerType.ORGANIZATION),"")),"CUSTOMER_TYPE_DOCUMENT_MISMATCH");
+        UUID org=onboard(bank,orgProfile);
+        assertCode(()->approvals.customer(ADMIN,UUID.randomUUID(),bank.id(),customerChange(bank,org,person("Fictional Traders Ltd","PVT-12345",java.time.LocalDate.of(2012,6,1)),"")),"CUSTOMER_TYPE_IMMUTABLE");
+
+        // Joint account, both holders must sign.
+        UUID account=f.account();fund(f,"1000");
+        postOperation(f,debit(f,account,"10",null));
+        assertCode(()->approvals.accountMandate(ADMIN,UUID.randomUUID(),bank.id(),mandate(bank,account,com.cbs.mandates.MandateModels.SigningRule.ANY_TWO)),"MANDATE_RULE_UNSATISFIABLE");
+        assertCode(()->approvals.accountMandate(ADMIN,UUID.randomUUID(),bank.id(),mandate(bank,account,com.cbs.mandates.MandateModels.SigningRule.ANY_ONE,new com.cbs.mandates.MandateModels.AccountParty(joint,com.cbs.mandates.MandateModels.AccountRole.GUARDIAN))),"MANDATE_ROLE_INVALID");
+        assertCode(()->approvals.accountMandate(ADMIN,UUID.randomUUID(),bank.id(),mandate(bank,account,com.cbs.mandates.MandateModels.SigningRule.ANY_ONE,new com.cbs.mandates.MandateModels.AccountParty(minor,com.cbs.mandates.MandateModels.AccountRole.JOINT_HOLDER))),"PARTY_MUST_BE_ADULT_INDIVIDUAL");
+        var jm=approvals.accountMandate(ADMIN,UUID.randomUUID(),bank.id(),mandate(bank,account,com.cbs.mandates.MandateModels.SigningRule.ANY_TWO,new com.cbs.mandates.MandateModels.AccountParty(joint,com.cbs.mandates.MandateModels.AccountRole.JOINT_HOLDER)));
+        assertCode(()->approvals.decide(ADMIN,jm.id(),com.cbs.approvals.ApprovalModels.Decision.APPROVE,"Own"),"SELF_APPROVAL_FORBIDDEN");approveHttp(jm.id());
+        var view=mandates.view(ADMIN,bank.id(),account);assertThat(view.required()).isTrue();assertThat(view.signaturesNeeded()).isEqualTo(2);assertThat(view.signers()).extracting(s->s.customerId()).containsExactlyInAnyOrder(holder,joint);
+        assertCode(()->approvals.operation(ADMIN,UUID.randomUUID(),bank.id(),debit(f,account,"10",null)),"MANDATE_SIGNATURES_REQUIRED");
+        assertCode(()->approvals.operation(ADMIN,UUID.randomUUID(),bank.id(),debit(f,account,"10",List.of(holder))),"MANDATE_SIGNATURES_REQUIRED");
+        assertCode(()->approvals.operation(ADMIN,UUID.randomUUID(),bank.id(),debit(f,account,"10",List.of(holder,other))),"MANDATE_SIGNATORY_INVALID");
+        assertCode(()->approvals.operation(ADMIN,UUID.randomUUID(),bank.id(),debit(f,account,"10",List.of(holder,holder))),"MANDATE_SIGNATORY_INVALID");
+        assertCode(()->approvals.operation(ADMIN,UUID.randomUUID(),bank.id(),(new com.cbs.accounts.OperationModels.Change(service.get(ADMIN,bank.id()).version(),com.cbs.accounts.OperationModels.Kind.HOLD,account,null,null,null,"1",day,"H-1","Hold",List.of(holder)))),"OPERATION_FIELDS_INVALID");
+        postOperation(f,debit(f,account,"25.5",List.of(holder,joint)));
+        assertThat(operations.dashboard(ADMIN,bank.id(),account,25,0).position().posted()).isEqualTo("964.5");
+        // Statements name both holders; each opted-in holder is alerted.
+        approveHttp(approvals.notificationPreference(ADMIN,UUID.randomUUID(),bank.id(),new com.cbs.notifications.NotificationModels.Preference(service.get(ADMIN,bank.id()).version(),joint,com.cbs.notifications.NotificationModels.Channel.EMAIL,"second@example.test","en",java.util.EnumSet.of(com.cbs.notifications.NotificationModels.Event.DEBIT),"CONSENT/J","Joint holder consent")).id());
+        var alerted=postOperation(f,debit(f,account,"4.5",List.of(holder,joint)));
+        assertThat(jdbc.queryForList("SELECT customer_id FROM platform.notification WHERE source_id=?",UUID.class,alerted)).containsExactly(joint);
+        var csv=mvc.perform(admin(get("/api/v1/admin/tenants/"+bank.id()+"/accounts/"+account+"/statement/export?from="+day+"&to="+day))).andExpect(status().isOk()).andReturn().getResponse().getContentAsString(java.nio.charset.StandardCharsets.UTF_8);
+        assertThat(csv).contains("Account holders","Account Example; Second Holder");
+
+        // A minor's account is operated only by an approved guardian.
+        UUID minorAccount=accountFor(f,minor,"MINOR_01","500");
+        assertCode(()->approvals.operation(ADMIN,UUID.randomUUID(),bank.id(),debit(f,minorAccount,"5",null)),"MANDATE_REQUIRED");
+        assertThat(mandates.view(ADMIN,bank.id(),minorAccount).primaryMinor()).isTrue();
+        assertCode(()->approvals.accountMandate(ADMIN,UUID.randomUUID(),bank.id(),mandate(bank,minorAccount,com.cbs.mandates.MandateModels.SigningRule.ANY_ONE,new com.cbs.mandates.MandateModels.AccountParty(holder,com.cbs.mandates.MandateModels.AccountRole.JOINT_HOLDER))),"MANDATE_ROLE_INVALID");
+        approveHttp(approvals.accountMandate(ADMIN,UUID.randomUUID(),bank.id(),mandate(bank,minorAccount,com.cbs.mandates.MandateModels.SigningRule.ANY_ONE,new com.cbs.mandates.MandateModels.AccountParty(holder,com.cbs.mandates.MandateModels.AccountRole.GUARDIAN))).id());
+        assertCode(()->approvals.operation(ADMIN,UUID.randomUUID(),bank.id(),debit(f,minorAccount,"5",List.of(minor))),"MANDATE_SIGNATORY_INVALID");
+        postOperation(f,debit(f,minorAccount,"5",List.of(holder)));
+
+        // An organization needs recorded directors before it can transact, and only they may sign.
+        assertCode(()->accountFor(f,org,"ORG_01","700"),"ORGANIZATION_PARTIES_REQUIRED");
+        java.util.function.Function<List<com.cbs.mandates.MandateModels.Party>,com.cbs.mandates.MandateModels.Parties> parties=list->new com.cbs.mandates.MandateModels.Parties(service.get(ADMIN,bank.id()).version(),org,list,"Board resolution and share register");
+        var D=com.cbs.mandates.MandateModels.PartyRole.DIRECTOR;var B=com.cbs.mandates.MandateModels.PartyRole.BENEFICIAL_OWNER;
+        assertCode(()->approvals.customerParties(ADMIN,UUID.randomUUID(),bank.id(),parties.apply(List.of(new com.cbs.mandates.MandateModels.Party(joint,B,"60")))),"ORGANIZATION_PARTIES_REQUIRED");
+        assertCode(()->approvals.customerParties(ADMIN,UUID.randomUUID(),bank.id(),parties.apply(List.of(new com.cbs.mandates.MandateModels.Party(holder,D,null),new com.cbs.mandates.MandateModels.Party(joint,B,null)))),"PARTY_OWNERSHIP_INVALID");
+        assertCode(()->approvals.customerParties(ADMIN,UUID.randomUUID(),bank.id(),parties.apply(List.of(new com.cbs.mandates.MandateModels.Party(holder,D,null),new com.cbs.mandates.MandateModels.Party(joint,B,"60"),new com.cbs.mandates.MandateModels.Party(other,B,"50")))),"PARTY_OWNERSHIP_INVALID");
+        assertCode(()->approvals.customerParties(ADMIN,UUID.randomUUID(),bank.id(),parties.apply(List.of(new com.cbs.mandates.MandateModels.Party(minor,D,null)))),"PARTY_MUST_BE_ADULT_INDIVIDUAL");
+        assertCode(()->approvals.customerParties(ADMIN,UUID.randomUUID(),bank.id(),new com.cbs.mandates.MandateModels.Parties(service.get(ADMIN,bank.id()).version(),holder,List.of(new com.cbs.mandates.MandateModels.Party(joint,D,null)),"Wrong type")),"CUSTOMER_NOT_ORGANIZATION");
+        approveHttp(approvals.customerParties(ADMIN,UUID.randomUUID(),bank.id(),parties.apply(List.of(new com.cbs.mandates.MandateModels.Party(holder,D,null),new com.cbs.mandates.MandateModels.Party(joint,B,"60")))).id());
+        assertThat(mandates.parties(ADMIN,bank.id(),org)).extracting(p->p.role()+":"+p.ownershipPercent()).containsExactlyInAnyOrder("DIRECTOR:null","BENEFICIAL_OWNER:60");
+        UUID orgAccount=accountFor(f,org,"ORG_01","700");
+        assertCode(()->approvals.operation(ADMIN,UUID.randomUUID(),bank.id(),debit(f,orgAccount,"5",List.of(holder))),"MANDATE_REQUIRED");
+        assertCode(()->approvals.accountMandate(ADMIN,UUID.randomUUID(),bank.id(),mandate(bank,orgAccount,com.cbs.mandates.MandateModels.SigningRule.ANY_ONE,new com.cbs.mandates.MandateModels.AccountParty(other,com.cbs.mandates.MandateModels.AccountRole.SIGNATORY))),"MANDATE_SIGNATORY_NOT_AUTHORIZED");
+        approveHttp(approvals.accountMandate(ADMIN,UUID.randomUUID(),bank.id(),mandate(bank,orgAccount,com.cbs.mandates.MandateModels.SigningRule.ANY_ONE,new com.cbs.mandates.MandateModels.AccountParty(holder,com.cbs.mandates.MandateModels.AccountRole.SIGNATORY))).id());
+        postOperation(f,debit(f,orgAccount,"7",List.of(holder)));
+        // A compliance restriction on a beneficial owner restricts the organization; on a signer, that signature.
+        compliance.open(ADMIN,bank.id(),UUID.randomUUID(),new com.cbs.compliance.ComplianceModels.Open(service.get(ADMIN,bank.id()).version(),joint,com.cbs.compliance.ComplianceModels.Category.KYC_REVIEW,"KYC/JOINT","Fictional restriction"));
+        assertCode(()->approvals.operation(ADMIN,UUID.randomUUID(),bank.id(),debit(f,orgAccount,"1",List.of(holder))),"ORGANIZATION_PARTY_RESTRICTED");
+        assertCode(()->approvals.operation(ADMIN,UUID.randomUUID(),bank.id(),debit(f,account,"1",List.of(holder,joint))),"MANDATE_SIGNATORY_INELIGIBLE");
     }
     private void verifyDenominationInventory(FundingFixture f,UUID branch,UUID vault,Actor maker,Actor reviewer)throws Exception{
         var bank=f.f().bank();

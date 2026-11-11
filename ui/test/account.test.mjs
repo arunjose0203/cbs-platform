@@ -69,3 +69,16 @@ test('settled account no longer offers another settlement',async()=>{
  }});
  await ui.render({innerHTML:''},()=>true);await ui.action('closure','d');assert.equal(forms[0][0],'Account closure check');assert.equal(forms[0][3],'Done');
 });
+test('mandate form offers only roles valid for the holder and submits for approval',async()=>{
+ let submit,html;const posts=[];const ui=createAccountUi({field:(name,label,value,opts)=>'['+name+':'+(opts?.choices||[]).map(c=>c.value).join('|')+']',form:(_t,h,fn)=>{html=h;submit=fn;},api:async(path,options)=>{
+  if(options){posts.push({path,...options});return {};}
+  if(path==='/admin/tenants?limit=100')return {items:banks};
+  if(path.endsWith('/mandate'))return {primaryCustomerId:'p',primaryType:'ORGANIZATION',primaryMinor:false,configured:false,required:true,rule:'ANY_ONE',signers:[],parties:[]};
+  if(path.includes('/customers?'))return {items:[{id:'p',type:'ORGANIZATION',delivery:'APPLIED'},{id:'d1',customerNumber:'C1',fullName:'Director One',type:'INDIVIDUAL',delivery:'APPLIED'},{id:'o2',type:'ORGANIZATION',delivery:'APPLIED',customerNumber:'C9',fullName:'Other Ltd'}]};
+  return {version:4,storageReady:true,total:0,items:[]};
+ }});
+ await ui.render({innerHTML:''},()=>true);await ui.action('mandate','acc');
+ assert.match(html,/\[role0:SIGNATORY\]/);assert.ok(!html.includes('JOINT_HOLDER'));assert.match(html,/\[party0:\|d1\]/);
+ await submit({rule:'ANY_ONE',party0:'d1',role0:'SIGNATORY',party1:'',reason:'Board resolution'});
+ assert.equal(posts[0].path,'/admin/tenants/a/accounts/mandates');assert.deepEqual(posts[0].body.parties,[{customerId:'d1',role:'SIGNATORY'}]);assert.equal(posts[0].body.expectedVersion,4);
+});

@@ -19,7 +19,7 @@ public class StatementService {
  public record Line(UUID transactionId,LocalDate businessDate,String reference,String narration,String debit,String credit,String balance) {}
  public record Statement(String accountNumber,String currency,LocalDate from,LocalDate to,String openingBalance,String closingBalance,List<Line> items,long total,int limit,int offset) {}
  /** Statement header passed to a streaming sink before its lines. */
- public record Header(String bankName,String legalEntityName,String accountNumber,String accountName,String customerNumber,String currency,LocalDate from,LocalDate to,String openingBalance,String closingBalance,long total,String totalDebits,String totalCredits,String language) {}
+ public record Header(String bankName,String legalEntityName,String accountNumber,String accountName,String customerNumber,String currency,LocalDate from,LocalDate to,String openingBalance,String closingBalance,long total,String totalDebits,String totalCredits,String language,List<String> holders) {}
  /** Receives a statement without holding every line in memory. */
  public interface Sink { void header(Header header) throws java.io.IOException; void line(Line line) throws java.io.IOException; default void finish() throws java.io.IOException {} }
  private final JdbcTemplate jdbc;private final TenantRepository tenants;private final AccountService accounts;private final BankDatabaseProvisioner databases;private final TransactionTemplate tx;
@@ -45,11 +45,16 @@ public class StatementService {
    try(var c=databases.openOwned(bank.id(),bank.databaseBinding().databaseReference())){
     c.setAutoCommit(false);c.setTransactionIsolation(java.sql.Connection.TRANSACTION_REPEATABLE_READ);c.setReadOnly(true);
     String source=source(c);BigDecimal opening,closing,debits,credits;long count;
+    // Primary holder first, then joint holders and guardians, named from the bank's own records.
+    var holderIds=jdbc.queryForList("SELECT customer_id FROM platform.account_registry WHERE id=? UNION ALL (SELECT customer_id FROM platform.account_party WHERE account_id=? AND role IN ('JOINT_HOLDER','GUARDIAN') ORDER BY role,customer_id)",UUID.class,accountId,accountId);
+    var names=new HashMap<UUID,String>();
+    try(var s=c.prepareStatement("SELECT id,payload->'profile'->>'fullName' FROM bank.customer WHERE id=ANY(?)")){s.setArray(1,c.createArrayOf("uuid",holderIds.toArray()));try(var r=s.executeQuery()){while(r.next())names.put(r.getObject(1,UUID.class),r.getString(2));}}
+    var holders=holderIds.stream().map(id->names.getOrDefault(id,"")).filter(n->!n.isBlank()).toList();
     try(var s=c.prepareStatement(source+"SELECT coalesce(sum(amount) FILTER(WHERE business_date<?),0),coalesce(sum(amount) FILTER(WHERE business_date<=?),0),count(*) FILTER(WHERE business_date BETWEEN ? AND ?),coalesce(sum(-amount) FILTER(WHERE business_date BETWEEN ? AND ? AND amount<0),0),coalesce(sum(amount) FILTER(WHERE business_date BETWEEN ? AND ? AND amount>0),0) FROM movements")){
      s.setObject(1,accountId);s.setObject(2,from);s.setObject(3,to);s.setObject(4,from);s.setObject(5,to);s.setObject(6,from);s.setObject(7,to);s.setObject(8,from);s.setObject(9,to);
      try(var r=s.executeQuery()){r.next();opening=r.getBigDecimal(1);closing=r.getBigDecimal(2);count=r.getLong(3);debits=r.getBigDecimal(4);credits=r.getBigDecimal(5);}
     }
-    sink.header(new Header(bank.displayName(),entity,account.accountNumber(),account.name(),account.customerNumber(),account.terms().currency(),from,to,text(opening),text(closing),count,text(debits),text(credits),bank.defaultLanguage()));
+    sink.header(new Header(bank.displayName(),entity,account.accountNumber(),account.name(),account.customerNumber(),account.terms().currency(),from,to,text(opening),text(closing),count,text(debits),text(credits),bank.defaultLanguage(),holders));
     try(var s=c.prepareStatement(source+"SELECT *,?+sum(amount) OVER(ORDER BY business_date,posted_at,id ROWS UNBOUNDED PRECEDING) running FROM movements WHERE business_date BETWEEN ? AND ? ORDER BY business_date,posted_at,id")){
      s.setFetchSize(1000);s.setObject(1,accountId);s.setBigDecimal(2,opening);s.setObject(3,from);s.setObject(4,to);
      try(var r=s.executeQuery()){while(r.next())sink.line(line(r));}

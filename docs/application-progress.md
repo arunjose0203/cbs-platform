@@ -4,6 +4,12 @@
 
 Use the [Functional Gap & Acceptance Matrix](functional-gap-acceptance-matrix-2026-10-09.md) for the current 34-area functional assessment, 34 proposed acceptance cases, source/test evidence, confirmed limits and prioritized completion work. It reconciles older historical pending lists below. No module has independent bank functional sign-off recorded; existing automated test results do not replace that acceptance.
 
+## Organizations, joint and minors' accounts — 11 November 2026
+
+[Organizations, joint and minors' accounts](organizations-joint-and-minor-accounts.md): customers can be organizations (registration certificate; type immutable) with approved directors, beneficial owners (ownership %) and representatives; an organization transacts only with a recorded director and no restricted related person. Approved account mandates add joint holders, authorised signatories or guardians with any-one / any-two / all signing rules. Withdrawals, transfers and closure settlements on mandated, organization and minors' accounts must name enough distinct, eligible authorised signers; minors' and organization accounts cannot be debited without a mandate. Statements list all holders; alerts go to every opted-in holder. Teller UI signer capture and M-Pesa payouts from mandated accounts remain open. Control V41.
+
+Verification: full backend `verify` **168 passed**, 1 opt-in volume test skipped, zero failures/errors; UI **105 passed**; operations **21 passed**. Bank acceptance remains pending.
+
 ## Statements and customer alerts — 11 November 2026
 
 [Statements and alerts](statements-and-alerts.md): CSV statement exports now stream with no 10,000-entry cap; printable A4 PDF statements in English, French and Swahili with exact (never truncated) amounts, totals and page numbering. Customer credit/debit alerts use an approved, independently reviewed contact preference (SMS/email, language, events, consent reference) and a transactional outbox written with each posting; alerts carry no balances or full account numbers. Delivery retries up to 5 times with an audited manual resend. No real SMS/email provider is connected yet (alerts stay queued); a test sender exists for development and is refused in production. Control V40.

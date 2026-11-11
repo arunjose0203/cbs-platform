@@ -43,11 +43,20 @@ export function createOperationUi({api,form,field}){
    if(!choices.length){form('Funding reversal',note('No posted funding is available on this page.'),async()=>{},'Done');return;}
    extra=field('originalId','Original funding','',{full:true,choices:choices.map(x=>({value:x.entry.id,label:x.entry.journal.reference+' · '+x.entry.amount}))})+note('Reverses the full original deposit at the current business date. Holds and minimum balance remain protected.');
   }
+  // Debits on joint, organization and minors' accounts name the authorising signers.
+  let signerFields='',signerCount=0;
+  if(name==='TRANSFER'||name==='WITHDRAWAL'){
+   const mandate=await api(base+'/accounts/'+id+'/mandate');
+   if(mandate.required&&!mandate.configured){form('Mandate required',note('This account needs an approved mandate before it can be debited.'),async()=>{},'Done');return;}
+   if(mandate.required){signerCount=Math.min(mandate.signers.length,Math.max(mandate.signaturesNeeded,1));const choices=mandate.signers.map(x=>({value:x.customerId,label:x.customerNumber+' · '+t(x.role==='HOLDER'?'Holder':x.role==='JOINT_HOLDER'?'Joint holder':x.role==='GUARDIAN'?'Guardian':'Authorised signatory')}));
+    signerFields=note(t('Signatures required')+': '+mandate.signaturesNeeded)+Array.from({length:signerCount},(_,i)=>field('signer'+i,t('Signer')+' '+(i+1),choices[i]?.value||'',{choices})).join('');}
+  }
   const hold=name==='RELEASE'?d.items.find(x=>x.entry.id===original):null;if(name==='RELEASE'&&!hold)return;
   const amountField=['RELEASE','FUNDING_REVERSAL'].includes(name)?'':field('amount','Amount','',{max:25,pattern:'[0-9]+(\\.[0-9]+)?'});
   if(!isCurrent())return;let key=crypto.randomUUID(),previous='';
-  form(label(name),'<p class="field full operation-heading">'+e(a.accountNumber)+' · '+e(a.terms.currency)+'</p>'+extra+amountField+field('businessDate','Business date',settings.businessDate,{type:'date'})+field('reference','Reference','',{full:true,max:80})+field('reason','Reason and evidence','',{full:true,max:500}),values=>{
+  form(label(name),'<p class="field full operation-heading">'+e(a.accountNumber)+' · '+e(a.terms.currency)+'</p>'+extra+signerFields+amountField+field('businessDate','Business date',settings.businessDate,{type:'date'})+field('reference','Reference','',{full:true,max:80})+field('reason','Reason and evidence','',{full:true,max:500}),values=>{
    const body={expectedVersion:d.version,kind:name,accountId:id,destinationId:values.destinationId||null,assetLedgerId:values.assetLedgerId||null,originalId:original||values.originalId||null,amount:hold?.entry.change.amount||choices.find(x=>x.entry.id===values.originalId)?.entry.amount||values.amount,businessDate:values.businessDate,reference:values.reference,reason:values.reason};
+   if(signerCount)body.signatories=[...new Set(Array.from({length:signerCount},(_,i)=>values['signer'+i]).filter(Boolean))];
    const payload=JSON.stringify(body);if(previous&&previous!==payload)key=crypto.randomUUID();previous=payload;
    return api(base+'/account-operations',{method:'POST',headers:{'Idempotency-Key':key},body});
   },'Submit for approval');

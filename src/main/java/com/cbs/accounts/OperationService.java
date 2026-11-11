@@ -24,6 +24,8 @@ public class OperationService {
  private final JdbcTemplate jdbc;private final TenantRepository tenants;private final AccountService accounts;
  private final CustomerService customers;private final BankOperationStore store;private final JournalService journals;
  private final ReferenceDataService reference;private final TransactionTemplate tx;private final AccountClosureService closures;private final com.cbs.notifications.NotificationService notifications;
+ private com.cbs.mandates.MandateService mandates;
+ @org.springframework.beans.factory.annotation.Autowired void mandates(com.cbs.mandates.MandateService mandates){this.mandates=mandates;}
  public OperationService(com.cbs.access.BranchOperations branches,JdbcTemplate jdbc,TenantRepository tenants,AccountService accounts,CustomerService customers,BankOperationStore store,JournalService journals,ReferenceDataService reference,PlatformTransactionManager manager,AccountClosureService closures,com.cbs.notifications.NotificationService notifications){this.closures=closures;this.notifications=notifications;this.branches=branches;this.jdbc=jdbc;this.tenants=tenants;this.accounts=accounts;this.customers=customers;this.store=store;this.journals=journals;this.reference=reference;this.tx=new TransactionTemplate(manager);}
  public static void requireIdle(JdbcTemplate jdbc,UUID account){
   if(jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM platform.contract_delivery WHERE account_id=? AND NOT completed)",Boolean.class,account))throw error("ACCOUNT_OPERATION_PENDING");
@@ -57,6 +59,9 @@ public class OperationService {
   boolean reverseOperation=input.kind()==Kind.WITHDRAWAL_REVERSAL||input.kind()==Kind.TRANSFER_REVERSAL;
   if((input.kind()==Kind.TRANSFER||input.kind()==Kind.TRANSFER_REVERSAL)!=(input.destinationId()!=null)||(input.kind()==Kind.WITHDRAWAL||input.kind()==Kind.CLOSURE_SETTLEMENT)!=(input.assetLedgerId()!=null)||(input.kind()==Kind.RELEASE||input.kind()==Kind.FUNDING_REVERSAL||reverseOperation)!=(input.originalId()!=null))throw error("OPERATION_FIELDS_INVALID");
   if(reverseOperation)if(!payment&&jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM platform.payment_order WHERE id=?)",Boolean.class,input.originalId()))throw error("PAYMENT_MANAGED");
+  // Customer debits follow the account mandate: joint, organization and minors' accounts need authorised signers.
+  if(input.kind()==Kind.WITHDRAWAL||input.kind()==Kind.TRANSFER||input.kind()==Kind.CLOSURE_SETTLEMENT)mandates.requireAuthorized(bank,a.id(),input.signatories());
+  else if(input.signatories()!=null&&!input.signatories().isEmpty())throw error("OPERATION_FIELDS_INVALID");
   com.cbs.access.TransactionLimits.check(jdbc,bank.id(),a.terms().currency(),input.kind().name(),input.businessDate(),amount);
   AccountModels.Definition target=null;UUID credit=null,reversal=null;
   var source=store.position(bank,a);

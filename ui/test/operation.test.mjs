@@ -15,3 +15,20 @@ test('customer withdrawal reversal preserves original amount and excludes cash-m
  assert.equal(posted.body.kind,'WITHDRAWAL_REVERSAL');assert.equal(posted.body.amount,'123.45');assert.equal(posted.body.originalId,'original');assert.equal(posted.body.assetLedgerId,null);
  cashManaged=true;await ui.action('view','a','bank',()=>true);assert.doesNotMatch(html,/data-action="account-operation-reverse"/);
 });
+test('debits on a joint account collect the required distinct signers',async()=>{
+ const {createOperationUi}=await import('../src/operation-ui.js');let submit,html;const posts=[];
+ const ui=createOperationUi({field:(name,label)=>'['+name+']',form:(_t,h,fn)=>{html=h;submit=fn;},api:async(path,options)=>{
+  if(options){posts.push(options);return {};}
+  if(path.includes('/account-operations/'))return {version:3,storageReady:true,position:{posted:'100',held:'0',available:'100',withdrawable:'90',reconciled:true},items:[],total:0};
+  if(path.endsWith('/mandate'))return {required:true,configured:true,signaturesNeeded:2,signers:[{customerId:'h',customerNumber:'C1',role:'HOLDER'},{customerId:'j',customerNumber:'C2',role:'JOINT_HOLDER'}]};
+  if(path.includes('/ledger-accounts?'))return {items:[{delivery:'APPLIED',definition:{id:'cash',code:'1100',name:'Vault',legalEntityId:'e',chartAccountId:'asset'}}]};
+  if(path.includes('/chart-of-accounts?'))return {items:[{id:'asset',normalBalance:'DEBIT'}]};
+  if(path.endsWith('/settings'))return {businessDate:'2026-11-11'};
+  return {definition:{id:'acc',accountNumber:'A1',state:'ACTIVE',legalEntityId:'e',terms:{currency:'KES'}},delivery:'APPLIED'};
+ }});
+ await ui.action('WITHDRAWAL','acc','bank',()=>true);assert.match(html,/\[signer0\]\[signer1\]/);
+ await submit({assetLedgerId:'cash',signer0:'h',signer1:'j',amount:'5',businessDate:'2026-11-11',reference:'W',reason:'Slip'});
+ assert.deepEqual(posts[0].body.signatories,['h','j']);
+ await submit({assetLedgerId:'cash',signer0:'h',signer1:'h',amount:'5',businessDate:'2026-11-11',reference:'W',reason:'Slip'});
+ assert.deepEqual(posts[1].body.signatories,['h']);
+});

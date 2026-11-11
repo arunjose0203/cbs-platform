@@ -12,7 +12,13 @@ public final class OperationModels {
    UUID destinationId,UUID assetLedgerId,UUID originalId,
    @NotBlank @Pattern(regexp="[0-9]{1,18}(\\.[0-9]{1,6})?") String amount,
    @NotNull LocalDate businessDate,@NotBlank @Size(max=80) @Pattern(regexp="[^\\p{Cntrl}]+") String reference,
-   @NotBlank @Size(max=500) @Pattern(regexp="[^\\p{Cntrl}]+") String reason) {}
+   @NotBlank @Size(max=500) @Pattern(regexp="[^\\p{Cntrl}]+") String reason,
+   // Customers who authorised a debit under the account mandate; omitted when not needed.
+   @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL) @Size(max=20) List<UUID> signatories) {
+  public Change(long expectedVersion,Kind kind,UUID accountId,UUID destinationId,UUID assetLedgerId,UUID originalId,String amount,LocalDate businessDate,String reference,String reason){
+   this(expectedVersion,kind,accountId,destinationId,assetLedgerId,originalId,amount,businessDate,reference,reason,null);
+  }
+ }
  public record Entry(UUID id,UUID bankId,Change change,AccountModels.Definition account,
    AccountModels.Definition destination,JournalModels.Entry journal) {}
  public record Dispatch(Entry entry,String maker,String issuer,String checker,UUID correlationId) {}
