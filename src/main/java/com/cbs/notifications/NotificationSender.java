@@ -13,6 +13,8 @@ public interface NotificationSender {
     String name();
     boolean supports(Channel channel);
     Result send(Notification notification);
+    /** Provider binding: whether this sender is contracted for the bank (like the M-Pesa binding). The test sender serves every bank. */
+    default boolean serves(UUID bank){return true;}
 
     /**
      * Development/test sender: accepts every message without contacting anyone.

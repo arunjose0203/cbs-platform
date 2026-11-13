@@ -51,6 +51,7 @@ public class SecurityConfiguration {
                         .requestMatchers(HttpMethod.GET, "/actuator/health", "/actuator/health/liveness",
                                 "/actuator/health/readiness").permitAll()
                         .requestMatchers(HttpMethod.POST,"/api/v1/payments/mpesa/callback/*/*").permitAll()
+                        .requestMatchers(HttpMethod.POST,"/api/v1/notifications/receipts/*").permitAll()
                         .requestMatchers("/api/v1/admin/**").access((authentication, context) ->
                                 new org.springframework.security.authorization.AuthorizationDecision(
                                         settings.enabled() && authentication.get().getAuthorities().stream()

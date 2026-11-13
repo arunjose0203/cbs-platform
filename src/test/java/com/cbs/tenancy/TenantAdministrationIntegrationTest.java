@@ -41,7 +41,8 @@ import tools.jackson.databind.ObjectMapper;
 @SpringBootTest(properties = {
         "cbs.ledger.delivery-enabled=false", "cbs.security.enabled=true", "cbs.security.issuer=https://identity.cbs.test",
         "cbs.security.jwk-set-uri=https://identity.cbs.test/jwks", "cbs.security.audience=cbs-api",
-        "cbs.servicing.chunk-size=2", "cbs.notifications.sender=test", "cbs.rate-limit.enabled=false"
+        "cbs.servicing.chunk-size=2", "cbs.notifications.sender=test", "cbs.rate-limit.enabled=false",
+        "cbs.notifications.callback-secret=integration-receipt-secret-0123456789"
 })
 @AutoConfigureMockMvc
 @Import(TestIdentity.Configuration.class)
@@ -239,7 +240,7 @@ class TenantAdministrationIntegrationTest {
         var mapping = context.getBean("requestMappingHandlerMapping",
                 org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandlerMapping.class);
         var declaredPublic = java.util.Set.of("GET /", "GET /admin", "GET /admin/", "GET /portal/config",
-                "POST /api/v1/payments/mpesa/callback/{id}/{token}");
+                "POST /api/v1/payments/mpesa/callback/{id}/{token}", "POST /api/v1/notifications/receipts/{provider}");
         var seenPublic = new java.util.TreeSet<String>();
         var problems = new java.util.ArrayList<String>();
         String operator = TestIdentity.token("operator", false);
@@ -3078,7 +3079,7 @@ class TenantAdministrationIntegrationTest {
     @Test void statementsStreamAsCsvAndPdfAndAlertsFollowApprovedPreferences()throws Exception{
         var f=fundingFixture("statement-alerts");var bank=f.f().bank();
                 java.util.function.Function<com.cbs.notifications.NotificationModels.Preference,com.cbs.approvals.ApprovalModels.Request> submit=p->approvals.notificationPreference(ADMIN,UUID.randomUUID(),bank.id(),p);
-        java.util.function.BiFunction<String,String,com.cbs.notifications.NotificationModels.Preference> pref=(channel,destination)->new com.cbs.notifications.NotificationModels.Preference(service.get(ADMIN,bank.id()).version(),f.f().customer(),com.cbs.notifications.NotificationModels.Channel.valueOf(channel),destination,"sw",java.util.EnumSet.allOf(com.cbs.notifications.NotificationModels.Event.class),"CONSENT/FORM-7","Customer signed alert consent");
+        java.util.function.BiFunction<String,String,com.cbs.notifications.NotificationModels.Preference> pref=(channel,destination)->new com.cbs.notifications.NotificationModels.Preference(service.get(ADMIN,bank.id()).version(),f.f().customer(),com.cbs.notifications.NotificationModels.Channel.valueOf(channel),destination,"sw",java.util.EnumSet.of(com.cbs.notifications.NotificationModels.Event.CREDIT,com.cbs.notifications.NotificationModels.Event.DEBIT),"CONSENT/FORM-7","Customer signed alert consent");
         // No preference: postings create no alert.
         fund(f,"1000");assertThat(jdbc.queryForObject("SELECT count(*) FROM platform.notification WHERE tenant_id=?",Integer.class,bank.id())).isZero();
         assertCode(()->submit.apply(pref.apply("SMS","0712345678")),"NOTIFICATION_DESTINATION_INVALID");
@@ -3089,11 +3090,13 @@ class TenantAdministrationIntegrationTest {
         assertThat(notifications.preference(ADMIN,bank.id(),f.f().customer())).isNull();
         approveHttp(request.id());
         assertThat(notifications.preference(ADMIN,bank.id(),f.f().customer()).destination()).isEqualTo("+254712345678");
+        fund(f,"5");assertThat(jdbc.queryForObject("SELECT count(*) FROM platform.notification WHERE tenant_id=? AND event<>'VERIFICATION'",Integer.class,bank.id())).as("unverified destinations get no alerts").isZero();
+        verifyAlerts(bank,f.f().customer());
         // Credit and debit alerts are recorded with the posting, once, in the customer's language and without balances.
         var funded=fund(f,"250.75");funding.deliver(funded);
         var withdrawal=postOperation(f,operationChange(f,com.cbs.accounts.OperationModels.Kind.WITHDRAWAL,"40.5",null,null));
         postOperation(f,operationChange(f,com.cbs.accounts.OperationModels.Kind.HOLD,"1",null,null));
-        var rows=jdbc.queryForList("SELECT event,source_id,body,status,destination FROM platform.notification WHERE tenant_id=? ORDER BY created_at",bank.id());
+        var rows=jdbc.queryForList("SELECT event,source_id,body,status,destination FROM platform.notification WHERE tenant_id=? AND event<>'VERIFICATION' ORDER BY created_at",bank.id());
         assertThat(rows).hasSize(2);
         assertThat(rows.get(0)).containsEntry("event","CREDIT").containsEntry("source_id",funded).containsEntry("status","PENDING");
         assertThat((String)rows.get(0).get("body")).contains("250.75","zimeingizwa","Kumb.").doesNotContain("1250.75");
@@ -3103,10 +3106,13 @@ class TenantAdministrationIntegrationTest {
         // The test sender delivers; the list masks destinations.
         // The dispatcher serves every bank; check this bank's alerts only.
         notifications.dispatch();notifications.dispatch();assertThat(notifications.list(ADMIN,bank.id(),"PENDING",null,25,0).total()).isZero();
-        var page=notifications.list(ADMIN,bank.id(),"SENT",null,25,0);assertThat(page.total()).isEqualTo(2);
+        var page=notifications.list(ADMIN,bank.id(),"SENT",null,25,0);assertThat(page.items().stream().filter(n->n.event()!=com.cbs.notifications.NotificationModels.Event.VERIFICATION).count()).isEqualTo(2);
+        assertThat(page.items()).filteredOn(n->n.event()==com.cbs.notifications.NotificationModels.Event.VERIFICATION).singleElement().satisfies(n->assertThat(n.body()).isEqualTo("[verification code]"));
         assertThat(page.items()).allSatisfy(n->{assertThat(n.destination()).isEqualTo("+254******678");assertThat(n.provider()).isEqualTo("TEST");assertThat(n.providerReference()).startsWith("TEST-");});
         // A failing destination is retried, then marked failed; an administrator can queue it again.
         approveHttp(submit.apply(new com.cbs.notifications.NotificationModels.Preference(service.get(ADMIN,bank.id()).version(),f.f().customer(),com.cbs.notifications.NotificationModels.Channel.SMS,"+254700000000","en",java.util.EnumSet.of(com.cbs.notifications.NotificationModels.Event.CREDIT),"CONSENT/FORM-8","Changed phone")).id());
+        jdbc.update("UPDATE platform.notification_preference SET verified_at=clock_timestamp() WHERE tenant_id=? AND customer_id=?",bank.id(),f.f().customer());
+        jdbc.update("UPDATE platform.notification SET status='SUPPRESSED' WHERE tenant_id=? AND event='VERIFICATION' AND status='PENDING'",bank.id());
         fund(f,"10");postOperation(f,operationChange(f,com.cbs.accounts.OperationModels.Kind.WITHDRAWAL,"5",null,null));
         assertThat(jdbc.queryForObject("SELECT count(*) FROM platform.notification WHERE tenant_id=? AND status='PENDING'",Integer.class,bank.id())).isEqualTo(1);
         for(int i=0;i<5;i++)notifications.dispatch();
@@ -3127,6 +3133,92 @@ class TenantAdministrationIntegrationTest {
         mvc.perform(admin(get(path+"/pdf?from="+date+"&to="+date+"&language=de"))).andExpect(status().isBadRequest());
         mvc.perform(admin(get(path+"/pdf?from="+date+"&to="+date.plusDays(400)))).andExpect(status().isBadRequest());
         assertThat(jdbc.queryForList("SELECT change_details->>'format' FROM platform.tenant_audit WHERE tenant_id=? AND action='ACCOUNT_STATEMENT_EXPORTED'",String.class,bank.id())).contains("CSV","PDF");
+    }
+    @Autowired com.cbs.notifications.NoticeService notices;
+    private static final String RECEIPT_SECRET="integration-receipt-secret-0123456789";
+    private org.springframework.test.web.servlet.ResultActions receipt(String provider,String body,long timestamp,String secret)throws Exception{
+        var mac=javax.crypto.Mac.getInstance("HmacSHA256");mac.init(new javax.crypto.spec.SecretKeySpec(secret.getBytes(java.nio.charset.StandardCharsets.UTF_8),"HmacSHA256"));
+        String signature="sha256="+java.util.HexFormat.of().formatHex(mac.doFinal((timestamp+"."+body).getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+        return mvc.perform(post("/api/v1/notifications/receipts/"+provider).header("X-CBS-Timestamp",Long.toString(timestamp)).header("X-CBS-Signature",signature).contentType("application/json").content(body));
+    }
+    @Test void notificationsVerifyDestinationsUseApprovedTemplatesHonourOptOutsReceiptsAndQueueNotices()throws Exception{
+        var f=fundingFixture("notification-notices");var bank=f.f().bank();UUID b=bank.id();UUID customer=f.f().customer();String base="/api/v1/admin/tenants/"+b;
+        var N=com.cbs.notifications.NotificationModels.Event.class;
+        var all=java.util.EnumSet.of(com.cbs.notifications.NotificationModels.Event.CREDIT,com.cbs.notifications.NotificationModels.Event.DEBIT,com.cbs.notifications.NotificationModels.Event.TD_MATURITY,com.cbs.notifications.NotificationModels.Event.LOAN_DUE,com.cbs.notifications.NotificationModels.Event.LOAN_ARREARS);
+        java.util.function.Function<java.util.Set<com.cbs.notifications.NotificationModels.Event>,com.cbs.notifications.NotificationModels.Preference> pref=events->new com.cbs.notifications.NotificationModels.Preference(service.get(ADMIN,b).version(),customer,com.cbs.notifications.NotificationModels.Channel.SMS,"+254711000111","en",events,"CONSENT/N1","Signed alert form");
+        assertCode(()->approvals.notificationPreference(ADMIN,UUID.randomUUID(),b,pref.apply(java.util.EnumSet.of(com.cbs.notifications.NotificationModels.Event.VERIFICATION))),"NOTIFICATION_EVENTS_INVALID");
+        approveHttp(approvals.notificationPreference(ADMIN,UUID.randomUUID(),b,pref.apply(all)).id());
+        // A new destination is unverified until the customer reads back the code; the code never appears in lists.
+        mvc.perform(admin(get(base+"/notifications/preferences/"+customer))).andExpect(jsonPath("$.verified").value(false));
+        mvc.perform(admin(get(base+"/notifications?event=VERIFICATION"))).andExpect(jsonPath("$.total").value(1)).andExpect(jsonPath("$.items[0].body").value("[verification code]"));
+        String body=jdbc.queryForObject("SELECT body FROM platform.notification WHERE tenant_id=? AND event='VERIFICATION'",String.class,b);
+        var m=java.util.regex.Pattern.compile("\\b([0-9]{6})\\b").matcher(body);assertThat(m.find()).isTrue();String code=m.group(1);
+        String wrong=String.format("%06d",(Integer.parseInt(code)+1)%1_000_000);
+        mvc.perform(admin(post(base+"/notifications/preferences/"+customer+"/verify")).contentType("application/json").content("{\"code\":\""+wrong+"\"}")).andExpect(status().isBadRequest()).andExpect(jsonPath("$.code").value("NOTIFICATION_CODE_INVALID"));
+        mvc.perform(admin(post(base+"/notifications/preferences/"+customer+"/resend"))).andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("NOTIFICATION_CODE_RECENT"));
+        fund(f,"700");assertThat(jdbc.queryForObject("SELECT count(*) FROM platform.notification WHERE tenant_id=? AND event<>'VERIFICATION'",Integer.class,b)).isZero();
+        mvc.perform(admin(post(base+"/notifications/preferences/"+customer+"/verify")).contentType("application/json").content("{\"code\":\""+code+"\"}")).andExpect(status().isNoContent());
+        mvc.perform(admin(post(base+"/notifications/preferences/"+customer+"/verify")).contentType("application/json").content("{\"code\":\""+code+"\"}")).andExpect(status().isConflict());
+        assertThat(jdbc.queryForList("SELECT change_details::text FROM platform.tenant_audit WHERE tenant_id=? AND action LIKE 'NOTIFICATION_%'",String.class,b)).noneMatch(d->d.contains(code));
+        // Re-approving the same destination keeps it verified; no new code is sent.
+        approveHttp(approvals.notificationPreference(ADMIN,UUID.randomUUID(),b,pref.apply(all)).id());
+        assertThat(notifications.preference(ADMIN,b,customer).verified()).isTrue();
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM platform.notification WHERE tenant_id=? AND event='VERIFICATION'",Integer.class,b)).isEqualTo(1);
+        // Templates: only the event's placeholders, the bank name, two SMS segments, a subject for email; maker-checker.
+        java.util.function.BiFunction<com.cbs.notifications.NotificationModels.Channel,String,com.cbs.notifications.NotificationModels.Template> template=(channel,text)->new com.cbs.notifications.NotificationModels.Template(service.get(ADMIN,b).version(),com.cbs.notifications.NotificationModels.Event.CREDIT,"en",channel,channel==com.cbs.notifications.NotificationModels.Channel.EMAIL?null:null,text,"Approved by marketing and compliance");
+        assertCode(()->approvals.notificationTemplate(ADMIN,UUID.randomUUID(),b,template.apply(com.cbs.notifications.NotificationModels.Channel.SMS,"Received {currency} {amount}.")),"NOTIFICATION_TEMPLATE_PLACEHOLDER_INVALID");
+        assertCode(()->approvals.notificationTemplate(ADMIN,UUID.randomUUID(),b,template.apply(com.cbs.notifications.NotificationModels.Channel.SMS,"{bank}: balance {balance}.")),"NOTIFICATION_TEMPLATE_PLACEHOLDER_INVALID");
+        assertCode(()->approvals.notificationTemplate(ADMIN,UUID.randomUUID(),b,template.apply(com.cbs.notifications.NotificationModels.Channel.SMS,"{bank}: "+"x".repeat(290))),"NOTIFICATION_TEMPLATE_TOO_LONG");
+        assertCode(()->approvals.notificationTemplate(ADMIN,UUID.randomUUID(),b,template.apply(com.cbs.notifications.NotificationModels.Channel.EMAIL,"{bank}: received {amount}.")),"NOTIFICATION_TEMPLATE_SUBJECT_INVALID");
+        var approved=approvals.notificationTemplate(ADMIN,UUID.randomUUID(),b,template.apply(com.cbs.notifications.NotificationModels.Channel.SMS,"{bank}: received {currency} {amount} in a/c ..{last4}. Ref {reference}"));
+        assertThat(approved.beforeValues()).containsEntry("source","built-in");assertThat((String)approved.proposedValues().get("example")).startsWith("Example Bank: received KES 1500.00");
+        assertCode(()->approvals.decide(ADMIN,approved.id(),com.cbs.approvals.ApprovalModels.Decision.APPROVE,"Own"),"SELF_APPROVAL_FORBIDDEN");
+        approveHttp(approved.id());
+        mvc.perform(admin(get(base+"/notifications/templates"))).andExpect(status().isOk()).andExpect(jsonPath("$[?(@.event=='CREDIT' && @.language=='en' && @.channel=='SMS')].approved").value(org.hamcrest.Matchers.contains(true)));
+        var credit=fund(f,"321");
+        assertThat(jdbc.queryForObject("SELECT body FROM platform.notification WHERE source_id=?",String.class,credit)).startsWith(bank.displayName()+": received").contains("321");
+        // Delivery receipts: signed, fresh, from a configured provider, recorded once.
+        notifications.dispatch();
+        String providerRef=jdbc.queryForObject("SELECT provider_reference FROM platform.notification WHERE source_id=?",String.class,credit);
+        long now=java.time.Instant.now().getEpochSecond();String delivered="{\"receiptId\":\"r-1\",\"kind\":\"DELIVERED\",\"providerReference\":\""+providerRef+"\"}";
+        receipt("TEST",delivered,now,"wrong-secret-0123456789-0123456789").andExpect(status().isUnauthorized());
+        receipt("TEST",delivered,now-3600,RECEIPT_SECRET).andExpect(status().isUnauthorized());
+        receipt("OTHER",delivered,now,RECEIPT_SECRET).andExpect(status().isNotFound());
+        receipt("TEST","{\"receiptId\":\"r-0\",\"kind\":\"DELIVERED\"}",now,RECEIPT_SECRET).andExpect(status().isBadRequest());
+        receipt("TEST",delivered,now,RECEIPT_SECRET).andExpect(status().isOk()).andExpect(jsonPath("$.outcome").value("RECORDED"));
+        receipt("TEST",delivered,now,RECEIPT_SECRET).andExpect(status().isOk()).andExpect(jsonPath("$.outcome").value("DUPLICATE"));
+        mvc.perform(admin(get(base+"/notifications?event=CREDIT"))).andExpect(jsonPath("$.items[0].receiptStatus").value("DELIVERED"));
+        assertThatThrownBy(()->jdbc.update("DELETE FROM platform.notification_receipt")).hasMessageContaining("append-only");
+        // Opt-out from the provider suppresses every queued and later message to that destination until consent is renewed.
+        receipt("TEST","{\"receiptId\":\"r-2\",\"kind\":\"OPTED_OUT\",\"bankId\":\""+b+"\",\"channel\":\"SMS\",\"destination\":\"+254711000111\"}",now,RECEIPT_SECRET).andExpect(jsonPath("$.outcome").value("OPTED_OUT"));
+        var suppressed=fund(f,"12");notifications.dispatch();
+        assertThat(jdbc.queryForObject("SELECT status FROM platform.notification WHERE source_id=?",String.class,suppressed)).isEqualTo("SUPPRESSED");
+        mvc.perform(admin(get(base+"/notifications/opt-outs"))).andExpect(jsonPath("$[0].source").value("PROVIDER")).andExpect(jsonPath("$[0].destination").value("+254******111"));
+        mvc.perform(admin(post(base+"/notifications/opt-outs/remove")).contentType("application/json").content("{\"channel\":\"SMS\",\"destination\":\"+254711000111\",\"reference\":\"CONSENT/RENEWED-1\"}")).andExpect(status().isNoContent());
+        var resumed=fund(f,"13");notifications.dispatch();
+        assertThat(jdbc.queryForObject("SELECT status FROM platform.notification WHERE source_id=?",String.class,resumed)).isEqualTo("SENT");
+        mvc.perform(admin(post(base+"/notifications/opt-outs")).contentType("application/json").content("{\"channel\":\"SMS\",\"destination\":\"0711\",\"reference\":\"BRANCH/1\"}")).andExpect(status().isBadRequest());
+        // Scheduled notices: a term deposit about to mature, a loan instalment about to fall due, a loan in arrears; once each.
+        fund(f,"1000");
+        for(String op:List.of("TD_OPEN","LOAN_DISBURSE"))approveHttp(approvals.limits(ADMIN,UUID.randomUUID(),b,new com.cbs.access.TransactionLimits.Change(service.get(ADMIN,b).version(),f.f().product().currency(),op,"10000","10000","Fictional contract limit")).id());
+        var td=testContract(f,com.cbs.contracts.ContractModels.Type.TERM_DEPOSIT,"NOTE_TD","100","0");
+        var loan=testContract(f,com.cbs.contracts.ContractModels.Type.LOAN,"NOTE_LOAN","200","0");
+        var today=reference.get(ADMIN,b).businessDate();
+        assertThat(notices.scan(b)).isZero();
+        jdbc.update("UPDATE platform.bank_settings SET business_date=? WHERE tenant_id=?",today.plusMonths(2).minusDays(2),b);
+        try{notices.scan(b);notices.scan(b);}finally{jdbc.update("UPDATE platform.bank_settings SET business_date=? WHERE tenant_id=?",today,b);}
+        var queued=jdbc.queryForList("SELECT event,body FROM platform.notification WHERE tenant_id=? AND event IN ('TD_MATURITY','LOAN_DUE','LOAN_ARREARS') ORDER BY event",b);
+        assertThat(queued).extracting(r->r.get("event")).containsExactly("LOAN_ARREARS","LOAN_DUE","TD_MATURITY");
+        assertThat((String)queued.get(0).get("body")).contains("NOTE_LOAN","days overdue");
+        assertThat((String)queued.get(1).get("body")).contains("NOTE_LOAN",today.plusMonths(2).toString());
+        assertThat((String)queued.get(2).get("body")).contains("NOTE_TD",today.plusMonths(2).toString());
+        assertThat(td).isNotNull();assertThat(loan).isNotNull();assertThat(N).isNotNull();
+    }
+    /** Reads the queued one-time code (as the customer would on their phone) and confirms it. */
+    private void verifyAlerts(Tenant bank,UUID customer){
+        String body=jdbc.queryForObject("SELECT body FROM platform.notification WHERE tenant_id=? AND customer_id=? AND event='VERIFICATION' AND status='PENDING' ORDER BY created_at DESC LIMIT 1",String.class,bank.id(),customer);
+        var code=java.util.regex.Pattern.compile("\\b([0-9]{6})\\b").matcher(body);assertThat(code.find()).isTrue();
+        notifications.verify(ADMIN,bank.id(),customer,code.group(1));
     }
     private UUID onboard(Tenant bank,com.cbs.customers.CustomerModels.Profile profile)throws Exception{
         var r=approvals.customer(ADMIN,UUID.randomUUID(),bank.id(),customerChange(bank,null,profile,""));approveHttp(r.id());customers.deliver(r.id());
@@ -3182,6 +3274,7 @@ class TenantAdministrationIntegrationTest {
         assertThat(operations.dashboard(ADMIN,bank.id(),account,25,0).position().posted()).isEqualTo("964.5");
         // Statements name both holders; each opted-in holder is alerted.
         approveHttp(approvals.notificationPreference(ADMIN,UUID.randomUUID(),bank.id(),new com.cbs.notifications.NotificationModels.Preference(service.get(ADMIN,bank.id()).version(),joint,com.cbs.notifications.NotificationModels.Channel.EMAIL,"second@example.test","en",java.util.EnumSet.of(com.cbs.notifications.NotificationModels.Event.DEBIT),"CONSENT/J","Joint holder consent")).id());
+        verifyAlerts(bank,joint);
         var alerted=postOperation(f,debit(f,account,"4.5",List.of(holder,joint)));
         assertThat(jdbc.queryForList("SELECT customer_id FROM platform.notification WHERE source_id=?",UUID.class,alerted)).containsExactly(joint);
         var csv=mvc.perform(admin(get("/api/v1/admin/tenants/"+bank.id()+"/accounts/"+account+"/statement/export?from="+day+"&to="+day))).andExpect(status().isOk()).andReturn().getResponse().getContentAsString(java.nio.charset.StandardCharsets.UTF_8);
