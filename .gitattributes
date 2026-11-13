@@ -1,0 +1,5 @@
+# Scripts and container files run on Linux hosts: never check them out with CRLF.
+*.sh text eol=lf
+Dockerfile text eol=lf
+Caddyfile text eol=lf
+*.sql text eol=lf
