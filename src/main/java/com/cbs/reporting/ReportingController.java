@@ -17,10 +17,80 @@ import org.springframework.web.bind.annotation.*;
 @RequestMapping("/api/v1/admin/tenants/{bankId}/reporting")
 @ConditionalOnProperty(name="cbs.tenancy.enabled",havingValue="true",matchIfMissing=true)
 public class ReportingController {
-    private final FinancialStatementService statements;private final ManagementDashboardService dashboard;private final ReportDefinitionService definitions;private final ApprovalService approvals;
-    public ReportingController(FinancialStatementService statements,ManagementDashboardService dashboard,ReportDefinitionService definitions,ApprovalService approvals){this.statements=statements;this.dashboard=dashboard;this.definitions=definitions;this.approvals=approvals;}
+    private final FinancialStatementService statements;
+    private final ManagementDashboardService dashboard;
+    private final ReportDefinitionService definitions;
+    private final ApprovalService approvals;
+    private final OperationalReportService operational;
+
+    public ReportingController(FinancialStatementService statements,
+                               ManagementDashboardService dashboard,
+                               ReportDefinitionService definitions,
+                               ApprovalService approvals,
+                               OperationalReportService operational) {
+        this.statements = statements;
+        this.dashboard = dashboard;
+        this.definitions = definitions;
+        this.approvals = approvals;
+        this.operational = operational;
+    }
 
     @GetMapping("/dashboard") Map<String,Object> dashboard(JwtAuthenticationToken jwt,@PathVariable UUID bankId){return dashboard.dashboard(actor(jwt),bankId);}
+
+    @GetMapping("/deposit-register")
+    public Object depositRegister(JwtAuthenticationToken jwt, @PathVariable UUID bankId,
+                                  @RequestParam(required = false) String currency,
+                                  @RequestParam(required = false) UUID branchId,
+                                  @RequestParam(defaultValue = "json") String format,
+                                  HttpServletResponse response) throws IOException {
+        return renderOperational(operational.depositRegister(actor(jwt), bankId, currency, branchId), format, response);
+    }
+
+    @GetMapping("/loan-register")
+    public Object loanRegister(JwtAuthenticationToken jwt, @PathVariable UUID bankId,
+                               @RequestParam(required = false) String currency,
+                               @RequestParam(defaultValue = "json") String format,
+                               HttpServletResponse response) throws IOException {
+        return renderOperational(operational.loanRegister(actor(jwt), bankId, currency), format, response);
+    }
+
+    @GetMapping("/cash-report")
+    public Object cashReport(JwtAuthenticationToken jwt, @PathVariable UUID bankId,
+                             @RequestParam(required = false) UUID branchId,
+                             @RequestParam(defaultValue = "json") String format,
+                             HttpServletResponse response) throws IOException {
+        return renderOperational(operational.cashReport(actor(jwt), bankId, branchId), format, response);
+    }
+
+    @GetMapping("/tax-remittance")
+    public Object taxRemittance(JwtAuthenticationToken jwt, @PathVariable UUID bankId,
+                                @RequestParam(required = false) LocalDate from,
+                                @RequestParam(required = false) LocalDate to,
+                                @RequestParam(defaultValue = "json") String format,
+                                HttpServletResponse response) throws IOException {
+        return renderOperational(operational.taxRemittance(actor(jwt), bankId, from, to), format, response);
+    }
+
+    @GetMapping("/exception-ageing")
+    public Object exceptionAgeing(JwtAuthenticationToken jwt, @PathVariable UUID bankId,
+                                  @RequestParam(defaultValue = "json") String format,
+                                  HttpServletResponse response) throws IOException {
+        return renderOperational(operational.exceptionAgeing(actor(jwt), bankId), format, response);
+    }
+
+    @GetMapping("/loan-provisions")
+    public Object loanProvisions(JwtAuthenticationToken jwt, @PathVariable UUID bankId,
+                                 @RequestParam(required = false) String currency,
+                                 @RequestParam(defaultValue = "json") String format,
+                                 HttpServletResponse response) throws IOException {
+        return renderOperational(operational.loanProvisions(actor(jwt), bankId, currency), format, response);
+    }
+
+    private Object renderOperational(OperationalReportService.ReportResult r, String format, HttpServletResponse response) throws IOException {
+        if ("json".equalsIgnoreCase(format)) return r;
+        write(r.table(), format, r.reportName() + "-" + r.businessDate(), response);
+        return null;
+    }
 
     /** format: json (default), csv or pdf. */
     @GetMapping("/balance-sheet") Object balanceSheet(JwtAuthenticationToken jwt,@PathVariable UUID bankId,@RequestParam UUID legalEntityId,@RequestParam String currency,@RequestParam LocalDate asOf,

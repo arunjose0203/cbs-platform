@@ -23,4 +23,7 @@ test('management reports escape data, show loan buckets and parse definition lin
  assert.deepEqual(posts[0].body.lines,[{code:'10',label:'Deposits',chartAccounts:['c1'],sign:1},{code:'20',label:'Fees',chartAccounts:['c2'],sign:-1}]);
  await assert.rejects(submit({code:'MGMT',name:'Summary',basis:'BALANCE',lines:'10 | Deposits | 9999 | +',reason:'x'}),/Unknown chart account/);
  await ui.action('run','CBK_BS');await submit({legalEntityId:'e',currency:'KES',to:'2026-11-11',format:'csv'});assert.equal(files[0],'report-CBK_BS-2026-11-11.csv');
+ await ui.action('operational');await submit({report:'deposit-register',currency:'KES',format:'pdf'});assert.equal(files[1],'deposit-register-2026-11-11.pdf');
+ await ui.action('operational');await submit({report:'loan-provisions',currency:'KES',format:'csv'});assert.equal(files[2],'loan-provisions-2026-11-11.csv');
+ await ui.action('operational');await submit({report:'tax-remittance',from:'2026-11-01',to:'2026-11-11',format:'json'});assert.equal(files[3],'tax-remittance-2026-11-11.json');
 });

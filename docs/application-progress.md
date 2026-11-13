@@ -4,6 +4,19 @@
 
 Use the [Functional Gap & Acceptance Matrix](functional-gap-acceptance-matrix-2026-10-09.md) for the current 34-area functional assessment, 34 proposed acceptance cases, source/test evidence, confirmed limits and prioritized completion work. It reconciles older historical pending lists below. No module has independent bank functional sign-off recorded; existing automated test results do not replace that acceptance.
 
+## Round 14: Regulatory and operational reporting — 14 November 2026
+
+Round 14 of the [go-live plan](go-live-plan-2026-11-13.md) delivers comprehensive operational, regulatory, and statutory tax reporting (Matrix rows F09, F19). See [regulatory and operational reporting](regulatory-and-operational-reporting.md).
+
+- **Deposit register.** Complete register of active customer deposit accounts with balances, product terms, and branch custody.
+- **Loan register with DPD & NPL classification.** Portfolio register evaluating Days Past Due (DPD) and overdue instalments using `LoanArrears.calculate`. Classifies loans into performing and NPL (>90 DPD) under CBK guidelines.
+- **Cash custody report.** Summarizes physical vault, teller till, and ATM custody holdings across branches with currency breakdown and verification statuses.
+- **Tax remittance report (KRA WHT & Excise).** Calculates statutory Kenya Revenue Authority obligations across financial servicing runs: 15% Withholding Tax (WHT) on credited deposit interest, and 20% excise duty on assessed transactional fees.
+- **Exception ageing & surveillance.** Aggregates open operational discrepancies across cash shortages, payment failures, and compliance alerts into statutory ageing buckets (`0–7d`, `8–30d`, `31–60d`, `61+d`).
+- **Loan provisions & IFRS 9 staging.** Implements CBK/IFRS 9 staging: Stage 1 Performing (1% general provision), Stage 2 Underperforming (3% watch provision), Stage 3 Non-Performing (20% to 100% recommended provision).
+- **Multi-format export.** Integrated into `TableOutput` supporting formatted JSON, sanitized CSV (formula injection neutralized), and A4 PDF.
+- **UI and verification.** Added Operational reports dialog to management reports UI supporting report selection and downloads. Tests: 6 new backend unit tests in `OperationalReportServiceTest` (100% pass), 129 UI tests pass.
+
 ## Round 18: Privacy and data protection — 13 November 2026
 
 Round 18 of the [go-live plan](go-live-plan-2026-11-13.md) completes privacy, field-level data protection, legal holds, data-subject request registers, and the statutory retention matrix (Kenya Data Protection Act 2019, POCAMLA s.46, Gate E04). Control migration **V49**. See [privacy and data protection](privacy-and-data-protection.md).

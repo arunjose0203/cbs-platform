@@ -13,7 +13,7 @@ export function createReportingUi({api,form,field,refresh,download}){
   if(!bankId){host.innerHTML='<h1>'+e(t('Management reports'))+'</h1><p>'+e(t('Register a bank first.'))+'</p>';return;}
   [bank,board,definitions]=await Promise.all([api('/admin/tenants/'+bankId),api('/admin/tenants/'+bankId+'/reporting/dashboard'),api('/admin/tenants/'+bankId+'/reporting/definitions')]);if(!current())return;
   const d=board.deposits,l=board.loans,w=board.work;
-  host.innerHTML='<div class="heading"><div><h1>'+e(t('Management reports'))+'</h1><p>'+e(bank.displayName)+' · '+e(board.businessDate)+'</p></div><div class="actions">'+button('Choose bank','choose')+button('Financial statements','statements')+button('Refresh','refresh')+'</div></div>'+
+  host.innerHTML='<div class="heading"><div><h1>'+e(t('Management reports'))+'</h1><p>'+e(bank.displayName)+' · '+e(board.businessDate)+'</p></div><div class="actions">'+button('Choose bank','choose')+button('Financial statements','statements')+button('Operational reports','operational')+button('Refresh','refresh')+'</div></div>'+
    '<section class="card"><h2>'+e(t('Deposits'))+'</h2>'+table(['Currency','Accounts','Balance'],d.totals.map(x=>tr([x.currency,x.accounts,x.balance])))+
    '<h3>'+e(t('By product'))+'</h3>'+table(['Product','Currency','Accounts','Balance'],d.byProduct.map(x=>tr([x.product,x.currency,x.accounts,x.balance])))+
    '<h3>'+e(t('By branch'))+'</h3>'+table(['Branch','Currency','Accounts','Balance'],d.byBranch.map(x=>tr([x.branch,x.currency,x.accounts,x.balance])))+
@@ -35,6 +35,34 @@ export function createReportingUi({api,form,field,refresh,download}){
    const date=board.businessDate;
    form('Financial statements',field('kind','Statement','balance-sheet',{choices:[{value:'balance-sheet',label:t('Balance sheet')},{value:'income-statement',label:t('Income statement')}]})+field('legalEntityId','Legal entity',bank.legalEntities[0].id,{choices:entityChoices()})+field('currency','Currency',bank.legalEntities[0].functionalCurrency||'',{max:3,pattern:'[A-Z]{3}'})+field('from','From (income statement)',date.slice(0,4)+'-01-01',{type:'date',required:false})+field('to','As at / to',date,{type:'date'})+field('format','Format','pdf',{choices:[{value:'pdf',label:'PDF'},{value:'csv',label:'CSV'}]}),
     async v=>{const q=new URLSearchParams({legalEntityId:v.legalEntityId,currency:v.currency,format:v.format,...(v.kind==='balance-sheet'?{asOf:v.to}:{from:v.from,to:v.to})});await fetchFile(base+'/'+v.kind+'?'+q,v.kind+'-'+v.to+'.'+v.format);},'Download');return;
+  }
+  if(name==='operational'){
+   const date=board.businessDate;
+   form('Operational and regulatory reports',
+    field('report','Report','deposit-register',{choices:[
+     {value:'deposit-register',label:t('Deposit register')},
+     {value:'loan-register',label:t('Loan register')},
+     {value:'cash-report',label:t('Cash custody report')},
+     {value:'tax-remittance',label:t('Tax remittance (KRA WHT & Excise)')},
+     {value:'exception-ageing',label:t('Exception ageing')},
+     {value:'loan-provisions',label:t('Loan provisions (IFRS 9 / CBK)')}
+    ]})+
+    field('currency','Currency','',{max:3,pattern:'[A-Z]{3}',required:false})+
+    field('from','From (tax remittance)',date.slice(0,4)+'-01-01',{type:'date',required:false})+
+    field('to','To (tax remittance)',date,{type:'date',required:false})+
+    field('format','Format','pdf',{choices:[{value:'pdf',label:'PDF'},{value:'csv',label:'CSV'},{value:'json',label:'JSON'}]}),
+    async v=>{
+     const params={format:v.format};
+     if(v.currency)params.currency=v.currency;
+     if(v.report==='tax-remittance'){if(v.from)params.from=v.from;if(v.to)params.to=v.to;}
+     const q=new URLSearchParams(params);
+     if(v.format==='json'){
+      const data=await api(base+'/'+v.report+'?'+q);
+      download(data,v.report+'-'+date+'.json');
+     }else{
+      await fetchFile(base+'/'+v.report+'?'+q,v.report+'-'+date+'.'+v.format);
+     }
+    },'Download');return;
   }
   if(name==='run'){
    form('Run '+id,field('legalEntityId','Legal entity',bank.legalEntities[0].id,{choices:entityChoices()})+field('currency','Currency',bank.legalEntities[0].functionalCurrency||'',{max:3,pattern:'[A-Z]{3}'})+field('from','From (movement reports)','',{type:'date',required:false})+field('to','As at / to',board.businessDate,{type:'date'})+field('format','Format','csv',{choices:[{value:'csv',label:'CSV'},{value:'pdf',label:'PDF'}]}),
