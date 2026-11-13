@@ -18,7 +18,7 @@ export function createCustomerUi({api,form,field,refresh}){
     <div class="toolbar reference-bank"><label class="field">${e(t('Bank'))}<select id="customer-bank">${banks.items.map(b=>`<option value="${e(b.id)}" ${b.id===bankId?'selected':''}>${e(b.displayName)}</option>`).join('')}</select></label><small>${e(t('Bank selector shows the first 100 banks.'))}</small></div>
     ${!result.storageReady?note('Prepare this bank’s customer tables before onboarding.'):''}
     <div class="toolbar"><label class="field">${e(t('Search by name or customer number'))}<input id="customer-search" maxlength="100" value="${e(search)}"></label><label class="field">${e(t('Customer status'))}<select id="customer-state"><option value="">${e(t('All statuses'))}</option>${['PROSPECT','ACTIVE','BLOCKED','DECEASED'].map(s=>`<option value="${s}" ${s===state?'selected':''}>${e(t(statusName(s)))}</option>`).join('')}</select></label>${button('Search','search')}${button('Refresh','refresh')}</div>
-    <section class="card"><div class="panel-title"><h2>${e(t('Approved customer records'))}</h2><span>${result.total}</span></div><div class="table-wrap"><table><thead><tr>${['Customer','Customer status','Delivery',''].map(h=>`<th>${e(t(h))}</th>`).join('')}</tr></thead><tbody>${result.items.map(r=>`<tr><td><strong>${e(r.fullName)}</strong><small>${e(r.customerNumber)}</small></td><td>${e(t(statusName(r.state)))}</td><td>${e(t(r.delivery==='APPLIED'?'Applied':'Awaiting delivery'))}${r.failureCode?`<small>${e(t(errorMessage(r.failureCode)))}</small>`:''}</td><td><div class="actions">${button('Details','details',r.id)+(r.type==='ORGANIZATION'?button('Directors & owners','parties',r.id,bank.status!=='ACTIVE'||r.delivery!=='APPLIED'):'')}${button('Manage','edit',r.id,bank.status!=='ACTIVE'||r.delivery!=='APPLIED')}${button('KYC docs','docs',r.id,bank.status!=='ACTIVE'||r.delivery!=='APPLIED')}${button('KYC review','kyc-review',r.id,bank.status!=='ACTIVE'||r.delivery!=='APPLIED')}${r.delivery!=='APPLIED'?button('Retry delivery','retry',r.requestId,bank.status!=='ACTIVE'):''}</div></td></tr>`).join('')||`<tr><td colspan="4" class="empty">${e(t('No approved customers yet.'))}</td></tr>`}</tbody></table></div><div class="pagination">${button('Previous','previous','',offset===0)}${button('Next','next','',offset+25>=result.total)}</div></section>
+    <section class="card"><div class="panel-title"><h2>${e(t('Approved customer records'))}</h2><span>${result.total}</span></div><div class="table-wrap"><table><thead><tr>${['Customer','Customer status','Delivery',''].map(h=>`<th>${e(t(h))}</th>`).join('')}</tr></thead><tbody>${result.items.map(r=>`<tr><td><strong>${e(r.fullName)}</strong><small>${e(r.customerNumber)}</small></td><td>${e(t(statusName(r.state)))}</td><td>${e(t(r.delivery==='APPLIED'?'Applied':'Awaiting delivery'))}${r.failureCode?`<small>${e(t(errorMessage(r.failureCode)))}</small>`:''}</td><td><div class="actions">${button('Details','details',r.id)+(r.type==='ORGANIZATION'?button('Directors & owners','parties',r.id,bank.status!=='ACTIVE'||r.delivery!=='APPLIED'):'')}${button('Manage','edit',r.id,bank.status!=='ACTIVE'||r.delivery!=='APPLIED')}${button('KYC docs','docs',r.id,bank.status!=='ACTIVE'||r.delivery!=='APPLIED')}${button('KYC review','kyc-review',r.id,bank.status!=='ACTIVE'||r.delivery!=='APPLIED')}${button('Privacy','privacy',r.id,bank.status!=='ACTIVE'||r.delivery!=='APPLIED')}${r.delivery!=='APPLIED'?button('Retry delivery','retry',r.requestId,bank.status!=='ACTIVE'):''}</div></td></tr>`).join('')||`<tr><td colspan="4" class="empty">${e(t('No approved customers yet.'))}</td></tr>`}</tbody></table></div><div class="pagination">${button('Previous','previous','',offset===0)}${button('Next','next','',offset+25>=result.total)}</div></section>
     <p class="reference-note">${e(t('Changes require another administrator’s approval and successful delivery to the bank database.'))} <button class="link-button" data-view="approvals">${e(t('Approval Inbox'))} →</button></p>
     <p class="reference-note">${e(t('Activation records a manual review, not automated identity or sanctions verification. Use Deposit accounts to open an account for an approved active customer.'))}</p>`;
   }
@@ -67,6 +67,26 @@ export function createCustomerUi({api,form,field,refresh}){
           await api(`/admin/tenants/${target}/customers/${id}/kyc-reviews`,{method:'POST',body:{riskRating:d.riskRating,reviewedAt:d.reviewedAt,reviewReference:d.reviewReference,notes:d.notes||null}});
           await refresh();
         },'Record review');return;
+    }
+    if(name==='privacy'){
+      const [erasure,views]=await Promise.all([
+        api(`/admin/tenants/${target}/privacy/customers/${id}/erasure`),
+        api(`/admin/tenants/${target}/privacy/customers/${id}/views?limit=10`)
+      ]);if(epoch!==generation||!current())return;
+      const viewRows=views.map(v=>`<tr><td><strong>${e(v.actorSubject)}</strong></td><td>${e(v.action)}</td><td>${e(v.at.slice(0,19).replace('T',' '))}</td></tr>`).join('');
+      const viewTable=`<div class="table-wrap"><table><thead><tr><th>${e(t('Actor'))}</th><th>${e(t('Action'))}</th><th>${e(t('Timestamp'))}</th></tr></thead><tbody>${viewRows||`<tr><td colspan="3" class="empty">${e(t('No accesses recorded.'))}</td></tr>`}</tbody></table></div>`;
+      const blockersText=erasure.blockers.length?erasure.blockers.join(', '):'None (eligible)';
+      form('Customer privacy & data protection',
+        note(`Erasure eligibility: ${blockersText}. Retention until: ${erasure.retainUntil||'N/A'}`)+
+        `<div class="panel-title"><h3>${e(t('Recent personal data access log'))}</h3></div>`+
+        viewTable+
+        field('type','Register data-subject request','ACCESS',{choices:[['ACCESS','Access'],['RECTIFICATION','Rectification'],['ERASURE','Erasure'],['OBJECTION','Objection'],['PORTABILITY','Portability']].map(([v,l])=>({value:v,label:t(l)}))})+
+        field('reference','Request reference','',{max:120})+
+        field('details','Details','',{full:true,max:500,required:false}),async d=>{
+          const key=crypto.randomUUID();
+          await api(`/admin/tenants/${target}/privacy/requests`,{method:'POST',headers:{'Idempotency-Key':key},body:{customerId:id,type:d.type,receivedOn:new Date().toISOString().slice(0,10),reference:d.reference.trim(),details:d.details.trim()}});
+          await refresh();
+        },'Register request');return;
     }
     let row,p={};
     if(name==='details'||name==='edit'){

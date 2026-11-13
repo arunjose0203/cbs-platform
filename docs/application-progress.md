@@ -4,6 +4,18 @@
 
 Use the [Functional Gap & Acceptance Matrix](functional-gap-acceptance-matrix-2026-10-09.md) for the current 34-area functional assessment, 34 proposed acceptance cases, source/test evidence, confirmed limits and prioritized completion work. It reconciles older historical pending lists below. No module has independent bank functional sign-off recorded; existing automated test results do not replace that acceptance.
 
+## Round 18: Privacy and data protection — 13 November 2026
+
+Round 18 of the [go-live plan](go-live-plan-2026-11-13.md) completes privacy, field-level data protection, legal holds, data-subject request registers, and the statutory retention matrix (Kenya Data Protection Act 2019, POCAMLA s.46, Gate E04). Control migration **V49**. See [privacy and data protection](privacy-and-data-protection.md).
+
+- **Field-level protection for sensitive identifiers.** Added `PersonalDataCipher` implementing deterministic AES-256-GCM tokens (`pd1:`) with tenant-isolated HMAC key derivation and keyed blind indices (`bi1:`). Document numbers are sealed before storage in approval requests, delivery outboxes, registries, and bank schemas.
+- **Production guard enforcement.** `ProductionGuard` refuses launch if `cbs.privacy.field-key` is missing, insecure, or using the development key.
+- **Statutory retention matrix & archival review.** Codified 7 retention rules covering KYC, transactions, AML monitoring, audit logs, notifications, DSRs, and sessions. Endpoints identify archival review candidates.
+- **Legal holds.** Dual-controlled (maker-checker) legal holds (`platform.legal_hold`) freezing customer data against deletion or erasure.
+- **Data-subject request handling.** Structured register for data-subject requests (`ACCESS`, `RECTIFICATION`, `ERASURE`, `OBJECTION`, `PORTABILITY`) with SLA due dates and automated subject-access report export. Erasure assessment verifies blockers before action.
+- **Customer view audit log.** Every staff view of customer data is audited (`CUSTOMER_PROFILE_VIEWED`, `CUSTOMER_VIEW_LOG_READ`).
+- **UI and verification.** Added Privacy & data protection portal view with tabs for subject requests, legal holds, and retention rules; added customer privacy dialog. Tests: 236 backend tests pass (12 privacy tests), 125 UI tests pass.
+
 ## Round 12: Deposit lifecycle completion — 13 November 2026
 
 Round 12 of the [go-live plan](go-live-plan-2026-11-13.md) completes KYC document object storage, risk-based periodic reviews, account dormancy, deceased-customer workflows, contract/payment-aware account closure, and closure settlement reversal. Control migration **V48**, bank migration **V27**. See [deposit lifecycle completion](deposit-lifecycle-completion.md).

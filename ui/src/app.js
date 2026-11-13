@@ -25,13 +25,14 @@ import {createDayCloseUi} from './day-close-ui.js';
 import {createReportUi} from './report-ui.js';
 import {createJournalUi} from './journal-ui.js';
 import {createLedgerUi} from './ledger-ui.js';
+import {createPrivacyUi} from './privacy-ui.js';
 
 const content=document.querySelector('#content'), dialog=document.querySelector('#dialog');
 let manager, user, me, configuration, view='banks', selectedBank, submitForm, lastFocus;
 let rows=[], offset=0, busy=false, noticeTimer, renderVersion=0;
 let approvalScope='INBOX', approvalAction='', approvalBank='', selectedApproval;
 const pageSize=25;
-const labels={bankduties:"Bank duties & access review",lendingaccess:"Lending permissions",lendingapprovals:"Lending approval inbox",collections:"Loan arrears & collections",credit:'Loan applications & credit review',term:'Term deposits',loan:'Lending',fx:'FX & exchange rates',paymentcases:'Payment exceptions',statements:'M-Pesa statements',payments:'Payments & reconciliation',compliance:'Compliance cases',servicing:'Deposit servicing',notifications:'Customer alerts',reporting:'Management reports',screening:'Screening & monitoring',branchwork:'Branch workspace',banks:'Bank directory',staff:'Staff & access',approvals:'Approval Inbox',settings:'Bank settings',chart:'Chart of Accounts',ledgers:'Ledger Accounts',journals:'Journals & balances',reports:'Accounting reports',dayclose:'Business Day Close',products:'Product Factory',accounts:'Deposit accounts',customers:'Customers',sessions:'My sessions',audit:'Audit trail'};
+const labels={privacy:'Privacy & data protection',bankduties:"Bank duties & access review",lendingaccess:"Lending permissions",lendingapprovals:"Lending approval inbox",collections:"Loan arrears & collections",credit:'Loan applications & credit review',term:'Term deposits',loan:'Lending',fx:'FX & exchange rates',paymentcases:'Payment exceptions',statements:'M-Pesa statements',payments:'Payments & reconciliation',compliance:'Compliance cases',servicing:'Deposit servicing',notifications:'Customer alerts',reporting:'Management reports',screening:'Screening & monitoring',branchwork:'Branch workspace',banks:'Bank directory',staff:'Staff & access',approvals:'Approval Inbox',settings:'Bank settings',chart:'Chart of Accounts',ledgers:'Ledger Accounts',journals:'Journals & balances',reports:'Accounting reports',dayclose:'Business Day Close',products:'Product Factory',accounts:'Deposit accounts',customers:'Customers',sessions:'My sessions',audit:'Audit trail'};
 const lendingAccessUi=createLendingAccessUi({api,form,field,refresh:render,subject:()=>me?.staff.subject});
 const bankDutiesUi=createBankDutiesUi({api,form,field,refresh:render});
 const lendingApi=(path,options)=>{if(path==='/admin/tenants?limit=100')return api('/banks/lending-operations/banks',options);return api(path.replace(/^\/admin\/tenants\/([^/?]+)/,'/banks/$1/lending-operations'),options);};
@@ -58,6 +59,7 @@ const dayCloseUi=createDayCloseUi({api,form,field,refresh:render});
 const reportUi=createReportUi({api,refresh:render});
 const journalUi=createJournalUi({api,form,field,refresh:render});
 const ledgerUi=createLedgerUi({api,form,field,refresh:render});
+const privacyUi=createPrivacyUi({api,form,field,refresh:render});
 function localizeChrome(){
   document.documentElement.lang=getLanguage();
   document.querySelector('#ui-language').value=getLanguage();
@@ -118,6 +120,7 @@ async function render(){
     if(view==='payments'){await paymentsUi.render(content,()=>revision===renderVersion);return;}
     if(view==='compliance'){await complianceUi.render(content,()=>revision===renderVersion);return;}
     if(view==='screening'){await screeningUi.render(content,()=>revision===renderVersion);return;}
+    if(view==='privacy'){await privacyUi.render(content,configuration,selectedBank,renderVersion,()=>revision===renderVersion);return;}
     if(view==='servicing'){await servicingUi.render(content,()=>revision===renderVersion);return;}
     if(view==='notifications'){await notificationUi.render(content,()=>revision===renderVersion);return;}
     if(view==='reporting'){await reportingUi.render(content,()=>revision===renderVersion);return;}
