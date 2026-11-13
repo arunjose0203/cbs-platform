@@ -103,5 +103,6 @@ Deferred constraint triggers refuse any grant, policy or history row that does n
   - the two-administrator guard, maker recheck after a time-limited duty expires, and cancellation by the maker
   - access-review conflicts, attestation by audit only, the stale-snapshot refusal, and database immutability
   - lockout recovery
-- `BankDutiesTest` covers the classification, the SQL mapping, the expiry format, findings and hash stability.
+- `BankDutiesTest` covers the classification, the SQL mapping, the expiry format, findings, hash stability, and the fixed key order that keeps the hash reproducible across restarts.
+- Full backend `verify`: 195 passed, 1 opt-in volume test skipped. UI: 119 passed.
 - 7 UI tests cover the portal screen.

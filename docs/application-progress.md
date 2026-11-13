@@ -4,6 +4,31 @@
 
 Use the [Functional Gap & Acceptance Matrix](functional-gap-acceptance-matrix-2026-10-09.md) for the current 34-area functional assessment, 34 proposed acceptance cases, source/test evidence, confirmed limits and prioritized completion work. It reconciles older historical pending lists below. No module has independent bank functional sign-off recorded; existing automated test results do not replace that acceptance.
 
+## Bank duties and access reviews — 13 November 2026
+
+[Bank duties](bank-duties.md) is Round 9 of the [go-live plan](go-live-plan-2026-11-13.md).
+
+- **Duties.** A bank can now enforce duties for platform administrators. With enforcement on, submitting, approving or even seeing a bank's requests needs an approved, unexpired duty for that bank.
+- **Coverage.** There are seven duties: access administration, bank configuration, finance, customer operations, payments, treasury and compliance. They cover every approval action except platform-wide ones and lending-only ones. Lending-only actions keep their lending grants.
+- **Grants.** Submit and approve are granted separately, and a read-only audit flag is available. Time-limited (break-glass) duties end on their own. The maker is checked again at approval.
+- **Lockout protection.** At least two access administrators must remain while enforced. If that is lost, a dual-controlled recovery request can switch enforcement off.
+- **Access review.** A consolidated report shows bank duties together with lending, payment and branch roles, and flags disabled, dormant, time-limited and conflicting access. An auditor signs an attestation bound to a SHA-256 hash of the exact snapshot.
+- **Unchanged default.** Banks that do not enforce duties behave exactly as before.
+- **Not yet covered (Round 9b).** Direct, non-approval administrator routes.
+- **Database.** Control migration V46.
+
+Also in this round:
+- `RuntimeDatabaseGuardIntegrationTest` no longer assumes a superuser test login.
+- A duplicate UI message key is removed.
+
+Verification:
+- Full backend `verify`: **195 passed**, 1 opt-in volume test skipped, zero failures or errors (94 integration scenarios).
+- A later fix fixed the key order of the review snapshot, so the hash is the same across restarts. After it, `BankDutiesTest` (now 7 tests) and the duty integration scenario passed again.
+- UI: **119 passed**.
+- Operations tests were not run locally: there is no Python interpreter on this machine. CI runs them, and this round changed no operations code.
+
+Bank acceptance remains pending.
+
 ## Screening and transaction monitoring — 11 November 2026
 
 [Screening and transaction monitoring](screening-and-transaction-monitoring.md) adds approved sanctions/PEP/internal screening lists. Every customer is screened when their approved profile is applied, and again when a new list version is activated (in resumable chunks). Name matching tolerates accents, word order and small misspellings, and uses birth dates to rule out namesakes. An open possible match restricts the customer, and any organization they act for, until it is escalated to a case or its dismissal is approved.
