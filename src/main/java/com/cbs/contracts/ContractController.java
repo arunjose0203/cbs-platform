@@ -20,10 +20,12 @@ public class ContractController {
     private final ApprovalService approvals;
     private final LoanMoratoriumService moratoria;
     private final LoanEclService ecl;
+    private final TermStandingInstructionService standingInstructions;
 
     public ContractController(LoanFeeService fees, LoanServicingService loans, TermServicingService servicing,
                               ContractService service, ApprovalService approvals,
-                              LoanMoratoriumService moratoria, LoanEclService ecl) {
+                              LoanMoratoriumService moratoria, LoanEclService ecl,
+                              TermStandingInstructionService standingInstructions) {
         this.fees = fees;
         this.loans = loans;
         this.servicing = servicing;
@@ -31,6 +33,7 @@ public class ContractController {
         this.approvals = approvals;
         this.moratoria = moratoria;
         this.ecl = ecl;
+        this.standingInstructions = standingInstructions;
     }
 
     @PostMapping("/fees/preview") public ContractModels.Posting feePreview(JwtAuthenticationToken jwt,@PathVariable UUID bank,@Valid @RequestBody LoanFeeModels.Change input){return fees.preview(actor(jwt),bank,input);}
@@ -66,5 +69,24 @@ public class ContractController {
     @GetMapping("/ecl/evaluate")
     public LoanEclModels.EclReport evaluateEcl(JwtAuthenticationToken jwt, @PathVariable UUID bank, @RequestParam(required = false) LocalDate asOf) {
         return ecl.evaluate(actor(jwt), bank, asOf);
+    }
+
+    @PostMapping("/standing-instructions")
+    public TermStandingInstructionModels.StandingInstruction registerStandingInstruction(
+            JwtAuthenticationToken jwt, @PathVariable UUID bank,
+            @Valid @RequestBody TermStandingInstructionModels.InstructionRequest input) {
+        return standingInstructions.register(actor(jwt), bank, input);
+    }
+
+    @GetMapping("/{id}/standing-instruction")
+    public Optional<TermStandingInstructionModels.StandingInstruction> getStandingInstruction(
+            JwtAuthenticationToken jwt, @PathVariable UUID bank, @PathVariable UUID id) {
+        return standingInstructions.getForContract(actor(jwt), bank, id);
+    }
+
+    @GetMapping("/standing-instructions")
+    public List<TermStandingInstructionModels.StandingInstruction> listStandingInstructions(
+            JwtAuthenticationToken jwt, @PathVariable UUID bank) {
+        return standingInstructions.list(actor(jwt), bank);
     }
 }

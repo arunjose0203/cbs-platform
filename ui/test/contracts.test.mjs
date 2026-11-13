@@ -30,3 +30,15 @@ test('early closure requires explicit penalty and tax basis; alerts are in-app',
 test('impairment preview pins allowance and does not create customer repayment',async()=>{const f=fixture('LOAN');await f.ui.render({innerHTML:''},()=>true);await f.ui.action('impair','contract');await f.submit({allowance:'100.13',stage:'3',allowanceLedger:'a',impairmentExpenseLedger:'e',evidenceReference:'ECL/1',reason:'Verified loss assessment'});await f.submit({allowance:'999'});const b=f.calls.at(-1).body;assert.equal(b.operation,'IMPAIR');assert.equal(b.allowance,'100.13');assert.equal(b.stage,3);assert.equal(b.newAnnualRatePercent,null);assert.equal(b.newInstalments,0);});
 test('write-off requires preview and pins full allowance consumption without a cash amount',async()=>{const f=fixture('LOAN');await f.ui.render({innerHTML:''},()=>true);await f.ui.action('writeoff','contract');await f.submit({allowanceLedger:'a',impairmentExpenseLedger:'e',evidenceReference:'WO/1',reason:'Approved'});await f.submit({});const b=f.calls.at(-1).body;assert.equal(b.operation,'WRITE_OFF');assert.equal(b.allowance,'0');assert.equal(b.stage,3);assert.equal(b.amount,undefined);});
 test('loan moratorium submits grant command',async()=>{const f=fixture('LOAN');await f.ui.render({innerHTML:''},()=>true);await f.ui.action('moratorium','contract');assert.equal(f.fields.find(x=>x.name==='type').value,'FULL_PAYMENT_HOLIDAY');await f.submit({type:'INTEREST_ONLY',startDate:'2026-10-08',endDate:'2026-12-08',reason:'Flood relief'});const call=f.calls.at(-1);assert.equal(call.path,'/admin/tenants/bank/contracts/moratoria');assert.equal(call.body.type,'INTEREST_ONLY');assert.equal(call.body.contractId,'contract');});
+test('term deposit partial closure requires explicit withdraw amount',async()=>{
+ const f=fixture('TERM_DEPOSIT');await f.ui.render({innerHTML:''},()=>true);await f.ui.action('partial','contract');
+ assert.equal(f.fields.find(x=>x.name==='closeAmount').value,'');
+ await f.submit({closeAmount:'40000',penaltyAmount:'50',taxBasis:'INTEREST_AFTER_PENALTY',agreementReference:'PARTIAL/01',reason:'Customer withdrawal'});
+ await f.submit({});const b=f.calls.at(-1).body;assert.equal(b.operation,'PARTIAL_CLOSE');assert.equal(b.closeAmount,'40000');assert.equal(b.penaltyAmount,'50');
+});
+test('term deposit standing instruction submits renewal rule',async()=>{
+ const f=fixture('TERM_DEPOSIT');await f.ui.render({innerHTML:''},()=>true);await f.ui.action('standing','contract');
+ assert.equal(f.fields.find(x=>x.name==='type').value,'AUTOMATIC_RENEWAL_CAPITALIZE');
+ await f.submit({type:'AUTOMATIC_RENEWAL_PAYOUT',renewalPeriodMonths:'6',renewalRatePercent:'10.5',reason:'Client agreement'});
+ const call=f.calls.at(-1);assert.equal(call.path,'/admin/tenants/bank/contracts/standing-instructions');assert.equal(call.body.type,'AUTOMATIC_RENEWAL_PAYOUT');assert.equal(call.body.renewalPeriodMonths,6);
+});

@@ -4,6 +4,18 @@
 
 Use the [Functional Gap & Acceptance Matrix](functional-gap-acceptance-matrix-2026-10-09.md) for the current 34-area functional assessment, 34 proposed acceptance cases, source/test evidence, confirmed limits and prioritized completion work. It reconciles older historical pending lists below. No module has independent bank functional sign-off recorded; existing automated test results do not replace that acceptance.
 
+## Round 16: FX and term-deposit completion — 14 November 2026
+
+Round 16 of the [go-live plan](go-live-plan-2026-11-13.md) completes foreign exchange (FX) and term-deposit servicing (Matrix rows F26, F27, F28; Acceptance cases A26, A27, A28). Control migrations **V53** (platform) and **V29** (bank). See [fx and term-deposit completion](fx-and-term-deposit-completion.md).
+
+- **Partial term-deposit closure.** `PARTIAL_CLOSE` allows partial principal withdrawals with early-closure penalty and withholding tax deduction, keeping remaining principal active and accruing interest until contractual maturity. Enforced under `TD_PARTIAL_CLOSE` limits.
+- **Standing renewal instructions.** Registers and maintains automated actions upon maturity (`AUTOMATIC_RENEWAL_CAPITALIZE`, `AUTOMATIC_RENEWAL_PAYOUT`, `TRANSFER_TO_ACCOUNT_AT_MATURITY`) in `platform.term_standing_instruction`.
+- **Cross exchange rate derivation.** Mathematically derived cross rates between two non-base foreign currencies via the bank's functional pivot currency, compounding bid/ask spreads strictly ($Buy = b_1 / s_2, Mid = m_1 / m_2, Sell = s_1 / b_2$).
+- **External rate feeds.** Staging and maker-checker approval for external rate feeds (Central Bank of Kenya, Reuters) before activating them into the live rate catalogue (`platform.fx_rate_feed`).
+- **FX valuation corrections.** Reverses prior erroneous valuation runs on the open business date with balanced reversing journal entries (`FXVC-`), unsealing the trading book in `platform.fx_valuation_correction`.
+- **Full-bank monetary item translation (IAS 21).** Evaluates and translates all foreign-currency denominated balance sheet assets and liabilities at closing spot rates, aggregating total foreign assets, liabilities, and net translation gain/loss exposure.
+- **UI and verification.** Added Partial Closure and Standing Order to Contracts UI; added Cross Rate and Rate Feeds to FX UI; added Valuation Correction and IAS 21 Translation to FX Valuation UI. Tests: 5 new backend integration tests (100% pass), 270 total backend tests pass, 137 UI tests pass.
+
 ## Round 15: Lending completion — 14 November 2026
 
 Round 15 of the [go-live plan](go-live-plan-2026-11-13.md) completes the lending and loan servicing lifecycle (Matrix rows F30, F31, F32; Acceptance cases A30, A31, A32). Control migrations **V52** (platform) and **V28** (bank). See [lending completion](lending-completion.md).

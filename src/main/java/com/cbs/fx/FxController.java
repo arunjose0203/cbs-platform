@@ -6,6 +6,7 @@ import java.util.*;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken;
 import org.springframework.web.bind.annotation.*;
+
 @RestController
 @RequestMapping("/api/v1/admin/tenants/{bank}/fx")
 @ConditionalOnProperty(name="cbs.tenancy.enabled",havingValue="true",matchIfMissing=true)
@@ -22,4 +23,24 @@ public class FxController {
  @PostMapping("/rates") public ApprovalModels.Request rate(JwtAuthenticationToken jwt,@PathVariable UUID bank,@RequestHeader("Idempotency-Key") UUID key,@Valid @RequestBody FxModels.Rate input){return approvals.fxRate(actor(jwt),key,bank,input);}
  @PostMapping("/withdrawals") public ApprovalModels.Request withdraw(JwtAuthenticationToken jwt,@PathVariable UUID bank,@RequestHeader("Idempotency-Key") UUID key,@Valid @RequestBody FxModels.Withdraw input){return approvals.fxWithdraw(actor(jwt),key,bank,input);}
  @PostMapping("/quote") public FxModels.Quote quote(JwtAuthenticationToken jwt,@PathVariable UUID bank,@Valid @RequestBody FxModels.QuoteInput input){return service.quote(actor(jwt),bank,input);}
+
+ @GetMapping("/cross-rate")
+ public FxModels.CrossRate crossRate(JwtAuthenticationToken jwt, @PathVariable UUID bank, @RequestParam String base, @RequestParam String quote) {
+  return service.deriveCrossRate(actor(jwt), bank, base, quote);
+ }
+
+ @PostMapping("/feeds")
+ public FxRateFeedModels.FeedRecord importFeed(JwtAuthenticationToken jwt, @PathVariable UUID bank, @Valid @RequestBody FxRateFeedModels.FeedImport input) {
+  return service.importFeed(actor(jwt), bank, input);
+ }
+
+ @GetMapping("/feeds")
+ public List<FxRateFeedModels.FeedRecord> listFeeds(JwtAuthenticationToken jwt, @PathVariable UUID bank) {
+  return service.listFeeds(actor(jwt), bank);
+ }
+
+ @PostMapping("/feeds/{id}/approve")
+ public void approveFeed(JwtAuthenticationToken jwt, @PathVariable UUID bank, @PathVariable UUID id) {
+  service.approveFeed(actor(jwt), bank, id);
+ }
 }

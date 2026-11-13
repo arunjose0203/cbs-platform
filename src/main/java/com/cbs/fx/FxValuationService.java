@@ -144,6 +144,60 @@ public class FxValuationService {
         limits(p,q.add(buy?new BigDecimal(sourceAmount):new BigDecimal(targetAmount).negate()));
     }
     private static void limits(Policy p,BigDecimal quantity){if(quantity.compareTo(new BigDecimal(p.longLimit()))>0||quantity.compareTo(new BigDecimal(p.shortLimit()).negate())<0)throw error("FX_POSITION_LIMIT_EXCEEDED");}
+    public void correctValuation(Actor actor, UUID bankId, UUID valuationId, String reason) {
+        AccessService.admin(actor);
+        tx.executeWithoutResult(t -> {
+            var bank = tenants.get(bankId, true);
+            var settings = reference.read(bank);
+            var rows = jdbc.query("SELECT payload::text, completed, business_date, book_id FROM platform.fx_valuation WHERE tenant_id = ? AND id = ?",
+                    (rs, rowNum) -> Map.of(
+                            "payload", rs.getString(1),
+                            "completed", rs.getBoolean(2),
+                            "businessDate", rs.getDate(3).toLocalDate(),
+                            "bookId", rs.getObject(4, UUID.class)
+                    ), bankId, valuationId);
+            if (rows.isEmpty()) throw error("FX_VALUATION_NOT_FOUND");
+            var row = rows.getFirst();
+            if (!(Boolean) row.get("completed")) throw error("FX_VALUATION_NOT_COMPLETED");
+            LocalDate valDate = (LocalDate) row.get("businessDate");
+            if (!valDate.equals(settings.businessDate())) throw error("FX_VALUATION_DATE_CLOSED");
+
+            Posting posting = JSON.readValue((String) row.get("payload"), Posting.class);
+            UUID bookId = (UUID) row.get("bookId");
+
+            UUID revJournalId = UUID.randomUUID();
+            JournalModels.Entry origJ = posting.journal();
+            if (origJ != null && !origJ.lines().isEmpty()) {
+                List<JournalModels.Line> revLines = origJ.lines().stream()
+                        .map(l -> new JournalModels.Line(l.ledgerId(),
+                                l.side() == JournalModels.Side.DEBIT ? JournalModels.Side.CREDIT : JournalModels.Side.DEBIT,
+                                l.amount()))
+                        .toList();
+                JournalModels.Change revChange = new JournalModels.Change(
+                        bank.version(), "FXVC-" + revJournalId, reason, valDate,
+                        posting.book().policy().legalEntityId(), posting.book().functionalCurrency(),
+                        revLines, null, reason);
+                journals.validateFxValuation(bank, revChange);
+                JournalModels.Entry revEntry = new JournalModels.Entry(
+                        revJournalId, bank.id(), revChange.reference(), reason, valDate,
+                        posting.book().policy().legalEntityId(), posting.book().functionalCurrency(), revLines, null);
+
+                jdbc.update("INSERT INTO platform.journal_delivery(request_id, tenant_id, reference, payload, maker_subject, reviewer_issuer, reviewer_subject, correlation_id) VALUES (?,?,?,?::jsonb,?,?,?,?)",
+                        revJournalId, bankId, revEntry.reference(), JSON.writeValueAsString(revEntry), actor.subject(), actor.issuer(), actor.subject(), actor.correlationId());
+                for (var line : revLines) {
+                    jdbc.update("INSERT INTO platform.journal_ledger VALUES (?,?)", revJournalId, line.ledgerId());
+                }
+            }
+
+            UUID correctionId = UUID.randomUUID();
+            jdbc.update("INSERT INTO platform.fx_valuation_correction(id, tenant_id, book_id, original_valuation_id, business_date, reversal_journal_id, reason, corrected_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    correctionId, bankId, bookId, valuationId, valDate, revJournalId, reason, actor.subject());
+
+            jdbc.update("DELETE FROM platform.fx_valuation WHERE id = ?", valuationId);
+            changed(actor, bank, "FX_VALUATION_CORRECTED", correctionId, reason);
+        });
+    }
+
     private void changed(Actor actor,Tenant bank,String action,UUID id,String reason){tenants.change(bank,bank.status(),bank.displayName(),bank.defaultLanguage());tenants.audit(actor,bank.id(),action,bank.version()+1,bank.status(),bank.status(),reason,null,null,Map.of("requestId",id));}
     private static TenantException error(String code){return new TenantException(409,code,"FX valuation requires attention");}
 }

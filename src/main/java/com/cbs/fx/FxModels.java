@@ -17,6 +17,32 @@ public final class FxModels {
  public record Withdraw(@PositiveOrZero long expectedVersion,@NotNull UUID rateId,@NotBlank @Size(max=500) String reason){}
  public record QuoteInput(@NotNull UUID rateId,@NotNull Side side,@NotNull @Pattern(regexp="[0-9]{1,18}(\\.[0-9]{1,6})?") String sourceAmount){}
  public record Quote(UUID rateId,Side side,String sourceCurrency,String targetCurrency,String sourceAmount,String targetAmount,String appliedRate,String roundingMode,String roundingDifference,LocalDate businessDate,Instant expiresAt){}
+ public record CrossRate(String baseCurrency,String quoteCurrency,String pivotCurrency,String buyRate,String midRate,String sellRate,LocalDate calculatedDate){}
+
+ public static CrossRate deriveCrossRate(Rate baseVsPivot, Rate quoteVsPivot, LocalDate date) {
+  if (!baseVsPivot.quoteCurrency().equals(quoteVsPivot.quoteCurrency())) {
+   throw new IllegalArgumentException("Cross rate derivation requires identical pivot/quote currency");
+  }
+  String pivot = baseVsPivot.quoteCurrency();
+  BigDecimal b1 = new BigDecimal(baseVsPivot.buyRate());
+  BigDecimal m1 = new BigDecimal(baseVsPivot.midRate());
+  BigDecimal s1 = new BigDecimal(baseVsPivot.sellRate());
+
+  BigDecimal b2 = new BigDecimal(quoteVsPivot.buyRate());
+  BigDecimal m2 = new BigDecimal(quoteVsPivot.midRate());
+  BigDecimal s2 = new BigDecimal(quoteVsPivot.sellRate());
+
+  BigDecimal buy = b1.divide(s2, 8, RoundingMode.HALF_EVEN);
+  BigDecimal mid = m1.divide(m2, 8, RoundingMode.HALF_EVEN);
+  BigDecimal sell = s1.divide(b2, 8, RoundingMode.HALF_EVEN);
+
+  if (buy.signum() <= 0 || buy.compareTo(mid) > 0 || mid.compareTo(sell) > 0) {
+   throw new IllegalArgumentException("Derived cross rates invalid");
+  }
+  return new CrossRate(baseVsPivot.baseCurrency(), quoteVsPivot.baseCurrency(), pivot,
+    text(buy), text(mid), text(sell), date);
+ }
+
  public static Quote calculate(UUID id,Rate rate,Side side,String amount,String rounding,LocalDate date){
   validateRates(rate);if(side==null)throw new IllegalArgumentException("Missing side");
   String source=side==Side.BANK_BUYS_BASE?rate.baseCurrency():rate.quoteCurrency(),target=side==Side.BANK_BUYS_BASE?rate.quoteCurrency():rate.baseCurrency();

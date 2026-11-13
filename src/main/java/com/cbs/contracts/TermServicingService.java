@@ -59,6 +59,20 @@ public class TermServicingService {
             add(lines,customer.ledgerId(),JournalModels.Side.CREDIT,decimal(movement));
             if(penalty.signum()>0)add(lines,input.penaltyIncomeLedger(),JournalModels.Side.CREDIT,penalty);
             TransactionLimits.check(jdbc,bank.id(),a.terms().currency(),"TD_EARLY_CLOSE",input.businessDate(),decimal(movement));
+        } else if(input.operation()==Operation.PARTIAL_CLOSE) {
+            if(!input.businessDate().isBefore(d.terms().maturityDate())||input.closeAmount()==null)throw error("TERM_PARTIAL_CLOSE_INVALID");
+            BigDecimal closePrincipal=decimal(input.closeAmount());
+            if(closePrincipal.signum()<=0||closePrincipal.compareTo(principal)>=0)throw error("TERM_PARTIAL_CLOSE_INVALID");
+            if(penalty.signum()>0)contracts.ledger(bank,a,input.penaltyIncomeLedger(),"INCOME",false);
+            else if(input.penaltyIncomeLedger()!=null)throw error("TERM_PENALTY_INVALID");
+            kind=Kind.PARTIAL_CLOSE;
+            BigDecimal remainingPrincipal=principal.subtract(closePrincipal);
+            movement=text(closePrincipal.add(net));
+            after=new Position(text(remainingPrincipal),"0","0",through,false);
+            add(lines,d.terms().principalLedger(),JournalModels.Side.DEBIT,closePrincipal);
+            add(lines,customer.ledgerId(),JournalModels.Side.CREDIT,decimal(movement));
+            if(penalty.signum()>0)add(lines,input.penaltyIncomeLedger(),JournalModels.Side.CREDIT,penalty);
+            TransactionLimits.check(jdbc,bank.id(),a.terms().currency(),"TD_PARTIAL_CLOSE",input.businessDate(),closePrincipal);
         } else {
             if(input.businessDate().isBefore(d.terms().maturityDate())||penalty.signum()!=0||input.penaltyIncomeLedger()!=null||input.taxBasis()!=TaxBasis.GROSS_INTEREST||input.interestDisposition()==null||input.renewalAnnualRatePercent()==null||input.renewalMaturityDate()==null||!input.renewalMaturityDate().isAfter(input.businessDate())||input.renewalMaturityDate().isAfter(input.businessDate().plusYears(10)))throw error("TERM_RENEWAL_INVALID");
             var rate=decimal(input.renewalAnnualRatePercent());if(rate.signum()<0||rate.compareTo(new BigDecimal("999"))>0)throw error("TERM_RENEWAL_INVALID");

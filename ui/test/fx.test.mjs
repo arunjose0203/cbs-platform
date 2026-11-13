@@ -18,3 +18,15 @@ test('FX conversion submits only after the server preview and preserves the appr
  assert.match(html,/1.01 USD/);assert.equal(calls.filter(x=>x.path.endsWith('/trades')).length,0);
  await submit({expectedTargetAmount:'999'});const posted=calls.at(-1);assert.equal(posted.body.expectedTargetAmount,'1.01');assert.equal(posted.body.sourceAmount,'132.31');assert.equal(posted.body.expectedVersion,7);assert.ok(posted.headers['Idempotency-Key']);
 });
+test('FX cross rate derivation requests base and quote from API',async()=>{
+ let submit,html;const calls=[];
+ const ui=createFxUi({api:async(path,options)=>{calls.push({path,...options});if(path.includes('/cross-rate?'))return {baseCurrency:'EUR',quoteCurrency:'GBP',pivotCurrency:'USD',buyRate:'0.83',midRate:'0.84',sellRate:'0.85',calculatedDate:'2026-10-08'};if(path.endsWith('/valuation'))return {version:5,businessDate:'2026-10-08',storageReady:true,books:[],closingRates:[],valuations:[]};if(path.includes('/trades?'))return {version:5,businessDate:'2026-10-08',items:[],total:0,storageReady:true};if(path.includes('/fx?'))return {version:5,businessDate:'2026-10-08',currencies:[{code:'EUR'},{code:'GBP'}],items:[],total:0};if(path.includes('?'))return {items:[{id:'bank',status:'ACTIVE'}]};return {displayName:'Test'};},form:(_t,h,fn)=>{html=h;submit=fn;},field:()=>'',refresh:async()=>{}});
+ const host={innerHTML:''};await ui.render(host,()=>true);
+ await ui.action('cross');
+ await submit({base:'EUR',quote:'GBP'});
+ const call=calls.find(c=>c.path.includes('/cross-rate?'));
+ assert.ok(call);
+ assert.match(call.path,/base=EUR/);
+ assert.match(call.path,/quote=GBP/);
+ assert.match(html,/0.84/);
+});
