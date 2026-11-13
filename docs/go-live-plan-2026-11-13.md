@@ -362,7 +362,7 @@ These are estimates for one developer working with Claude, assuming decisions D0
   - A duplicate UI message key is fixed.
   - 0.2–0.8 are open.
 - **Round 9a (bank duties and access reviews):** delivered on branch `round-09-bank-duties`; see [bank-duties.md](bank-duties.md).
-- **Round 9b** remains: direct, non-approval administrator routes by duty, and a duty recheck at delivery.
+- **Round 9b (duty-scoped direct routes and delivery recheck):** delivered on branch `round-09b-duty-routes`; see [bank-duties.md](bank-duties.md#direct-routes-round-9b). Round 9 is complete except amount bands per duty, which wait for decision D18.
 
 ## 14. Keeping this plan current
 

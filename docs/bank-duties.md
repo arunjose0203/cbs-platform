@@ -1,6 +1,6 @@
 # Bank duties and access reviews — 13 November 2026
 
-Round 9 of the [go-live plan](go-live-plan-2026-11-13.md). It covers matrix rows F03 (bank/branch roles and authority) and F04 (approval scope). Bank acceptance remains pending.
+Rounds 9a and 9b of the [go-live plan](go-live-plan-2026-11-13.md). They cover matrix rows F03 (bank/branch roles and authority) and F04 (approval scope). Bank acceptance remains pending.
 
 ## The problem it solves
 
@@ -88,12 +88,40 @@ Grant body: `{expectedVersion, staffId, active, submit:[…], approve:[…], aud
 
 Deferred constraint triggers refuse any grant, policy or history row that does not match an approved request with the same payload. A grant must also have been approved by someone other than the grantee. The bank schema is unchanged (V26).
 
-## Not covered yet (Round 9b)
+## Direct routes (Round 9b)
 
-- **Direct, non-approval routes.** About 140 administrator endpoints (reads, previews, draft uploads) still check platform administration only. Every change to money, customers, limits or policy goes through the approval engine and is covered above. Reads of bank data outside the Approval Inbox are not yet limited by duty.
-- **Recheck at delivery.** Lending grants are checked again when a queued posting is delivered. Duties are checked at submission and approval only.
-- **Amount bands per duty**, such as journals over a set amount needing a senior approver. Lending grants already have per-operation amount limits.
+Round 9a put duties on approval requests. Round 9b applies them to the roughly 140 **direct** administrator routes under `/api/v1/admin/tenants/{bank}/…`: lists, details, previews, draft uploads, retries and the few writes that are not approval requests. One interceptor (`BankDutyInterceptor`) checks each request against a route table (`BankDutyRoutes`) before the controller runs. Banks that do not enforce duties are unaffected.
+
+| Route kind | Read (GET) | Anything else |
+| --- | --- | --- |
+| Area routes (journals, customers, FX, compliance, …) | Audit, or any grant of a listed duty | Submit duty of the area |
+| Reference data (bank header, settings, products, branches, chart and ledger lists, limits) | Audit, or any active grant | Submit duty (bank configuration; finance for chart and ledgers) |
+| Platform-wide (provision, suspend, resume) | No bank duty | No bank duty |
+| Bank duties page | Its own rules (Round 9a), including lockout recovery | Its own rules |
+| Lending (credit, collections, loan fees and loan servicing) | Lending grants, unchanged | Lending grants, unchanged |
+
+Some records are read across duties. Customers and accounts can be read by customer operations, compliance, payments and finance. Funding, operations, contracts, payments, statement imports and FX can also be read by finance. Daily servicing can be read by finance and bank configuration.
+
+**Fail closed.** A route without a rule is refused while duties are enforced (`BANK_DUTY_ROUTE_UNCLASSIFIED`). `BankDutyRoutesTest` scans every controller and fails the build if a bank route has no rule.
+
+**Lockout recovery** still works: while a bank is locked out, any administrator can read reference data and use the bank duties page to switch enforcement off.
+
+**Workspaces are unchanged.** Branch, lending and payment staff use `/api/v1/banks/…` with their own grants. On the administrator path, loan contract reads, corrections and term servicing need customer operations; loan work should use the lending workspace.
+
+## Recheck at delivery (Round 9b)
+
+An approved request is posted to the bank database by a background delivery, sometimes much later. Before the first posting, the delivery now checks that the **maker still holds the submit duty and the checker still holds the approve duty**. If either was revoked or expired, the delivery stays pending with `BANK_DUTY_REVOKED_BEFORE_DELIVERY` and posts normally on retry once the duty is restored.
+
+- The check runs only while the bank has no receipt for the request, so a posting whose acknowledgement was lost is always recovered.
+- It covers journal, ledger account, deposit account, customer, funding, account-operation, cash, contract, FX trade, FX valuation, day-close, period-close and daily-servicing deliveries, plus M-Pesa payout dispatch.
+- Daily servicing checks each chunk, like the existing customer-eligibility check.
+- The same classification decides the maker recheck at approval, so the two cannot drift apart.
+
+## Not covered yet
+
+- **Amount bands per duty**, such as journals over a set amount needing a senior approver. Lending grants already have per-operation amount limits. This waits for the bank's role and limit matrix (decision D18).
 - **Scheduled review reminders and alerts** on break-glass grants. These come with monitoring (plan item P-05).
+- **Field-level filtering of shared reads.** A duty that may read customers sees the whole customer record.
 
 ## Verification
 
@@ -104,5 +132,12 @@ Deferred constraint triggers refuse any grant, policy or history row that does n
   - access-review conflicts, attestation by audit only, the stale-snapshot refusal, and database immutability
   - lockout recovery
 - `BankDutiesTest` covers the classification, the SQL mapping, the expiry format, findings, hash stability, and the fixed key order that keeps the hash reproducible across restarts.
-- Full backend `verify`: 195 passed, 1 opt-in volume test skipped. UI: 119 passed.
+- `bankDutiesGuardDirectRoutesAndAreRecheckedBeforeDelivery` (Round 9b) covers:
+  - unchanged access before enforcement
+  - area reads by duty holders and auditors, and refusals for other duties and for administrators without a grant
+  - reference data for any duty holder
+  - previews refused to approve-only and audit holders
+  - a ledger delivery held after the maker's duty is revoked, then posted after it is restored
+- `BankDutyRoutesTest` scans every controller and fails if a bank-scoped route has no rule; it also checks the classification of representative routes.
+- Full backend `verify` with database integration tests: 199 passed, 1 opt-in volume test skipped (Round 9a: 195). UI: 119 passed.
 - 7 UI tests cover the portal screen.

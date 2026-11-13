@@ -4,6 +4,21 @@
 
 Use the [Functional Gap & Acceptance Matrix](functional-gap-acceptance-matrix-2026-10-09.md) for the current 34-area functional assessment, 34 proposed acceptance cases, source/test evidence, confirmed limits and prioritized completion work. It reconciles older historical pending lists below. No module has independent bank functional sign-off recorded; existing automated test results do not replace that acceptance.
 
+## Duty-scoped direct routes and delivery recheck — 13 November 2026
+
+Round 9b of the [go-live plan](go-live-plan-2026-11-13.md) finishes access governance. See [bank duties](bank-duties.md#direct-routes-round-9b).
+
+- **Direct routes.** About 140 bank-scoped administrator routes are now checked against a route table before the controller runs: lists, details, previews, draft uploads and retries.
+  - Reads need audit or a duty of that area.
+  - Reference data needs any grant in the bank.
+  - Anything else needs the submit duty.
+  - A route without a rule is refused while duties are enforced, and a build test fails if one appears.
+- **Recheck at delivery.** An approved request posts to the bank database only while the maker still holds the submit duty and the checker the approve duty. Otherwise it waits with `BANK_DUTY_REVOKED_BEFORE_DELIVERY` and posts on retry after the duty is restored. Postings the bank already has a receipt for are always recovered.
+- **One classification** of stored requests now serves both the approval-time maker recheck and the delivery recheck.
+- **Unchanged default.** Banks that do not enforce duties behave as before. No migration was needed: control stays at V46 and bank at V26.
+- **Still open.** Amount bands per duty (D18), review reminders (P-05) and field-level filtering of shared reads.
+- **Tests.** Full backend `verify` with database integration tests: 199 passed, 1 opt-in volume test skipped. UI: 119 passed.
+
 ## Bank duties and access reviews — 13 November 2026
 
 [Bank duties](bank-duties.md) is Round 9 of the [go-live plan](go-live-plan-2026-11-13.md).
