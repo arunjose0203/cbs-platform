@@ -4,6 +4,17 @@
 
 Use the [Functional Gap & Acceptance Matrix](functional-gap-acceptance-matrix-2026-10-09.md) for the current 34-area functional assessment, 34 proposed acceptance cases, source/test evidence, confirmed limits and prioritized completion work. It reconciles older historical pending lists below. No module has independent bank functional sign-off recorded; existing automated test results do not replace that acceptance.
 
+## Round 11: AML and screening completion — 13 November 2026
+
+Round 11 of the [go-live plan](go-live-plan-2026-11-13.md) completes AML, customer and payment screening, case assignment SLAs, and STR draft exports. Control migration **V47**. See [AML screening completion](aml-screening-completion.md).
+
+- **UN consolidated list XML.** Added `UnListXml` adapter to ingest UN Security Council consolidated XML directly into screening entries. Parser enforces XXE protections (disallows DOCTYPE and external entities), merges names/aliases up to 20 with good-quality prioritization, and filters out approximate dates of birth.
+- **Scheduled periodic re-screening.** Activated screening lists now declare an optional `rescreen_days` interval (1–366 days). The background engine queues scheduled re-screens when the interval elapses since the last run.
+- **M-Pesa beneficiary screening.** Payee names are screened before payout submission, approval, and dispatch. Undismissed matches persist in `platform.beneficiary_hit` across autonomous transactions and fail closed with `PAYMENT_BENEFICIARY_SCREENING_MATCH`. Approved dismissals carry over for the same payee and entry.
+- **Case SLAs and investigator assignment.** Compliance cases support assignment to active staff holding the `COMPLIANCE` duty with an SLA due date. Overdue cases surface in the UI and trigger Prometheus alert `CbsComplianceCasesOverdue`.
+- **STR draft export.** Suspicious transaction reports export in canonical format (`cbs-str-draft/1`), aggregating bank details, customer subject, grounds, screening/beneficiary hits, monitoring alerts, and recent movements (180-day window, up to 500 records), with SHA-256 digest recorded on the case history.
+- **UI and verification.** Added assignee, due date, overdue badges, assignment dialog, STR draft export, and beneficiary match queues to the portal. Tests: 215 backend tests passed (99 DB integration tests skipped without Postgres), 121 UI unit tests passed.
+
 ## Duty-scoped direct routes and delivery recheck — 13 November 2026
 
 Round 9b of the [go-live plan](go-live-plan-2026-11-13.md) finishes access governance. See [bank duties](bank-duties.md#direct-routes-round-9b).

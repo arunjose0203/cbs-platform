@@ -15,7 +15,12 @@ if (-not (Test-Path -LiteralPath $cbsMaven)) {
 if (-not (Get-Command java -ErrorAction SilentlyContinue)) { throw 'Java 21 is required.' }
 Push-Location $cbsRoot
 try {
-    & $cbsMaven '-Dmaven.repo.local=.tools/m2' @args
+    $byteBuddy = (Join-Path $cbsRoot '.tools\m2\net\bytebuddy\byte-buddy-agent\1.18.11\byte-buddy-agent-1.18.11.jar').Replace('\','/')
+    $mvnArgs = @('-Dmaven.repo.local=.tools/m2')
+    if (Test-Path -LiteralPath $byteBuddy) {
+        $mvnArgs += "-DargLine=-Duser.timezone=UTC -javaagent:$byteBuddy"
+    }
+    & $cbsMaven @mvnArgs @args
     $cbsExitCode = $LASTEXITCODE
 } finally {
     Pop-Location
