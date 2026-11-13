@@ -23,3 +23,28 @@
         reverse_proxy app:8080
     }
 }
+# P-03: staff sign-in. Only the cbs realm is public; the admin console, the master realm and the management
+# endpoints stay off the internet (admin goes through an SSH tunnel to 127.0.0.1:8181 on the host).
+{$IDENTITY_DOMAIN} {
+    encode zstd gzip
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+        -Server
+    }
+    request_body {
+        max_size 1MB
+    }
+    @blocked path /admin /admin/* /realms/master /realms/master/* /metrics /metrics/* /health /health/*
+    handle @blocked {
+        respond 404
+    }
+    handle /realms/cbs/* {
+        reverse_proxy identity:8080
+    }
+    handle /resources/* {
+        reverse_proxy identity:8080
+    }
+    handle {
+        respond 404
+    }
+}

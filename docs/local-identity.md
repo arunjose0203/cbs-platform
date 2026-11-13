@@ -63,7 +63,8 @@ changes must be applied deliberately to an existing realm.
 CBS records remain in Neon. Keycloak uses its persistent development H2 database
 under `.tools/keycloak-26.7.4/data/h2`; identity signing keys, passwords and OTP
 enrollments are local to this computer. Preserve that directory to retain logins.
-It is not a production identity deployment or a shared team identity provider.
+It is not a production identity deployment or a shared team identity provider. Staging and production use
+[production identity](production-identity.md) (Keycloak on PostgreSQL, realm `cbs`).
 
 `.local/development-identity.json` holds CBS connection settings; secret credentials
 are in separate ignored local files. The setup import under `.tools` also contains

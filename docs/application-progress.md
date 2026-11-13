@@ -4,6 +4,16 @@
 
 Use the [Functional Gap & Acceptance Matrix](functional-gap-acceptance-matrix-2026-10-09.md) for the current 34-area functional assessment, 34 proposed acceptance cases, source/test evidence, confirmed limits and prioritized completion work. It reconciles older historical pending lists below. No module has independent bank functional sign-off recorded; existing automated test results do not replace that acceptance.
 
+## P-03: production identity — 14 November 2026
+
+Production-engineering item P-03 (gate E03) of the [go-live plan](go-live-plan-2026-11-13.md). No migration. See [production identity](production-identity.md).
+
+- **Keycloak on PostgreSQL in staging.** A new `identity` service with its own database login, TLS-verified database transport and a fixed public hostname behind the Caddy edge. The edge exposes only the `cbs` realm; the admin console and master realm are reachable only through an SSH tunnel. `up.sh` fails if the realm is not reachable over HTTPS.
+- **Realm configuration in the repository.** `cbs-production-realm.json` requires password plus OTP on every sign-in and OTP enrollment for new accounts. It sets a strong password policy, brute-force limits, lifetimes within CBS's limits and 90-day login and admin events. The portal client is PKCE-only with exact HTTPS URIs, and the claims mappers are identical to development. The operator service identity is disabled by default. Tests pin all of this.
+- **Preflight and guard.** Preflight rejects an unpinned image, a shared or placeholder domain, an unverified or shared database login, weakening overrides, and a CBS runtime that trusts anything other than the staging realm. `ProductionGuard` also refuses JWKS from another host and the development realm.
+- **Operations.** `ops/identity_admin.py` rotates signing keys: it adds the new key first, keeps old keys passive and retires them after a grace period. It also creates staff sign-in accounts with a temporary password, written only to a private file, and forces OTP enrollment. The migration job registers the first CBS administrator for an identity provider, offline and audited.
+- **Still open.** Running it on the real staging host (P-02) and the A02 acceptance run with real people and devices.
+
 ## P-01: release pipeline — 14 November 2026
 
 Production-engineering item P-01 (gate E05) of the [go-live plan](go-live-plan-2026-11-13.md). See [release pipeline](release-pipeline.md).

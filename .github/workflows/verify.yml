@@ -65,7 +65,8 @@ jobs:
         run: docker build --build-arg JAVA_RUNTIME_IMAGE=eclipse-temurin:21-jre-noble -t cbs-platform:ci .
       - name: Validate the staging Compose stack
         run: |
-          touch /tmp/runtime.yml /tmp/ca.crt && mkdir -p /tmp/migration
+          touch /tmp/runtime.yml /tmp/ca.crt /tmp/identity.env && mkdir -p /tmp/migration
           CBS_APP_IMAGE=cbs-platform:ci CADDY_IMAGE=caddy:2 CBS_RUNTIME_CONFIG=/tmp/runtime.yml \
           CBS_DATABASE_CA=/tmp/ca.crt CBS_MIGRATION_DIRECTORY=/tmp/migration CBS_DOMAIN=cbs.example.org \
+          KEYCLOAK_IMAGE=quay.io/keycloak/keycloak:26.7.4 IDENTITY_DOMAIN=id.example.org CBS_IDENTITY_ENV=/tmp/identity.env \
           ACME_EMAIL=ops@example.org docker compose -f deploy/staging/compose.yml --profile tools config --quiet

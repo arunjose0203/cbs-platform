@@ -26,12 +26,58 @@ services:
     logging:
       driver: json-file
       options: {max-size: 10m, max-file: "5"}
+  identity:
+    # P-03: Keycloak on PostgreSQL. The realm comes from config/keycloak/cbs-production-realm.json and is
+    # imported only when it does not exist yet; later changes are applied deliberately (docs/production-identity.md).
+    image: ${KEYCLOAK_IMAGE:?Set a reviewed Keycloak image digest}
+    restart: unless-stopped
+    init: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 512
+    mem_limit: 1536m
+    cpus: 2
+    stop_grace_period: 30s
+    command: [start, --import-realm]
+    env_file:
+      # Private file outside the repository: KC_DB_URL, KC_DB_USERNAME, KC_DB_PASSWORD and, for the first
+      # start only, KC_BOOTSTRAP_ADMIN_USERNAME / KC_BOOTSTRAP_ADMIN_PASSWORD.
+      - ${CBS_IDENTITY_ENV:?Set private identity environment file}
+    environment:
+      KC_DB: postgres
+      KC_HOSTNAME: https://${IDENTITY_DOMAIN:?Set the identity DNS name}
+      # The admin console is not published through the edge; reach it through an SSH tunnel to this port.
+      KC_HOSTNAME_ADMIN: http://127.0.0.1:8181
+      KC_HTTP_ENABLED: "true"
+      KC_HTTP_PORT: "8080"
+      KC_PROXY_HEADERS: xforwarded
+      KC_HEALTH_ENABLED: "true"
+      KC_METRICS_ENABLED: "true"
+      KC_LOG_CONSOLE_OUTPUT: json
+      KC_SPI_EVENTS_LISTENER_JBOSS_LOGGING_SUCCESS_LEVEL: info
+      CBS_DOMAIN: ${CBS_DOMAIN:?Set the staging DNS name}
+      TZ: UTC
+    volumes:
+      - ../../config/keycloak/cbs-production-realm.json:/opt/keycloak/data/import/cbs-realm.json:ro
+      - ${CBS_DATABASE_CA:?Set database CA file}:/opt/keycloak/conf/db-ca.crt:ro
+    ports: ["127.0.0.1:8181:8080"]
+    networks: [cbs]
+    healthcheck:
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/9000 && printf 'GET /health/ready HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3 && grep -q UP <&3"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
+    logging:
+      driver: json-file
+      options: {max-size: 10m, max-file: "5"}
   edge:
     image: ${CADDY_IMAGE:?Set a reviewed Caddy image digest}
     restart: unless-stopped
     ports: ["80:80", "443:443"]
     environment:
       CBS_DOMAIN: ${CBS_DOMAIN:?Set the staging DNS name}
+      IDENTITY_DOMAIN: ${IDENTITY_DOMAIN:?Set the identity DNS name}
       ACME_EMAIL: ${ACME_EMAIL:?Set certificate operations email}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
@@ -40,6 +86,7 @@ services:
     networks: [cbs]
     depends_on:
       app: {condition: service_healthy}
+      identity: {condition: service_healthy}
     logging:
       driver: json-file
       options: {max-size: 10m, max-file: "5"}

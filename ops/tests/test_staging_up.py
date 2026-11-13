@@ -18,7 +18,7 @@ class StagingUpTests(unittest.TestCase):
         self.bin = self.root / 'bin'
         self.bin.mkdir()
         self.env = self.root / 'staging.env'
-        self.env.write_text('CBS_DOMAIN=cbs.example.org\nCBS_READY_INTERVAL=0\nCBS_READY_ATTEMPTS=3\n')
+        self.env.write_text('CBS_DOMAIN=cbs.example.org\nIDENTITY_DOMAIN=id.example.org\nCBS_READY_INTERVAL=0\nCBS_READY_ATTEMPTS=3\n')
         self.stub('docker')
         self.stub('preflight')
         self.stub('curl')
@@ -62,7 +62,7 @@ class StagingUpTests(unittest.TestCase):
         self.calls.unlink()
         result, calls = self.run_up()
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertTrue(any('up -d --wait app edge' in c for c in calls))
+        self.assertTrue(any('up -d --wait identity app edge' in c for c in calls))
 
     def test_failed_migration_job_stops_the_bring_up(self):
         self.stub('docker', 'case "$*" in *"run --rm migrate"*) exit 1;; esac; exit 0')
@@ -74,10 +74,18 @@ class StagingUpTests(unittest.TestCase):
         result, calls = self.run_up(hook=True)
         self.assertEqual(result.returncode, 0, result.stderr)
         order = [next(i for i, c in enumerate(calls) if marker in c) for marker in
-                 ('preflight', 'stop app', 'run --rm migrate', 'grants', 'up -d --wait app edge', 'curl')]
+                 ('preflight', 'stop app', 'run --rm migrate', 'grants', 'up -d --wait identity app edge', 'curl')]
         self.assertEqual(order, sorted(order))
-        self.assertIn('https://cbs.example.org/health/ready', calls[-1])
+        self.assertIn('https://cbs.example.org/health/ready', calls[-2])
+        self.assertIn('https://id.example.org/realms/cbs/.well-known/openid-configuration', calls[-1])
         self.assertIn('ready at https://cbs.example.org/admin/', result.stdout)
+
+    def test_unreachable_identity_realm_fails_the_bring_up(self):
+        self.stub('curl', 'case "$*" in *openid-configuration*) exit 22;; esac; exit 0')
+        result, calls = self.run_up('--skip-migrations')
+        self.assertEqual(result.returncode, 5, result.stderr)
+        self.assertIn('https://id.example.org/realms/cbs', result.stderr)
+        self.assertNotIn('ready at', result.stdout)
 
     def test_restart_without_migrations(self):
         result, calls = self.run_up('--skip-migrations')

@@ -21,6 +21,8 @@ public class ProductionGuard {
   if(!env.getProperty("cbs.access.local-mfa-bypass-until","").isBlank())problems.add("MFA exceptions are forbidden");
   if(!env.getProperty("cbs.access.bootstrap-admin-subject","").isBlank())problems.add("automatic bootstrap administrator is forbidden");
   for(String key:List.of("cbs.security.issuer","cbs.security.jwk-set-uri","cbs.portal.redirect-uri"))if(!https(env.getProperty(key,"")))problems.add(key+" must use HTTPS without embedded credentials");
+  if(!sameOrigin(env.getProperty("cbs.security.issuer",""),env.getProperty("cbs.security.jwk-set-uri","")))problems.add("cbs.security.jwk-set-uri must be served by the issuer's host");
+  if(env.getProperty("cbs.security.issuer","").matches(".*/realms/cbs-dev/?"))problems.add("the development realm is forbidden");
   if(env.getProperty("cbs.security.audience","").isBlank()||env.getProperty("cbs.portal.client-id","").isBlank())problems.add("identity audience and portal client ID are required");
   if(!verifiedDatabase(env.getProperty("spring.datasource.url","")))problems.add("control database requires sslmode=verify-full");
   String migration=env.getProperty("spring.flyway.url","");if(!migration.isBlank()&&!verifiedDatabase(migration))problems.add("migration database requires sslmode=verify-full");
@@ -43,6 +45,8 @@ public class ProductionGuard {
   if(!problems.isEmpty())throw new IllegalStateException("Production configuration rejected: "+String.join("; ",problems));
  }
  private static boolean https(String value){try{var uri=URI.create(value);return "https".equals(uri.getScheme())&&uri.getHost()!=null&&uri.getUserInfo()==null&&uri.getFragment()==null&&!Set.of("localhost","127.0.0.1","::1").contains(uri.getHost());}catch(RuntimeException e){return false;}}
+ /** Signing keys must come from the issuer itself, not from a second host that could mint trusted tokens. */
+ private static boolean sameOrigin(String issuer,String keys){try{var a=URI.create(issuer);var b=URI.create(keys);return a.getHost()!=null&&a.getScheme().equals(b.getScheme())&&a.getHost().equalsIgnoreCase(b.getHost())&&a.getPort()==b.getPort();}catch(RuntimeException e){return false;}}
  private static boolean verifiedDatabase(String value){
   return value!=null&&value.matches("jdbc:postgresql://[a-zA-Z0-9.-]+(?::[0-9]{1,5})?/[a-zA-Z0-9_]+\\?sslmode=verify-full(?:&channelBinding=require)?");
  }
