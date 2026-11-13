@@ -4,6 +4,29 @@
 
 Use the [Functional Gap & Acceptance Matrix](functional-gap-acceptance-matrix-2026-10-09.md) for the current 34-area functional assessment, 34 proposed acceptance cases, source/test evidence, confirmed limits and prioritized completion work. It reconciles older historical pending lists below. No module has independent bank functional sign-off recorded; existing automated test results do not replace that acceptance.
 
+## Task 0.8: Acceptance Test Catalogue Refresh & Re-Baselining — 14 November 2026
+
+Phase 0/4 item 0.8 of the [go-live plan](go-live-plan-2026-11-13.md). See [case catalogue](testing/cbs-test-cases-2026-10-10.json) and [test plan](testing/cbs-test-plan-2026-10-13.md).
+
+- **Re-baselined to Control V55 and Bank V29.** Re-baselined the 122-record acceptance catalogue from historical V37/V22 to current production schema versions (Flyway Control V55, Bank V29).
+- **14 of 15 Gaps Evaluated as IMPLEMENTED.** Updated GAP-01 through GAP-15 statuses:
+  - GAP-01 (Positive-balance closure settlement): `IMPLEMENTED` (Round 12 / W03 settlement).
+  - GAP-02 (Final interest, fee, tax, carry settlement): `IMPLEMENTED` (Round 12 / W03 settlement).
+  - GAP-03 (Closure with settled contract / payment history): `IMPLEMENTED` (Round 12 deposit lifecycle).
+  - GAP-04 (Corporate, beneficial-owner, joint onboarding): `IMPLEMENTED` (Organizations & Mandates).
+  - GAP-05 (Automated screening & verification integrations): `IMPLEMENTED` (Round 11 AML screening).
+  - GAP-06 (Servicing beyond account/interval caps): `IMPLEMENTED` (Chunked daily processing).
+  - GAP-07 (PDF and delivered customer notices): `IMPLEMENTED` (Round 10 notifications).
+  - GAP-08 (Live M-Pesa production dispatch): `OPEN (WAITING CONTRACT)` (Sandbox verified; awaiting decision D09).
+  - GAP-09 (Partial returns and split/net/suspense settlement): `IMPLEMENTED` (Payment exceptions & sandbox).
+  - GAP-10 (Full-bank FX translation and valuation correction): `IMPLEMENTED` (Round 16 FX completion).
+  - GAP-11 (Extended deposit servicing and corrections): `IMPLEMENTED` (Round 16 TD completion).
+  - GAP-12 (Advanced lending and post-write-off recovery): `IMPLEMENTED` (Round 15 Lending completion).
+  - GAP-13 (Country regulatory reporting and localization): `IMPLEMENTED` (Round 14 Reporting / Round 17 Localization).
+  - GAP-14 (Production failover and PITR): `IMPLEMENTED` (P-04 PITR & WAL archiving).
+  - GAP-15 (Remaining scoped administration and operations console): `IMPLEMENTED` (Round 9 Duties / P-07 Batch ops).
+- **Current status.** 107 planned tests ready for bank acceptance execution; 14 gaps implemented with automated evidence; 1 gap open pending bank live provider contract.
+
 ## P-10: Security Hardening, Threat Model, and Pen-Test Readiness — 14 November 2026
 
 Production-engineering item P-10 (gates E01, E03) of the [go-live plan](go-live-plan-2026-11-13.md). See [threat model and security review](threat-model-and-security-review.md).
