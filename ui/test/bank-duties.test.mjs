@@ -62,4 +62,5 @@ test('policy toggles enforcement and the review signs the hash that was shown',a
 test('duty errors explain the next step',()=>{
  assert.match(errorMessage('BANK_DUTY_REQUIRED'),/duty/);assert.match(errorMessage('BANK_DUTY_LOCKOUT'),/two/);
  assert.match(errorMessage('ACCESS_REVIEW_STALE'),/Refresh/);assert.match(errorMessage('BANK_DUTY_MAKER_REVOKED'),/maker/);
+ assert.match(errorMessage('BANK_DUTY_REVOKED_BEFORE_DELIVERY'),/retry/);assert.match(errorMessage('BANK_DUTY_ROUTE_UNCLASSIFIED'),/duty/);
 });

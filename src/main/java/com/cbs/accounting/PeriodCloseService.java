@@ -107,10 +107,12 @@ public class PeriodCloseService {
     }
     public List<UUID> pending(){return jdbc.queryForList("SELECT request_id FROM platform.period_close WHERE NOT completed ORDER BY last_attempt_at NULLS FIRST,created_at LIMIT 10",UUID.class);}
     public void retry(Actor actor,UUID bankId,UUID id){AccessService.admin(actor);if(!jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM platform.period_close WHERE tenant_id=? AND request_id=? AND reviewer_issuer=?)",Boolean.class,bankId,id,actor.issuer()))throw error("APPROVAL_NOT_FOUND");deliver(id);}
+    private com.cbs.access.BankDuties duties;
+    @org.springframework.beans.factory.annotation.Autowired void duties(com.cbs.access.BankDuties duties){this.duties=duties;}
     public void deliver(UUID id){tx.executeWithoutResult(t->{
         var rows=jdbc.query("SELECT * FROM platform.period_close WHERE request_id=? AND NOT completed FOR UPDATE",(r,n)->new Dispatch(JSON.readValue(r.getString("payload"),Plan.class),r.getString("maker_subject"),r.getString("reviewer_issuer"),r.getString("reviewer_subject"),r.getObject("correlation_id",UUID.class)),id);
         if(rows.isEmpty())return;var job=rows.getFirst();var bank=tenants.get(job.plan().bankId(),true);String failure=null;
-        try{if(!store.posted(bank,id)&&bank.status()!=Status.ACTIVE)throw error("LEDGER_BANK_NOT_ACTIVE");store.post(bank,job);}catch(TenantException e){failure=e.code();}
+        try{if(!store.posted(bank,id)){if(bank.status()!=Status.ACTIVE)throw error("LEDGER_BANK_NOT_ACTIVE");duties.requireAtDelivery(id);}store.post(bank,job);}catch(TenantException e){failure=e.code();}
         jdbc.update("UPDATE platform.period_close SET attempts=attempts+1,last_attempt_at=clock_timestamp(),failure_code=?,completed=?,completed_at=CASE WHEN ? THEN clock_timestamp() END WHERE request_id=?",failure,failure==null,failure==null,id);
         if(failure==null)tenants.audit(new Actor(job.issuer(),job.checker(),true,job.correlationId()),bank.id(),"PERIOD_CLOSE_POSTED",bank.version(),bank.status(),bank.status(),"Posted "+job.plan().type()+" close",null,null,Map.of("requestId",id,"journals",job.plan().journals().size()));
     });}

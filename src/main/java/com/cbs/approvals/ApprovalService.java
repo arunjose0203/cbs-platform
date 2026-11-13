@@ -102,7 +102,7 @@ public class ApprovalService {
     public Request fxWithdraw(Actor actor,UUID key,UUID bank,com.cbs.fx.FxModels.Withdraw input){return submit(actor,key,bank,Action.FX_RATE_WITHDRAW,input.expectedVersion(),input.reason(),input);}
     public Request paymentCase(Actor actor,UUID key,UUID bank,com.cbs.payments.PaymentCaseModels.Change input){return submit(actor,key,bank,Action.PAYMENT_CASE,input.expectedVersion(),input.reason(),input);}
     public Request paymentGrant(Actor actor,UUID key,UUID bank,com.cbs.payments.PaymentAccess.Grant input){return submit(actor,key,bank,Action.PAYMENT_ACCESS,input.expectedVersion(),input.reason(),input);}
-    private static boolean paymentScoped(Action a){return List.of(Action.STATEMENT_ACTION,Action.PAYMENT_CASE,Action.PAYMENT_RECONCILE).contains(a);}
+    private static boolean paymentScoped(Action a){return com.cbs.access.BankDuties.PAYMENT_SCOPED.contains(a);}
     public Request statementAction(Actor actor,UUID key,UUID bank,com.cbs.payments.StatementImportModels.Action input){return submit(actor,key,bank,Action.STATEMENT_ACTION,input.expectedVersion(),input.reason(),input);}
     public Request payment(Actor actor,UUID key,UUID bank,com.cbs.payments.PaymentModels.Order input){return submit(actor,key,bank,Action.PAYMENT_ORDER,input.expectedVersion(),input.reason(),input);}
     public Request paymentReconcile(Actor actor,UUID key,UUID bank,com.cbs.payments.PaymentModels.Reconcile input){return submit(actor,key,bank,Action.PAYMENT_RECONCILE,input.expectedVersion(),input.reason(),input);}
@@ -139,10 +139,7 @@ public class ApprovalService {
     }
     /** Same classification for a stored request; branch and cash requests use the path they were submitted on. */
     private com.cbs.access.BankDuties.Duty storedDuty(Request request){
-        if(request.bankId()==null||lending.request(request.id())!=null||paymentScoped(request.action())) return null;
-        if(request.action()==Action.ACCOUNT_OPERATION&&branchOperations.scope(request.id())!=null) return null;
-        if(request.action()==Action.CASH_OPERATION&&!"REGISTER".equals(JSON.readTree(jdbc.queryForObject("SELECT payload::text FROM platform.approval_request WHERE id=?",String.class,request.id())).path("kind").asText())) return null;
-        return com.cbs.access.BankDuties.duty(request.action());
+        return request.bankId()==null?null:duties.storedDuty(request.id());
     }
     /** Duty the deciding or reading administrator needs; payment requests only on the administrator path. */
     private com.cbs.access.BankDuties.Duty reviewDuty(Actor actor,Request request){
@@ -150,11 +147,7 @@ public class ApprovalService {
         return storedDuty(request);
     }
     private com.cbs.access.BankDuties.Duty makerDuty(Request request){
-        if(request.bankId()!=null&&paymentScoped(request.action())){
-            var admin=jdbc.queryForList("SELECT maker_admin FROM platform.payment_approval_scope WHERE request_id=?",Boolean.class,request.id());
-            return !admin.isEmpty()&&Boolean.TRUE.equals(admin.getFirst())?com.cbs.access.BankDuties.Duty.PAYMENTS:null;
-        }
-        return storedDuty(request);
+        return request.bankId()==null?null:duties.makerDuty(request.id());
     }
     /**
      * Break-glass: if duties are enforced but fewer than two access administrators remain, platform

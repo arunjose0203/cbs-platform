@@ -14,6 +14,11 @@ import tools.jackson.databind.json.JsonMapper;
 
 @Component
 public class BankFxValuationStore {
+    private org.springframework.beans.factory.ObjectProvider<com.cbs.access.BankDuties> duties;
+    @org.springframework.beans.factory.annotation.Autowired void duties(org.springframework.beans.factory.ObjectProvider<com.cbs.access.BankDuties> duties){this.duties=duties;}
+    /** Duty recheck for a request the bank has no receipt for yet (see BankDuties.requireAtDelivery). */
+    private void recheck(java.util.UUID request){var service=duties==null?null:duties.getIfAvailable();if(service!=null)service.requireAtDelivery(request);}
+
     private static final JsonMapper JSON=JsonMapper.builder().build();
     private final BankDatabaseProvisioner databases;
     private final BankJournalStore journals;
@@ -84,6 +89,7 @@ public class BankFxValuationStore {
                 s.setString(1,payload);s.setObject(2,p.id());try(var r=s.executeQuery()){if(r.next()){if(!r.getBoolean(1))throw unavailable();c.commit();return;}}
             }
             if(bank.status()!=com.cbs.tenancy.TenantModels.Status.ACTIVE)throw error("LEDGER_BANK_NOT_ACTIVE");
+            recheck(p.id());
             try(var s=c.createStatement();var r=s.executeQuery("SELECT closed_through FROM bank.business_day_state WHERE singleton FOR SHARE")) {
                 if(!r.next())throw unavailable();var closed=r.getObject(1,java.time.LocalDate.class);
                 if(closed!=null && !p.closingRate().businessDate().isAfter(closed))throw error("BUSINESS_DAY_CLOSED");

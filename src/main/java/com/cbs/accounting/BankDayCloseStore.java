@@ -12,6 +12,11 @@ import tools.jackson.databind.json.JsonMapper;
 
 @Component
 public class BankDayCloseStore {
+    private org.springframework.beans.factory.ObjectProvider<com.cbs.access.BankDuties> duties;
+    @org.springframework.beans.factory.annotation.Autowired void duties(org.springframework.beans.factory.ObjectProvider<com.cbs.access.BankDuties> duties){this.duties=duties;}
+    /** Duty recheck for a request the bank has no receipt for yet (see BankDuties.requireAtDelivery). */
+    private void recheck(java.util.UUID request){var service=duties==null?null:duties.getIfAvailable();if(service!=null)service.requireAtDelivery(request);}
+
     private final BankDatabaseProvisioner databases;
     private static final JsonMapper JSON=JsonMapper.builder().build();
     public BankDayCloseStore(BankDatabaseProvisioner databases){this.databases=databases;}
@@ -65,6 +70,7 @@ public class BankDayCloseStore {
                     }}
                 }
                 if(closed!=null&&!job.businessDate().isAfter(closed))throw new TenantException(409,"BUSINESS_DAY_CLOSED","Day already closed");
+                recheck(job.requestId());
                 try(var s=c.prepareStatement("SELECT EXISTS(SELECT 1 FROM bank.journal WHERE business_date>?)")){
                     s.setObject(1,job.businessDate());try(var r=s.executeQuery()){r.next();if(r.getBoolean(1))throw new TenantException(409,"DAY_CLOSE_FUTURE_POSTINGS","Later postings exist");}
                 }

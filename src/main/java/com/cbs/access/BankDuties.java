@@ -79,6 +79,37 @@ public class BankDuties {
         };
     }
 
+    /** Approval actions reviewed on the payment workspace; a bank duty applies only when an administrator made them. */
+    public static final Set<Action> PAYMENT_SCOPED = EnumSet.of(Action.STATEMENT_ACTION, Action.PAYMENT_CASE, Action.PAYMENT_RECONCILE);
+
+    /**
+     * Duty of a stored request on the administrator path, or null when another model governs it: lending-scoped
+     * requests, payment-workspace requests, account operations submitted through a branch, and cash operations
+     * other than location registration. Shared by approval decisions and the delivery recheck.
+     */
+    public Duty storedDuty(UUID request) {
+        var rows=jdbc.queryForList("SELECT action,bank_id,payload::text AS payload FROM platform.approval_request WHERE id=?",request);
+        if(rows.isEmpty() || rows.getFirst().get("bank_id")==null) return null;
+        Action action=Action.valueOf((String)rows.getFirst().get("action"));
+        if(PAYMENT_SCOPED.contains(action)) return null;
+        if(exists("SELECT EXISTS(SELECT 1 FROM platform.lending_approval_scope WHERE request_id=?)",request)) return null;
+        if(action==Action.ACCOUNT_OPERATION && exists("SELECT EXISTS(SELECT 1 FROM platform.operation_scope WHERE request_id=?)",request)) return null;
+        if(action==Action.CASH_OPERATION && !"REGISTER".equals(JSON.readTree((String)rows.getFirst().get("payload")).path("kind").asText())) return null;
+        return duty(action);
+    }
+
+    /** Submit duty the maker of a stored request must still hold; payment-workspace requests only when an administrator made them. */
+    public Duty makerDuty(UUID request) {
+        var actions=jdbc.queryForList("SELECT action FROM platform.approval_request WHERE id=? AND bank_id IS NOT NULL",String.class,request);
+        if(!actions.isEmpty() && PAYMENT_SCOPED.contains(Action.valueOf(actions.getFirst()))) {
+            var admin=jdbc.queryForList("SELECT maker_admin FROM platform.payment_approval_scope WHERE request_id=?",Boolean.class,request);
+            return !admin.isEmpty() && Boolean.TRUE.equals(admin.getFirst()) ? Duty.PAYMENTS : null;
+        }
+        return storedDuty(request);
+    }
+
+    private boolean exists(String sql, UUID request) { return Boolean.TRUE.equals(jdbc.queryForObject(sql,Boolean.class,request)); }
+
     /** SQL expression mapping an approval action column to its duty name (NULL when none applies). */
     public static String dutySql(String column) {
         return Arrays.stream(Action.values()).filter(a->duty(a)!=null)
@@ -124,6 +155,39 @@ public class BankDuties {
         Grant grant=current(bank,actor.issuer(),actor.subject());
         if(grant==null || !(grant.audit() || grant.submit().contains(duty) || grant.approve().contains(duty)))
             throw deny("BANK_DUTY_REQUIRED");
+    }
+
+    /**
+     * Direct-route read: audit, or any grant of one of the duties. An empty set accepts any active grant,
+     * for reference data every duty holder needs.
+     */
+    public void readAny(Actor actor, UUID bank, Set<Duty> duties) {
+        if(!enforced(bank)) return;
+        Grant grant=current(bank,actor.issuer(),actor.subject());
+        boolean held=grant!=null && (grant.audit() || (duties.isEmpty()
+                ? !grant.submit().isEmpty() || !grant.approve().isEmpty()
+                : duties.stream().anyMatch(d->grant.submit().contains(d) || grant.approve().contains(d))));
+        if(!held) throw deny("BANK_DUTY_REQUIRED");
+    }
+
+    /**
+     * Delivery recheck: an approved request reaches the bank database only while the maker still holds the
+     * submit duty and the checker the approve duty. A failed check leaves the delivery pending with this code;
+     * it succeeds on retry once the duties are restored. Nothing is checked once the bank has the receipt.
+     */
+    public void requireAtDelivery(UUID request) {
+        var rows=jdbc.queryForList("SELECT bank_id,issuer,maker_subject,reviewer_subject FROM platform.approval_request WHERE id=? AND status='APPROVED'",request);
+        if(rows.isEmpty() || rows.getFirst().get("bank_id")==null) return;
+        var row=rows.getFirst();
+        UUID bank=(UUID)row.get("bank_id");
+        if(!enforced(bank)) return;
+        Duty duty=storedDuty(request);
+        // Break-glass recovery is approved without duties; it has nothing to deliver to a bank database.
+        if(duty==null) return;
+        String issuer=(String)row.get("issuer");
+        Grant makerGrant=current(bank,issuer,(String)row.get("maker_subject")), checkerGrant=current(bank,issuer,(String)row.get("reviewer_subject"));
+        if(makerGrant==null || !makerGrant.submit().contains(duty) || checkerGrant==null || !checkerGrant.approve().contains(duty))
+            throw new TenantException(409,"BANK_DUTY_REVOKED_BEFORE_DELIVERY","An approval participant no longer holds the duty for this request");
     }
 
     /** Enforced, but fewer than two access administrators remain: only switching enforcement off is possible. */

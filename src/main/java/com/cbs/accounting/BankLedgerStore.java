@@ -11,6 +11,11 @@ import tools.jackson.databind.json.JsonMapper;
 /** No caller-supplied connection strings; ownership is checked on every connection. */
 @Component
 public class BankLedgerStore {
+    private org.springframework.beans.factory.ObjectProvider<com.cbs.access.BankDuties> duties;
+    @org.springframework.beans.factory.annotation.Autowired void duties(org.springframework.beans.factory.ObjectProvider<com.cbs.access.BankDuties> duties){this.duties=duties;}
+    /** Duty recheck for a request the bank has no receipt for yet (see BankDuties.requireAtDelivery). */
+    private void recheck(java.util.UUID request){var service=duties==null?null:duties.getIfAvailable();if(service!=null)service.requireAtDelivery(request);}
+
     private static final JsonMapper JSON=JsonMapper.builder().build();
     private final BankDatabaseProvisioner databases;
     public BankLedgerStore(BankDatabaseProvisioner databases){this.databases=databases;}
@@ -41,6 +46,7 @@ public class BankLedgerStore {
                     s.setString(1,payload);s.setObject(2,dispatch.requestId());
                     try(var r=s.executeQuery()){if(r.next()){if(!r.getBoolean(1))throw new SQLException("Delivery mismatch");c.commit();return;}}
                 }
+                recheck(dispatch.requestId());
                 if(d.version()==0){
                     try(var s=c.prepareStatement("INSERT INTO bank.ledger_account(id,tenant_id,code,name,chart_account_id,legal_entity_id,currency,active,version,last_request_id) VALUES (?,?,?,?,?,?,?,?,?,?)")){
                         s.setObject(1,d.id());s.setObject(2,d.bankId());s.setString(3,d.code());s.setString(4,d.name());s.setObject(5,d.chartAccountId());s.setObject(6,d.legalEntityId());s.setString(7,d.currency());s.setBoolean(8,d.active());s.setLong(9,d.version());s.setObject(10,dispatch.requestId());s.executeUpdate();

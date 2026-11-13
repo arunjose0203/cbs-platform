@@ -11,6 +11,11 @@ import tools.jackson.databind.json.JsonMapper;
 
 @Component
 public class BankJournalStore {
+    private org.springframework.beans.factory.ObjectProvider<com.cbs.access.BankDuties> duties;
+    @org.springframework.beans.factory.annotation.Autowired void duties(org.springframework.beans.factory.ObjectProvider<com.cbs.access.BankDuties> duties){this.duties=duties;}
+    /** Duty recheck for a request the bank has no receipt for yet (see BankDuties.requireAtDelivery). */
+    private void recheck(java.util.UUID request){var service=duties==null?null:duties.getIfAvailable();if(service!=null)service.requireAtDelivery(request);}
+
     private static final JsonMapper JSON=JsonMapper.builder().build();
     private final BankDatabaseProvisioner databases;
     private final org.springframework.beans.factory.ObjectProvider<org.springframework.jdbc.core.JdbcTemplate> control;
@@ -61,6 +66,7 @@ public class BankJournalStore {
                 }
                 // Existing receipts above remain recoverable after access is withdrawn.
         com.cbs.access.AccessService.requireActiveParticipants(control.getObject(),job.issuer(),job.maker(),job.checker());
+                recheck(entry.id());
                 // Lock in a consistent order across journals and ledger changes.
                 for(UUID id:entry.lines().stream().map(Line::ledgerId).distinct().sorted().toList()){
                     try(var s=c.prepareStatement("SELECT id FROM bank.ledger_account WHERE id=? AND tenant_id=? AND legal_entity_id=? AND currency=? AND active FOR UPDATE")){

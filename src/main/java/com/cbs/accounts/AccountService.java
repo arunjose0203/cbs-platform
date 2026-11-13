@@ -116,6 +116,8 @@ public class AccountService {
     }
     public List<UUID> pending(){return jdbc.query("SELECT request_id FROM platform.account_delivery WHERE NOT completed AND request_id NOT IN (SELECT request_id FROM platform.funding_delivery) ORDER BY last_attempt_at NULLS FIRST,created_at LIMIT 20",(r,n)->r.getObject(1,UUID.class));}
     public void retry(Actor actor,UUID bankId,UUID id){AccessService.admin(actor);if(!jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM platform.account_delivery WHERE request_id=? AND tenant_id=? AND reviewer_issuer=?)",Boolean.class,id,bankId,actor.issuer()))throw error(404,"APPROVAL_NOT_FOUND");deliver(id);}
+    private com.cbs.access.BankDuties duties;
+    @org.springframework.beans.factory.annotation.Autowired void duties(com.cbs.access.BankDuties duties){this.duties=duties;}
     public void deliver(UUID id){if(jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM platform.funding_delivery WHERE request_id=?)",Boolean.class,id))throw error(409,"FUNDING_MANAGED");tx.executeWithoutResult(t->{
         var jobs=jdbc.query("SELECT * FROM platform.account_delivery WHERE request_id=? AND NOT completed FOR UPDATE",(r,n)->new Dispatch(id,JSON.readValue(r.getString("payload"),Definition.class),r.getString("maker_subject"),r.getString("reviewer_issuer"),r.getString("reviewer_subject"),r.getObject("correlation_id",UUID.class)),id);
         if(jobs.isEmpty())return;var job=jobs.getFirst();var bank=tenants.get(job.definition().bankId(),true);String failure=null;
@@ -123,6 +125,7 @@ public class AccountService {
             if(!store.posted(bank,id)){
                 if(bank.status()!=Status.ACTIVE)throw error(409,"ACCOUNT_BANK_NOT_ACTIVE");
                 AccessService.requireActiveParticipants(jdbc,job.reviewerIssuer(),job.makerSubject(),job.reviewerSubject());
+                duties.requireAtDelivery(id);
                 if(job.definition().state()==State.CLOSED)closure.requireEligible(bank,store.read(bank,job.definition().id()));
                 if(job.definition().state()==State.ACTIVE||job.definition().state()==State.AWAITING_FUNDING)customers.requireEligible(bank,job.definition().customerId());
             }

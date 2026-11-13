@@ -157,6 +157,8 @@ public class ServicingService {
   * run with its failure code; a retry resumes at that chunk. Posted chunks are never repeated.
   * The business day stays sealed until every chunk has posted.
   */
+    private com.cbs.access.BankDuties duties;
+    @org.springframework.beans.factory.annotation.Autowired void duties(com.cbs.access.BankDuties duties){this.duties=duties;}
  public void deliver(UUID id){
   var job=dispatch(id,false);if(job==null)return;
   if(!job.batch().chunked()){deliverLegacy(id);return;}
@@ -171,6 +173,7 @@ public class ServicingService {
   try{
    if(!store.chunkPosted(bank,id,number)){
     if(bank.status()!=Status.ACTIVE)throw error("ACCOUNT_BANK_NOT_ACTIVE");
+    duties.requireAtDelivery(id);
     // Eligibility can change after approval; a newly restricted customer stops the chunk for review.
     var problems=customers.ineligible(bank,chunk.items().stream().map(i->i.account().customerId()).toList());
     if(!problems.isEmpty())throw error(problems.values().stream().sorted().findFirst().orElseThrow());
@@ -188,14 +191,14 @@ public class ServicingService {
   if(jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM platform.servicing_chunk WHERE run_id=? AND NOT completed)",Boolean.class,id))return;
   var bank=tenants.get(job.batch().bankId(),true);String failure=null;
   // A run with no account items still seals the bank day.
-  if(job.batch().chunkCount()==0)try{if(!store.posted(bank,id)&&bank.status()!=Status.ACTIVE)throw error("ACCOUNT_BANK_NOT_ACTIVE");store.postHeader(bank,job);}catch(TenantException ex){failure=ex.code();}
+  if(job.batch().chunkCount()==0)try{if(!store.posted(bank,id)){if(bank.status()!=Status.ACTIVE)throw error("ACCOUNT_BANK_NOT_ACTIVE");duties.requireAtDelivery(id);}store.postHeader(bank,job);}catch(TenantException ex){failure=ex.code();}
   jdbc.update("UPDATE platform.servicing_run SET attempts=attempts+1,last_attempt_at=clock_timestamp(),failure_code=?,completed=? WHERE request_id=?",failure,failure==null,id);
   if(failure==null)tenants.audit(new Actor(job.issuer(),job.checker(),true,job.correlationId()),bank.id(),"SERVICING_RUN_POSTED",bank.version(),bank.status(),bank.status(),"Posted daily processing batch",null,null,Map.of("runId",id,"chunks",job.batch().chunkCount(),"accounts",job.batch().itemCount(),"excluded",job.batch().excludedCount()));
  }
  /** Runs approved before chunking was introduced post atomically as before. */
  private void deliverLegacy(UUID id){tx.executeWithoutResult(t->{
   var job=dispatch(id,true);if(job==null)return;var bank=tenants.get(job.batch().bankId(),true);String failure=null;
-  try{if(!store.posted(bank,id)){if(bank.status()!=Status.ACTIVE)throw error("ACCOUNT_BANK_NOT_ACTIVE");for(var item:job.batch().items())customers.requireEligible(bank,item.account().customerId());}store.post(bank,job);}catch(TenantException ex){failure=ex.code();}
+  try{if(!store.posted(bank,id)){if(bank.status()!=Status.ACTIVE)throw error("ACCOUNT_BANK_NOT_ACTIVE");duties.requireAtDelivery(id);for(var item:job.batch().items())customers.requireEligible(bank,item.account().customerId());}store.post(bank,job);}catch(TenantException ex){failure=ex.code();}
   jdbc.update("UPDATE platform.servicing_run SET attempts=attempts+1,last_attempt_at=clock_timestamp(),failure_code=?,completed=? WHERE request_id=?",failure,failure==null,id);
   jdbc.update("UPDATE platform.journal_delivery SET completed=?,failure_code=?,completed_at=CASE WHEN ? THEN clock_timestamp() ELSE NULL END WHERE request_id IN (SELECT request_id FROM platform.servicing_posting WHERE run_id=?)",failure==null,failure,failure==null,id);
   if(failure==null)tenants.audit(new Actor(job.issuer(),job.checker(),true,job.correlationId()),bank.id(),"SERVICING_RUN_POSTED",bank.version(),bank.status(),bank.status(),"Posted daily processing batch",null,null,Map.of("runId",id));

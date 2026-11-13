@@ -2571,6 +2571,63 @@ class TenantAdministrationIntegrationTest {
         assertThat(duties.enforced(bid)).isFalse();
         assertThat(approvals.decide(CHECKER,approvals.limits(ADMIN,UUID.randomUUID(),bid,limit.get()).id(),APPROVE,"After recovery").status()).isEqualTo(APPROVED);
     }
+
+    // Round 9b: duties also govern direct routes (reads, previews, retries), and are rechecked before delivery.
+    @Test void bankDutiesGuardDirectRoutesAndAreRecheckedBeforeDelivery()throws Exception{
+        var bid=provision(register("duty-routes")).id();
+        var APPROVE=com.cbs.approvals.ApprovalModels.Decision.APPROVE;var APPROVED=com.cbs.approvals.ApprovalModels.Status.APPROVED;
+        var ACCESS=List.of(com.cbs.access.BankDuties.Duty.ACCESS_ADMINISTRATION);var FINANCE=List.of(com.cbs.access.BankDuties.Duty.FINANCE);
+        var CUSTOMER=List.of(com.cbs.access.BankDuties.Duty.CUSTOMER_OPERATIONS);List<com.cbs.access.BankDuties.Duty> none=List.of();
+        DutyUser accessA=dutyUser("route-access-a"),accessB=dutyUser("route-access-b"),financeMaker=dutyUser("route-finance-maker"),
+                financeChecker=dutyUser("route-finance-checker"),auditor=dutyUser("route-auditor"),customerOps=dutyUser("route-customer"),outsider=dutyUser("route-outsider");
+        var posting=ledgerPosting(service.get(ADMIN,bid));
+        String base="/api/v1/admin/tenants/"+bid;
+        java.util.function.BiFunction<MockHttpServletRequestBuilder,DutyUser,org.springframework.test.web.servlet.ResultActions> as=(request,user)->{
+            try{return mvc.perform(request.header("Authorization","Bearer "+TestIdentity.token(user.subject(),true)));}catch(Exception e){throw new IllegalStateException(e);}};
+
+        // Not enforced: every platform administrator keeps today's access.
+        as.apply(get(base+"/journals"),outsider).andExpect(r->assertThat(r.getResponse().getStatus()).isNotEqualTo(403));
+        grantDuties(ADMIN,CHECKER,bid,dutyGrant(bid,accessA,true,ACCESS,ACCESS,false,null));
+        grantDuties(ADMIN,CHECKER,bid,dutyGrant(bid,accessB,true,ACCESS,ACCESS,false,null));
+        grantDuties(ADMIN,CHECKER,bid,dutyGrant(bid,financeMaker,true,FINANCE,none,false,null));
+        grantDuties(ADMIN,CHECKER,bid,dutyGrant(bid,financeChecker,true,none,FINANCE,false,null));
+        grantDuties(ADMIN,CHECKER,bid,dutyGrant(bid,auditor,true,none,none,true,null));
+        grantDuties(ADMIN,CHECKER,bid,dutyGrant(bid,customerOps,true,CUSTOMER,none,false,null));
+        var enforce=approvals.bankDutyPolicy(accessA.actor(),UUID.randomUUID(),bid,new com.cbs.access.BankDuties.Policy(service.get(ADMIN,bid).version(),true,"Enforce duties on direct routes"));
+        assertThat(approvals.decide(accessB.actor(),enforce.id(),APPROVE,"Segregation approved").status()).isEqualTo(APPROVED);
+
+        // Area reads need a duty of that area (submit or approve) or audit.
+        for(DutyUser reader:List.of(financeMaker,financeChecker,auditor))as.apply(get(base+"/journals"),reader).andExpect(r->assertThat(r.getResponse().getStatus()).isNotEqualTo(403));
+        for(DutyUser stranger:List.of(customerOps,outsider))
+            as.apply(get(base+"/journals"),stranger).andExpect(status().isForbidden()).andExpect(jsonPath("$.code").value("BANK_DUTY_REQUIRED"));
+        as.apply(get(base+"/customers"),customerOps).andExpect(r->assertThat(r.getResponse().getStatus()).isNotEqualTo(403));
+        as.apply(get(base+"/compliance"),customerOps).andExpect(status().isForbidden());
+        // Reference data is open to any duty holder, never to an administrator without a grant.
+        as.apply(get(base+"/settings"),customerOps).andExpect(r->assertThat(r.getResponse().getStatus()).isNotEqualTo(403));
+        as.apply(get(base),financeChecker).andExpect(r->assertThat(r.getResponse().getStatus()).isNotEqualTo(403));
+        as.apply(get(base),outsider).andExpect(status().isForbidden()).andExpect(jsonPath("$.code").value("BANK_DUTY_REQUIRED"));
+        // Direct writes (here a preview) need the submit duty; approving and auditing do not prepare work.
+        String preview=json.writeValueAsString(Map.of("businessDate",reference.get(ADMIN,bid).businessDate().toString()));
+        for(DutyUser approver:List.of(financeChecker,auditor))
+            as.apply(post(base+"/servicing/preview").contentType("application/json").content(preview),approver)
+                    .andExpect(status().isForbidden()).andExpect(jsonPath("$.code").value("BANK_DUTY_REQUIRED"));
+        assertThat(as.apply(post(base+"/servicing/preview").contentType("application/json").content(preview),financeMaker).andReturn().getResponse().getStatus()).isNotEqualTo(403);
+        // The bank-duties page keeps its own rules, and the bank list is not bank-scoped.
+        as.apply(get(base+"/bank-duties"),auditor).andExpect(status().isOk());
+        as.apply(get("/api/v1/admin/tenants"),outsider).andExpect(status().isOk());
+
+        // Delivery recheck: a duty withdrawn after approval holds the posting until it is restored.
+        var request=approvals.ledger(financeMaker.actor(),UUID.randomUUID(),bid,ledgerChange(service.get(ADMIN,bid),null,"DUTY_CASH",posting.id(),"Duty cash",true));
+        assertThat(approvals.decide(financeChecker.actor(),request.id(),APPROVE,"Independent finance review").status()).isEqualTo(APPROVED);
+        grantDuties(accessA.actor(),accessB.actor(),bid,dutyGrant(bid,financeMaker,false,FINANCE,none,false,null));
+        ledger.deliver(request.id());
+        assertThat(jdbc.queryForObject("SELECT failure_code FROM platform.ledger_delivery WHERE request_id=?",String.class,request.id())).isEqualTo("BANK_DUTY_REVOKED_BEFORE_DELIVERY");
+        assertThat(jdbc.queryForObject("SELECT completed FROM platform.ledger_delivery WHERE request_id=?",Boolean.class,request.id())).isFalse();
+        grantDuties(accessA.actor(),accessB.actor(),bid,dutyGrant(bid,financeMaker,true,FINANCE,none,false,null));
+        ledger.deliver(request.id());
+        assertThat(jdbc.queryForObject("SELECT completed FROM platform.ledger_delivery WHERE request_id=?",Boolean.class,request.id())).isTrue();
+        assertThat(jdbc.queryForObject("SELECT failure_code FROM platform.ledger_delivery WHERE request_id=?",String.class,request.id())).isNull();
+    }
     private com.cbs.access.AccessModels.Staff approvalStaff() {
         return access.create(ADMIN,new com.cbs.access.AccessModels.StaffInput("approval-"+UUID.randomUUID(),"Approval test staff",null,"Test onboarding"));
     }

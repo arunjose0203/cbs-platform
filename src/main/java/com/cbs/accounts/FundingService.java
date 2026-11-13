@@ -76,12 +76,14 @@ public class FundingService {
  public List<UUID> pending(){return jdbc.query("SELECT request_id FROM platform.funding_delivery WHERE NOT completed AND request_id NOT IN (SELECT request_id FROM platform.cash_delivery) ORDER BY last_attempt_at NULLS FIRST,created_at LIMIT 20",(r,n)->r.getObject(1,UUID.class));}
  public boolean handles(UUID bankId,UUID id){return jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM platform.funding_delivery WHERE tenant_id=? AND request_id=?)",Boolean.class,bankId,id);}
  public void retry(Actor actor,UUID bankId,UUID id){AccessService.admin(actor);if(!jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM platform.funding_delivery WHERE request_id=? AND tenant_id=? AND reviewer_issuer=?)",Boolean.class,id,bankId,actor.issuer()))throw error(404,"APPROVAL_NOT_FOUND");deliver(id);}
+    private com.cbs.access.BankDuties duties;
+    @org.springframework.beans.factory.annotation.Autowired void duties(com.cbs.access.BankDuties duties){this.duties=duties;}
  public void deliver(UUID id){if(jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM platform.cash_delivery WHERE request_id=?)",Boolean.class,id))throw error(409,"CASH_MANAGED");tx.executeWithoutResult(t->{
   var jobs=jdbc.query("SELECT * FROM platform.funding_delivery WHERE request_id=? AND NOT completed FOR UPDATE",(r,n)->new Dispatch(JSON.readValue(r.getString("payload"),Entry.class),r.getString("maker_subject"),r.getString("reviewer_issuer"),r.getString("reviewer_subject"),r.getObject("correlation_id",UUID.class)),id);
   if(jobs.isEmpty())return;var job=jobs.getFirst();var bank=tenants.get(job.entry().bankId(),true);String failure=null;
   if(bank.status()!=Status.ACTIVE)failure="ACCOUNT_BANK_NOT_ACTIVE";else try{
    // A committed receipt must be acknowledged even if customer eligibility changed later.
-   if(!store.posted(bank,id))customers.requireEligible(bank,job.entry().account().customerId());
+   if(!store.posted(bank,id)){customers.requireEligible(bank,job.entry().account().customerId());duties.requireAtDelivery(id);}
    store.post(bank,job);
   }catch(TenantException e){failure=e.code();}
   jdbc.update("UPDATE platform.funding_delivery SET attempts=attempts+1,last_attempt_at=clock_timestamp(),failure_code=? WHERE request_id=?",failure,id);

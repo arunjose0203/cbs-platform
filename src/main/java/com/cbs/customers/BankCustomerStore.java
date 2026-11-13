@@ -10,6 +10,11 @@ import tools.jackson.databind.json.JsonMapper;
 
 @Component
 public class BankCustomerStore {
+    private org.springframework.beans.factory.ObjectProvider<com.cbs.access.BankDuties> duties;
+    @org.springframework.beans.factory.annotation.Autowired void duties(org.springframework.beans.factory.ObjectProvider<com.cbs.access.BankDuties> duties){this.duties=duties;}
+    /** Duty recheck for a request the bank has no receipt for yet (see BankDuties.requireAtDelivery). */
+    private void recheck(java.util.UUID request){var service=duties==null?null:duties.getIfAvailable();if(service!=null)service.requireAtDelivery(request);}
+
     private final BankDatabaseProvisioner databases;
     private static final JsonMapper JSON=JsonMapper.builder().build();
     public BankCustomerStore(BankDatabaseProvisioner databases){this.databases=databases;}
@@ -41,6 +46,7 @@ public class BankCustomerStore {
                 try(var s=c.prepareStatement("SELECT payload=?::jsonb FROM bank.customer_event WHERE request_id=?")){
                     s.setString(1,payload);s.setObject(2,job.requestId());try(var r=s.executeQuery()){if(r.next()){if(!r.getBoolean(1))throw new SQLException("Receipt mismatch");c.commit();return;}}
                 }
+                recheck(job.requestId());
                 if(d.version()==0){
                     try(var s=c.prepareStatement("INSERT INTO bank.customer(id,tenant_id,customer_number,document_key,version,payload) VALUES (?,?,?,?,?,?::jsonb)")){
                         s.setObject(1,d.id());s.setObject(2,bank.id());s.setString(3,d.customerNumber());s.setString(4,CustomerService.documentKey(d.profile()));s.setLong(5,d.version());s.setString(6,payload);s.executeUpdate();

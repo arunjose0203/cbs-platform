@@ -302,10 +302,12 @@ public class CashService {
   });
  }
  public List<UUID> pending(){return jdbc.query("SELECT request_id FROM platform.cash_delivery WHERE NOT completed ORDER BY last_attempt_at NULLS FIRST,created_at LIMIT 20",(r,n)->r.getObject(1,UUID.class));}
+    private com.cbs.access.BankDuties duties;
+    @org.springframework.beans.factory.annotation.Autowired void duties(com.cbs.access.BankDuties duties){this.duties=duties;}
  public void deliver(UUID id){tx.executeWithoutResult(t->{
   var rows=jdbc.query("SELECT * FROM platform.cash_delivery WHERE request_id=? AND NOT completed FOR UPDATE",(r,n)->new Dispatch(JSON.readValue(r.getString("payload"),Entry.class),r.getString("maker_subject"),r.getString("reviewer_issuer"),r.getString("reviewer_subject"),r.getObject("correlation_id",UUID.class)),id);if(rows.isEmpty())return;
   var job=rows.getFirst();var bank=tenants.get(job.entry().bankId(),true);String failure=null;
-  try{if(!store.posted(bank,id)){if(bank.status()!=Status.ACTIVE)throw error("ACCOUNT_BANK_NOT_ACTIVE");if(job.entry().funding()!=null)customers.requireEligible(bank,job.entry().funding().account().customerId());if(job.entry().operation()!=null)customers.requireEligible(bank,job.entry().operation().account().customerId());}store.post(bank,job);}catch(TenantException exception){failure=exception.code();}
+  try{if(!store.posted(bank,id)){if(bank.status()!=Status.ACTIVE)throw error("ACCOUNT_BANK_NOT_ACTIVE");duties.requireAtDelivery(id);if(job.entry().funding()!=null)customers.requireEligible(bank,job.entry().funding().account().customerId());if(job.entry().operation()!=null)customers.requireEligible(bank,job.entry().operation().account().customerId());}store.post(bank,job);}catch(TenantException exception){failure=exception.code();}
   jdbc.update("UPDATE platform.cash_delivery SET attempts=attempts+1,last_attempt_at=clock_timestamp(),failure_code=? WHERE request_id=?",failure,id);
   jdbc.update("UPDATE platform.journal_delivery SET failure_code=? WHERE request_id=?",failure,id);
   for(String table:List.of("funding_delivery","account_delivery","account_operation"))jdbc.update("UPDATE platform."+table+" SET failure_code=? WHERE request_id=?",failure,id);if(failure!=null)return;
