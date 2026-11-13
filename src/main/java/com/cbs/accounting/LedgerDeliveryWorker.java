@@ -33,6 +33,11 @@ public class LedgerDeliveryWorker {
     /** Queues term-deposit maturity, loan due and arrears notices; idempotent, so a missed run is caught up by the next. */
     @Scheduled(fixedDelayString="${cbs.notifications.notices.scan-interval-ms:900000}",initialDelay=60000)
     public void queueNotices(){try{notices.scan();}catch(RuntimeException ignored){org.slf4j.LoggerFactory.getLogger(getClass()).warn("Customer notices will be retried");}}
+    private com.cbs.batch.BatchService batch;
+    @org.springframework.beans.factory.annotation.Autowired void batch(com.cbs.batch.BatchService batch){this.batch=batch;}
+    /** P-07: submits the next step of each enabled bank's daily cycle once its cut-off has passed; approval stays with people. */
+    @Scheduled(fixedDelayString="${cbs.batch.interval-ms:300000}",initialDelay=90000)
+    public void prepareDailyCycle(){try{batch.tick(java.time.Instant.now());}catch(RuntimeException ignored){org.slf4j.LoggerFactory.getLogger(getClass()).warn("Daily cycle preparation will be retried");}}
     /** Sends queued customer alerts; a missing provider leaves them queued. */
     @Scheduled(fixedDelay=15000,initialDelay=20000)
     public void sendNotifications(){try{notifications.dispatch();}catch(RuntimeException ignored){org.slf4j.LoggerFactory.getLogger(getClass()).warn("Customer alert delivery will be retried");}}

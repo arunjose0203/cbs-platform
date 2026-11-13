@@ -42,7 +42,8 @@ import tools.jackson.databind.ObjectMapper;
         "cbs.ledger.delivery-enabled=false", "cbs.security.enabled=true", "cbs.security.issuer=https://identity.cbs.test",
         "cbs.security.jwk-set-uri=https://identity.cbs.test/jwks", "cbs.security.audience=cbs-api",
         "cbs.servicing.chunk-size=2", "cbs.notifications.sender=test", "cbs.rate-limit.enabled=false",
-        "cbs.notifications.callback-secret=integration-receipt-secret-0123456789"
+        "cbs.notifications.callback-secret=integration-receipt-secret-0123456789",
+        "cbs.batch.service-issuer=https://identity.cbs.test", "cbs.batch.service-subject=batch-service"
 })
 @AutoConfigureMockMvc
 @Import(TestIdentity.Configuration.class)
@@ -3298,6 +3299,52 @@ class TenantAdministrationIntegrationTest {
         assertThat(new java.math.BigDecimal(operations.dashboard(ADMIN,b,f.account(),25,0).position().posted())).isNotNegative();
         assertBooksBalance("invariants",b,accounts);
         assertThat(K).isNotNull();assertThat(refused).isNotNegative();
+    }
+    @Autowired com.cbs.batch.BatchService batch;
+    @Test void dailyCycleIsPreparedOnScheduleByTheServiceIdentityAndApprovedOnlyByPeople()throws Exception{
+        access.bootstrap(TestIdentity.ISSUER,"batch-service");
+        var f=fundingFixture("batch-cycle");var bank=f.f().bank();UUID b=bank.id();fund(f,"1000");
+        var robot=new Actor(TestIdentity.ISSUER,"batch-service",true,UUID.randomUUID());
+        var date=reference.get(ADMIN,b).businessDate();var zone=java.time.ZoneId.of(reference.get(ADMIN,b).businessTimezone());
+        java.util.function.Function<java.time.LocalDate,java.time.Instant> after=d->d.atTime(19,0).atZone(zone).toInstant();
+        // Before the cut-off nothing happens.
+        assertThat(batch.prepare(b,date.atTime(17,59).atZone(zone).toInstant())).isNull();
+        // A pending account operation blocks the day close: the scheduler records why and submits nothing.
+        var blocking=approvals.operation(ADMIN,UUID.randomUUID(),b,operationChange(f,com.cbs.accounts.OperationModels.Kind.HOLD,"1",null,null));
+        var blocked=batch.prepare(b,after.apply(date));
+        assertThat(blocked.step()).isEqualTo(com.cbs.batch.BatchService.Step.DAY_CLOSE);assertThat(blocked.outcome()).isEqualTo("BLOCKED");assertThat(blocked.code()).isNotBlank();
+        assertThat(batch.prepare(b,after.apply(date)).outcome()).isEqualTo("BLOCKED");
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM platform.batch_event WHERE tenant_id=?",Integer.class,b)).as("an unchanged outcome is recorded once").isEqualTo(1);
+        approvals.decide(CHECKER,blocking.id(),com.cbs.approvals.ApprovalModels.Decision.REJECT,"Not needed");
+        // Servicing policy configured: servicing comes first, then the day close.
+        UUID expense=adjustmentLedger(bank,"BATCH_EXP",com.cbs.accounting.ChartModels.Category.EXPENSE),payable=adjustmentLedger(bank,"BATCH_PAY",com.cbs.accounting.ChartModels.Category.LIABILITY),
+            income=adjustmentLedger(bank,"BATCH_FEE",com.cbs.accounting.ChartModels.Category.INCOME),tax=adjustmentLedger(bank,"BATCH_TAX",com.cbs.accounting.ChartModels.Category.LIABILITY);
+        approveHttp(approvals.servicingPolicy(ADMIN,UUID.randomUUID(),b,new com.cbs.servicing.ServicingModels.Policy(service.get(ADMIN,b).version(),f.f().product().id(),f.f().product().revision(),bank.legalEntities().getFirst().id(),date,"0",365,"0","0","0","HALF_EVEN",expense,payable,income,tax,"Fictional zero-rate servicing")).id());
+        var run=batch.prepare(b,after.apply(date));
+        assertThat(run.step()).isEqualTo(com.cbs.batch.BatchService.Step.SERVICING);assertThat(run.outcome()).as("code %s",run.code()).isEqualTo("SUBMITTED");
+        var request=jdbc.queryForMap("SELECT maker_subject,action,status FROM platform.approval_request WHERE id=?",run.requestId());
+        assertThat(request).containsEntry("maker_subject","batch-service").containsEntry("action","SERVICING_RUN").containsEntry("status","PENDING");
+        assertThat(batch.prepare(b,after.apply(date)).outcome()).isEqualTo("WAITING_APPROVAL");
+        assertCode(()->approvals.decide(robot,run.requestId(),com.cbs.approvals.ApprovalModels.Decision.APPROVE,"Own"),"SELF_APPROVAL_FORBIDDEN");
+        long version=service.get(ADMIN,b).version();
+        approveHttp(run.requestId());
+        assertThat(batch.prepare(b,after.apply(date)).outcome()).isEqualTo("WAITING_DELIVERY");
+        servicing.deliver(run.requestId());
+        var close=batch.prepare(b,after.apply(date));
+        assertThat(close.step()).isEqualTo(com.cbs.batch.BatchService.Step.DAY_CLOSE);assertThat(close.outcome()).as("code %s",close.code()).isEqualTo("SUBMITTED");
+        // The console shows the cycle, the waiting approval and the scheduler's history; the scheduler never bumps the bank version itself.
+        mvc.perform(admin(get("/api/v1/admin/tenants/"+b+"/operations-console"))).andExpect(status().isOk())
+            .andExpect(jsonPath("$.cycle[?(@.step=='SERVICING')].status").value(org.hamcrest.Matchers.contains("DONE")))
+            .andExpect(jsonPath("$.cycle[?(@.step=='DAY_CLOSE')].status").value(org.hamcrest.Matchers.contains("WAITING_APPROVAL")))
+            .andExpect(jsonPath("$.approvals[0].action").value("DAY_CLOSE")).andExpect(jsonPath("$.events[0].step").value("DAY_CLOSE"));
+        // A checker rejects today's close: the scheduler does not resubmit it.
+        approvals.decide(CHECKER,close.requestId(),com.cbs.approvals.ApprovalModels.Decision.REJECT,"Cash count not signed");
+        var rejected=batch.prepare(b,after.apply(date));
+        assertThat(rejected.outcome()).isEqualTo("BLOCKED");assertThat(rejected.code()).isEqualTo("BATCH_REQUEST_REJECTED");
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM platform.approval_request WHERE bank_id=? AND action='DAY_CLOSE'",Integer.class,b)).isEqualTo(1);
+        assertThat(service.get(ADMIN,b).version()).as("only approvals changed the version").isGreaterThan(version);
+        assertThatThrownBy(()->jdbc.update("DELETE FROM platform.batch_event WHERE tenant_id=?",b)).hasMessageContaining("append-only");
+        mvc.perform(get("/api/v1/admin/tenants/"+b+"/operations-console")).andExpect(status().isUnauthorized());
     }
     private UUID onboard(Tenant bank,com.cbs.customers.CustomerModels.Profile profile)throws Exception{
         var r=approvals.customer(ADMIN,UUID.randomUUID(),bank.id(),customerChange(bank,null,profile,""));approveHttp(r.id());customers.deliver(r.id());

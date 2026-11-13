@@ -46,6 +46,13 @@ cbs:
       maturity-days: 7          # term-deposit maturity notice lead time
       loan-due-days: 3          # loan instalment reminder lead time
       arrears-days: 1,30,60,90  # days past due at which an arrears notice is sent
+  batch:
+    # P-07: banks whose daily cycle is prepared automatically, after this local time in the bank's timezone.
+    # The service identity submits; people approve. It must be an active staff identity (and hold FINANCE when duties are enforced).
+    banks: ${CBS_BATCH_BANKS:}
+    prepare-after: ${CBS_BATCH_PREPARE_AFTER:18:00}
+    service-issuer: ${CBS_BATCH_SERVICE_ISSUER:}
+    service-subject: ${CBS_BATCH_SERVICE_SUBJECT:}
   portal:
     client-id: ${CBS_PORTAL_CLIENT_ID:}
     redirect-uri: ${CBS_PORTAL_REDIRECT_URI:}

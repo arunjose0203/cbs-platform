@@ -57,7 +57,7 @@ public final class BankDutyRoutes {
             duty("/servicing/policies", CONFIG, CONFIG, FINANCE),
             // Finance.
             duty("/servicing", FINANCE, FINANCE, CONFIG), duty("/journals", FINANCE), duty("/business-day", FINANCE),
-            duty("/period-close", FINANCE), duty("/accounting-reports", FINANCE), duty("/reporting", FINANCE),
+            duty("/period-close", FINANCE), any("/operations-console", FINANCE), duty("/accounting-reports", FINANCE), duty("/reporting", FINANCE),
             // Customer operations. Customer and account records are also read by compliance, payments and finance.
             duty("/customers", CUSTOMER, CUSTOMER, COMPLIANCE, PAYMENTS, FINANCE),
             duty("/accounts", CUSTOMER, CUSTOMER, COMPLIANCE, PAYMENTS, FINANCE),
