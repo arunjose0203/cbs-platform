@@ -53,6 +53,16 @@ Round 14 of the [go-live plan](go-live-plan-2026-11-13.md) delivers comprehensiv
 - **Multi-format export.** Integrated into `TableOutput` supporting formatted JSON, sanitized CSV (formula injection neutralized), and A4 PDF.
 - **UI and verification.** Added Operational reports dialog to management reports UI supporting report selection and downloads. Tests: 6 new backend unit tests in `OperationalReportServiceTest` (100% pass), 129 UI tests pass.
 
+## P-04: Point-In-Time Recovery (PITR), WAL Archiving, Key Escrow and Off-Host Retention — 14 November 2026
+
+Production-engineering item P-04 (gate E06) of the [go-live plan](go-live-plan-2026-11-13.md). See [PITR backup and recovery](pitr-backup-and-recovery.md).
+
+- **Continuous WAL archiving.** `ops/wal_archive.py` encrypts and streams PostgreSQL WAL segments (`archive_command`) via AES-256-GCM with SHA-256 checksums and HMAC metadata envelopes. RPO is bounded to $\le 5$ minutes by setting `archive_timeout = 300`.
+- **Point-In-Time Recovery (PITR).** Automated decryption and restore of requested WAL segments (`restore_command`), with generator for PostgreSQL `recovery_target_time` and promotion configurations.
+- **M-of-N key escrow.** `ops/key_escrow.py` implements Shamir's threshold secret sharing over a 256-bit prime field, splitting the 32-byte master key into 2-of-3 custodian shares across Bank Risk, Engineering, and Audit.
+- **Off-host transport & statutory retention.** `ops/offhost_sync.py` verifies remote immutable receipt HMACs and enforces retention (30 days daily, 12 weeks weekly, 7 years month-end) with the invariant of never deleting the newest completed baseline.
+- **Verification.** 10 new unit tests across `test_wal_archive.py`, `test_key_escrow.py`, and `test_offhost_sync.py` (100% pass, 37 total ops unit tests).
+
 ## P-06: write-path performance and delivery drain — 14 November 2026
 
 Production-engineering item P-06 (gate E08) of the [go-live plan](go-live-plan-2026-11-13.md). See [write-path performance](write-path-performance.md).
