@@ -98,7 +98,20 @@ export function errorMessage(code) {
     SCREENING_LIST_NOT_DRAFT:'Only a draft list version can be activated.',
     COMPLIANCE_ALERT_STALE:'This alert was already decided or changed. Reload it.',
     MONITORING_POLICY_INVALID:'Fill in every field of a monitoring rule, or leave the whole rule empty. Amounts must be positive.',
-    MONITORING_POLICY_EMPTY:'Turn on at least one monitoring rule.'})[code]
+    MONITORING_POLICY_EMPTY:'Turn on at least one monitoring rule.',
+    NOTIFICATION_EVENTS_INVALID:'Choose alerts and notices only; verification codes are sent automatically.',
+    NOTIFICATION_CODE_INVALID:'That code is not correct. Ask the customer to read it again.',
+    NOTIFICATION_CODE_EXPIRED:'The code has expired. Send a new code.',
+    NOTIFICATION_CODE_LOCKED:'Too many wrong codes. Send a new code.',
+    NOTIFICATION_CODE_RECENT:'A code was sent less than a minute ago. Wait before sending another.',
+    NOTIFICATION_ALREADY_VERIFIED:'This destination is already verified.',
+    NOTIFICATION_PREFERENCE_NOT_FOUND:'This customer has no alert preference yet.',
+    NOTIFICATION_OPTED_OUT:'Not sent: the customer opted out of messages to this destination.',
+    NOTIFICATION_OPT_OUT_NOT_FOUND:'No opt-out is recorded for that destination. Check the full phone number or email.',
+    NOTIFICATION_TEMPLATE_PLACEHOLDER_INVALID:'The wording uses a placeholder this message cannot have, or leaves out {bank} (and {code} for verification).',
+    NOTIFICATION_TEMPLATE_TOO_LONG:'SMS wording must fit two messages (306 characters) with the longest values filled in.',
+    NOTIFICATION_TEMPLATE_SUBJECT_INVALID:'Email wording needs a subject; SMS wording must not have one.',
+    NOTIFICATION_TEMPLATE_CHANNEL_INVALID:'Choose SMS or email.'})[code]
     || `The request could not be completed${code ? ` (${code})` : ''}.`;
 }
 export function signInErrorMessage(error) {
