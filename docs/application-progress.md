@@ -6,7 +6,7 @@ Use the [Functional Gap & Acceptance Matrix](functional-gap-acceptance-matrix-20
 
 ## Round 10: Customer notifications go-live — 13 November 2026
 
-Round 10 of the [go-live plan](go-live-plan-2026-11-13.md) makes customer alerts ready for a provider: verified destinations, approved wording, scheduled notices, opt-outs and signed delivery receipts. Control migration **V50** (after V48 Round 12 and V49 Round 18). See [notifications go-live](notifications-go-live.md).
+Round 10 of the [go-live plan](go-live-plan-2026-11-13.md) makes customer alerts ready for a provider: verified destinations, approved wording, scheduled notices, opt-outs and signed delivery receipts. Control migration **V51** (V50 is reserved for Round 14). See [notifications go-live](notifications-go-live.md).
 
 - **Destination verification.** A new phone number or email receives a one-time code (hashed, 24-hour expiry, five attempts); alerts start only after staff confirm the code the customer reads back. Codes never appear in lists or audit.
 - **Approved templates.** Bank wording per event, language and channel through maker-checker (`NOTIFICATION_TEMPLATE`), restricted to the event's placeholders, naming the bank, and two SMS segments at most; built-in English, French and Kiswahili otherwise.

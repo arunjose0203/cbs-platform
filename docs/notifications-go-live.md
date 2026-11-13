@@ -1,6 +1,6 @@
 # Round 10: customer notifications go-live
 
-Added 13 November 2026 (control migration V50). Covers functional areas F22 (notifications), F28 (term-deposit notices) and F32 (borrower notices), as planned in [go-live-plan-2026-11-13.md](go-live-plan-2026-11-13.md). Builds on the alert outbox from [statements and alerts](statements-and-alerts.md).
+Added 13 November 2026 (control migration V51). Covers functional areas F22 (notifications), F28 (term-deposit notices) and F32 (borrower notices), as planned in [go-live-plan-2026-11-13.md](go-live-plan-2026-11-13.md). Builds on the alert outbox from [statements and alerts](statements-and-alerts.md).
 
 **Not done here: the real SMS/email provider adapter.** The provider (decision D09) is not chosen yet. Everything around it is in place: the sender interface with a per-bank binding, signed delivery receipts, opt-outs, retries, monitoring. The adapter is a single `NotificationSender` implementation added once the contract is signed. The test sender stays refused in production.
 
@@ -8,7 +8,7 @@ Added 13 November 2026 (control migration V50). Covers functional areas F22 (not
 
 | Feature | Mechanism |
 | --- | --- |
-| **Destination verification** | An approved preference with a new phone number or email gets a one-time six-digit code. Alerts and notices start only once staff enter the code the customer reads back (`POST …/notifications/preferences/{customer}/verify`). The code is kept as a SHA-256 hash, expires after 24 hours and locks after five wrong attempts. It can be resent once a minute. Lists never show the code; the message text is replaced once sent. Re-approving the same destination keeps it verified. Preferences approved before V50 count as verified, because the approver re-entered the destination. |
+| **Destination verification** | An approved preference with a new phone number or email gets a one-time six-digit code. Alerts and notices start only once staff enter the code the customer reads back (`POST …/notifications/preferences/{customer}/verify`). The code is kept as a SHA-256 hash, expires after 24 hours and locks after five wrong attempts. It can be resent once a minute. Lists never show the code; the message text is replaced once sent. Re-approving the same destination keeps it verified. Preferences approved before V51 count as verified, because the approver re-entered the destination. |
 | **Approved message templates** | Bank wording per event, language and channel goes through maker-checker (`NOTIFICATION_TEMPLATE`, bank-configuration duty). A template may use only its event's placeholders and must contain `{bank}` (and `{code}` for verification). SMS wording must fit two segments (306 characters) with the longest values filled in. Email needs a subject. The preview shows the current wording (approved or built-in) and a filled example. Without an approved template, built-in English, French and Kiswahili wording is used. |
 | **Scheduled notices** | A background scan (every 15 minutes, idempotent) queues three kinds of notice. **Term-deposit maturity:** up to 7 days before maturity. **Loan instalment due:** up to 3 days before. **Loan arrears:** when posted arrears cross 1, 30, 60 or 90 days past due, once per threshold per arrears episode. Notices go to every holder who opted in to that event on a verified destination. Messages carry the agreement reference and dates, never balances or amounts owed. The scan never changes the bank version or any financial record. |
 | **Opt-outs** | A STOP reported by the provider, or an opt-out recorded at the branch, adds the destination to `platform.notification_opt_out`. Queued and future messages to it are marked `SUPPRESSED` and never sent. Messages resume only when staff remove the opt-out with the reference of the customer's renewed consent. Both actions are audited, with the destination masked. |
@@ -42,7 +42,7 @@ A provider adapter translates the provider's own callback into this form, or the
 - **Loan due reminders** use the contractual schedule dates (current terms after a restructure). They do not check whether the instalment was already paid early.
 - **Arrears notices** use the same posted-event replay as collections. Loans whose history does not reconcile are skipped and appear on the collections screen instead.
 - **French and Kiswahili wording** is machine-assisted. It needs the native-speaker review in Round 17.
-- **Merge order:** V48 (Round 12) and V49 (Round 18) come first. V50 rewrites the approval action constraint and already includes `LEGAL_HOLD` from V49. If Round 12 adds approval actions, add them to V50 when merging.
+- **Merge order:** this branch is rebased on Rounds 12, 18 and 17 (V48–V49). V50 is reserved for Round 14. V51 rewrites the approval action constraint and keeps `LEGAL_HOLD` from V49; a later rewrite must keep `NOTIFICATION_TEMPLATE`.
 
 ## Tests
 
