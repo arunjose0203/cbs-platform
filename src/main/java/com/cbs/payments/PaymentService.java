@@ -104,8 +104,8 @@ public class PaymentService {
    if(jdbc.queryForObject("SELECT count(*) FROM platform.payment_observation WHERE payment_id=?",Integer.class,id)>=100)throw error("PAYMENT_CALLBACK_LIMIT");
    jdbc.update("INSERT INTO platform.payment_observation(payment_id,fingerprint,payload) VALUES (?,?,?::jsonb)",id,fingerprint,payload);event(bankId,id,"provider-callback","UNVERIFIED_CALLBACK",observation);
    if(observation.code().equals("0")&&jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM platform.payment_resolution r JOIN platform.payment_order p ON p.id=r.payment_id WHERE r.payment_id=? AND (r.outcome='REFUND' OR (lower(r.provider_reference)<>lower(?) AND ?<>'') OR (?<>'' AND (p.payload->>'amount')::numeric<>nullif(?,'')::numeric)))",Boolean.class,id,observation.receipt(),observation.receipt(),observation.amount(),observation.amount()))jdbc.update("UPDATE platform.payment_order SET reconciliation_conflict=true WHERE id=?",id);
-   // Observations never settle, refund, change balances or establish final provider success.
-   tenants.change(bank,bank.status(),bank.displayName(),bank.defaultLanguage());
+   // Observations never settle, refund, change balances or establish final provider success. P-10: they also do not
+   // bump the bank version: a public callback must not make every pending maker request for the bank go stale.
   });
  }
  /**
