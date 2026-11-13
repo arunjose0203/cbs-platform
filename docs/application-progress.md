@@ -29,6 +29,14 @@ Round 10 of the [go-live plan](go-live-plan-2026-11-13.md) makes customer alerts
 - **Still open.** The real SMS/email adapter waits for the provider decision (D09); the exit test needs its sandbox. French/Kiswahili wording needs the Round 17 review.
 - **Verification.** Notification, statement-alert, joint-account, route-access and production-guard tests pass, as do 124 UI tests and 31 ops tests.
 
+## P-09: money-path invariant and property tests — 14 November 2026
+
+Production-engineering item P-09 (gate E13) of the [go-live plan](go-live-plan-2026-11-13.md). Tests only. See [money invariants](money-invariants.md).
+
+- **Property tests.** Seeded, reproducible generators check six areas: accrual rounding carries conserve value exactly, leap days count, loan schedules repay exactly the principal on monthly dates, daily servicing nets exactly without losing rounding, FX rounding stays within one unit and the spread never pays the customer, and limits never let a total exceed the limit. A deliberate carry mutation is caught.
+- **Book invariants.** A generated 30-step sequence of postings and refusals checks after every step that journals and the trial balance balance and that ledgers and account positions agree. It then checks that replaying every delivery changes nothing, and that racing submissions, approvals and deliveries of two overdrawing withdrawals post exactly one.
+- **CI.** Both suites run on every push. A nightly workflow explores the properties with a new seed and 20,000 cases each.
+
 ## Round 18: Privacy and data protection — 13 November 2026
 
 Round 18 of the [go-live plan](go-live-plan-2026-11-13.md) completes privacy, field-level data protection, legal holds, data-subject request registers, and the statutory retention matrix (Kenya Data Protection Act 2019, POCAMLA s.46, Gate E04). Control migration **V49**. See [privacy and data protection](privacy-and-data-protection.md).
