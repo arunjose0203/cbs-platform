@@ -4,6 +4,14 @@
 
 Use the [Functional Gap & Acceptance Matrix](functional-gap-acceptance-matrix-2026-10-09.md) for the current 34-area functional assessment, 34 proposed acceptance cases, source/test evidence, confirmed limits and prioritized completion work. It reconciles older historical pending lists below. No module has independent bank functional sign-off recorded; existing automated test results do not replace that acceptance.
 
+## P-01: release pipeline — 14 November 2026
+
+Production-engineering item P-01 (gate E05) of the [go-live plan](go-live-plan-2026-11-13.md). See [release pipeline](release-pipeline.md).
+
+- **Release candidates.** An `rc` tag runs the full verification, then builds the image from the verified JAR on a digest-pinned base. The job produces CycloneDX and SPDX SBOMs, fails on fixable high or critical Trivy findings, pushes to GHCR, signs keylessly with cosign, attaches provenance and SBOM attestations, and publishes a pre-release with checksummed evidence.
+- **Promotion.** A manually started workflow runs in the reviewer-protected `production` environment, so the approval is recorded. It verifies the signature and provenance, then tags the same digest as final, without rebuilding.
+- **Still open.** The repository owner must set `JAVA_RUNTIME_IMAGE`, the `production` environment reviewers and tag protection. The first real candidate tag is the end-to-end proof. `ops/tests/test_release_workflow.py` guards the gate order.
+
 ## P-08: tenant upgrade orchestration — 14 November 2026
 
 Production-engineering item P-08 (gate E11) of the [go-live plan](go-live-plan-2026-11-13.md). No migration. See [tenant upgrades](tenant-upgrades.md).
