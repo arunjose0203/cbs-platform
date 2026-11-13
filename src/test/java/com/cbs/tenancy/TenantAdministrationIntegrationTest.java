@@ -3219,6 +3219,7 @@ class TenantAdministrationIntegrationTest {
         String body=jdbc.queryForObject("SELECT body FROM platform.notification WHERE tenant_id=? AND customer_id=? AND event='VERIFICATION' AND status='PENDING' ORDER BY created_at DESC LIMIT 1",String.class,bank.id(),customer);
         var code=java.util.regex.Pattern.compile("\\b([0-9]{6})\\b").matcher(body);assertThat(code.find()).isTrue();
         notifications.verify(ADMIN,bank.id(),customer,code.group(1));
+    }
     /**
      * P-09: invariants over the bank's books after every step of a generated sequence. Every journal
      * balances, the trial balance is zero, each ledger balance equals its journal lines, each account
