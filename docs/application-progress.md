@@ -4,6 +4,19 @@
 
 Use the [Functional Gap & Acceptance Matrix](functional-gap-acceptance-matrix-2026-10-09.md) for the current 34-area functional assessment, 34 proposed acceptance cases, source/test evidence, confirmed limits and prioritized completion work. It reconciles older historical pending lists below. No module has independent bank functional sign-off recorded; existing automated test results do not replace that acceptance.
 
+## Round 15: Lending completion — 14 November 2026
+
+Round 15 of the [go-live plan](go-live-plan-2026-11-13.md) completes the lending and loan servicing lifecycle (Matrix rows F30, F31, F32; Acceptance cases A30, A31, A32). Control migrations **V52** (platform) and **V28** (bank). See [lending completion](lending-completion.md).
+
+- **Credit bureau inquiry and reporting (CRB).** Multi-bureau integration model (Metropol, TransUnion, Creditinfo) with deterministic credit scoring (300–850) and risk grading (AA to E). Generates statutory monthly portfolio returns classifying loans under CBK/IFRS 9 prudential asset classifications (`PERFORMING`, `WATCH`, `SUBSTANDARD`, `DOUBTFUL`, `LOSS`).
+- **Non-accrual accounting.** Automatically suspends interest accrual into P&L for Stage 3 non-performing loans (>90 DPD), advancing contract accrual dates without inflating balance sheet interest receivables or income.
+- **Loan moratoria.** Granular moratorium grants (`FULL_PAYMENT_HOLIDAY` and `INTEREST_ONLY`) with role authority checks. Arrears calculation automatically freezes ageing on instalments covered by an active moratorium.
+- **Partial write-off & post-write-off recovery.** `PARTIAL_WRITE_OFF` writes down distressed principal against loan loss allowances without terminating the facility. `RECOVERY` handles post-write-off cash collections credited directly to recovery income ledgers under dual-control limits (`LOAN_RECOVERY`).
+- **Automated IFRS 9 ECL staging.** Portfolio-wide ECL evaluation categorizing loans into Stage 1 (1.00%), Stage 2 (3.00%), and Stage 3 (20.00%) with automated required allowance and adjustment reporting.
+- **Fee taxation and fee-payment reversal.** Automated 20% excise duty on assessed loan fees routed to dedicated tax ledgers. Enabled reversal of fee payments (`Kind.FEE_PAY`) with restored balances and dual-control limits (`LOAN_FEE_REVERSAL`).
+- **Arrears snapshots & KYC document verification.** Arrears position snapshots (`platform.loan_arrears_snapshot`) eliminate 10,000-event replay boundaries. Collateral document verification links directly to KYC storage (`platform.customer_document`).
+- **UI and verification.** Added Bureau Inquiry and CRB Report to Credit UI; added ECL Staging and Moratorium actions to Contracts UI. Tests: 7 new comprehensive backend integration tests in `LendingCompletionTest` (100% pass), 265 backend tests pass, 132 UI tests pass.
+
 ## Round 14: Regulatory and operational reporting — 14 November 2026
 
 Round 14 of the [go-live plan](go-live-plan-2026-11-13.md) delivers comprehensive operational, regulatory, and statutory tax reporting (Matrix rows F09, F19). See [regulatory and operational reporting](regulatory-and-operational-reporting.md).

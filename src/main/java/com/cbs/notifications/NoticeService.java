@@ -78,8 +78,9 @@ public class NoticeService {
     }
 
     private LoanArrears.Report arrears(UUID bank,UUID contract,LocalDate date){
-        var events=jdbc.query("SELECT payload FROM platform.contract_delivery WHERE tenant_id=? AND contract_id=? AND completed ORDER BY created_at,id LIMIT 10001",(r,n)->JSON.readValue(r.getString(1),ContractModels.Posting.class),bank,contract);
-        if(events.isEmpty()||events.size()>10000)return null;
-        try{var report=LoanArrears.calculate(events,date);return report.reconciled()?report:null;}catch(RuntimeException e){return null;}
+        var events=jdbc.query("SELECT payload FROM platform.contract_delivery WHERE tenant_id=? AND contract_id=? AND completed ORDER BY created_at,id",(r,n)->JSON.readValue(r.getString(1),ContractModels.Posting.class),bank,contract);
+        if(events.isEmpty())return null;
+        var moratoria=jdbc.query("SELECT start_date,end_date FROM platform.loan_moratorium WHERE tenant_id=? AND contract_id=?",(r,n)->new LoanArrears.MoratoriumInterval(r.getDate(1).toLocalDate(),r.getDate(2).toLocalDate()),bank,contract);
+        try{var report=LoanArrears.calculate(events,date,moratoria);return report.reconciled()?report:null;}catch(RuntimeException e){return null;}
     }
 }

@@ -7,6 +7,7 @@ import java.util.*;
 /** Replays actual posted financial events. Future projected interest is never a receivable. */
 public final class LoanArrears {
  private LoanArrears(){}
+ public record MoratoriumInterval(LocalDate start,LocalDate end){}
  public record Due(LocalDate dueDate,String principal,String interest,String fees,String total,long daysPastDue,String bucket){}
  public record Totals(String principal,String interest,String fees,String total){}
  public record Report(LocalDate asOf,List<Due> instalments,Map<String,Totals> buckets,Totals outstanding,Totals overdue,long daysPastDue,boolean reconciled,boolean accrualComplete){}
@@ -14,7 +15,8 @@ public final class LoanArrears {
  public static String bucket(long days){return days<=0?"CURRENT":days<=30?"1_30":days<=60?"31_60":days<=90?"61_90":days<=180?"91_180":"181_PLUS";}
  public static Set<UUID> reversed(List<Posting> events){var ids=new HashSet<UUID>();for(var p:events)if(p.kind()==Kind.REVERSE)ids.add(p.originalEventId());return ids;}
  private static void reduce(TreeMap<LocalDate,Amounts> rows,BigDecimal payment,boolean interest){for(var row:rows.values()){var value=interest?row.interest:row.principal;var used=value.min(payment);if(interest)row.interest=value.subtract(used);else row.principal=value.subtract(used);payment=payment.subtract(used);if(payment.signum()==0)return;}if(payment.signum()!=0)throw new IllegalArgumentException("Repayment allocation exceeds posted balance");}
- public static Report calculate(List<Posting> source,LocalDate asOf){
+ public static Report calculate(List<Posting> source,LocalDate asOf){return calculate(source,asOf,List.of());}
+ public static Report calculate(List<Posting> source,LocalDate asOf,List<MoratoriumInterval> moratoria){
   var events=source.stream().filter(p->!p.businessDate().isAfter(asOf)).toList();var reversed=reversed(events);var rows=new TreeMap<LocalDate,Amounts>();var fees=new HashMap<UUID,LoanFeeModels.Details>();Position last=null;
   for(var p:events){last=p.after();if(p.kind()==Kind.REVERSE||reversed.contains(p.id()))continue;var terms=p.contract().terms();if(terms.type()!=Type.LOAN)throw new IllegalArgumentException("Loan required");int scale=scale(p.contract());
    switch(p.kind()){
@@ -28,7 +30,7 @@ public final class LoanArrears {
      }
      if(allocated.compareTo(decimal(p.after().interest()).subtract(decimal(p.before().interest())))!=0)throw new IllegalArgumentException("Accrual allocation mismatch");
     }
-    case REPAY -> {reduce(rows,decimal(p.before().interest()).subtract(decimal(p.after().interest())),true);reduce(rows,decimal(p.before().principal()).subtract(decimal(p.after().principal())),false);}
+    case REPAY,PARTIAL_WRITE_OFF -> {reduce(rows,decimal(p.before().interest()).subtract(decimal(p.after().interest())),true);reduce(rows,decimal(p.before().principal()).subtract(decimal(p.after().principal())),false);}
     case WRITE_OFF -> rows.clear();
     case FEE_ASSESS,FEE_PAY,FEE_WAIVE -> fees.put(p.feeServicing().feeId(),p.feeServicing());
     default -> {}
@@ -36,7 +38,10 @@ public final class LoanArrears {
   }
   for(var fee:fees.values())rows.computeIfAbsent(fee.dueDate(),k->new Amounts()).fees=rows.get(fee.dueDate()).fees.add(decimal(fee.after()));
   var buckets=new LinkedHashMap<String,Amounts>();for(String key:List.of("CURRENT","1_30","31_60","61_90","91_180","181_PLUS"))buckets.put(key,new Amounts());var all=new Amounts();var overdue=new Amounts();long dpd=0;List<Due> due=new ArrayList<>();
-  for(var entry:rows.entrySet()){var a=entry.getValue();if(a.total().signum()==0)continue;long days=Math.max(0,ChronoUnit.DAYS.between(entry.getKey(),asOf));all.add(a);buckets.get(bucket(days)).add(a);if(days>0){overdue.add(a);dpd=Math.max(dpd,days);}due.add(new Due(entry.getKey(),text(a.principal),text(a.interest),text(a.fees),text(a.total()),days,bucket(days)));}
+  for(var entry:rows.entrySet()){var a=entry.getValue();if(a.total().signum()==0)continue;
+   boolean inMoratorium=moratoria!=null&&moratoria.stream().anyMatch(m->!entry.getKey().isBefore(m.start())&&!entry.getKey().isAfter(m.end()));
+   long days=inMoratorium?0:Math.max(0,ChronoUnit.DAYS.between(entry.getKey(),asOf));
+   all.add(a);buckets.get(bucket(days)).add(a);if(days>0){overdue.add(a);dpd=Math.max(dpd,days);}due.add(new Due(entry.getKey(),text(a.principal),text(a.interest),text(a.fees),text(a.total()),days,bucket(days)));}
   var values=new LinkedHashMap<String,Totals>();buckets.forEach((k,v)->values.put(k,v.values()));boolean reconciled=last!=null&&all.principal.compareTo(decimal(last.principal()))==0&&all.interest.compareTo(decimal(last.interest()))==0;
   return new Report(asOf,List.copyOf(due),Collections.unmodifiableMap(values),all.values(),overdue.values(),dpd,reconciled,last!=null&&(last.closed()||!last.accruedThrough().isBefore(asOf)));
  }

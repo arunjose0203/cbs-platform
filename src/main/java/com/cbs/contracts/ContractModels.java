@@ -12,7 +12,7 @@ import java.util.*;
 public final class ContractModels {
     private ContractModels() {}
     public enum Type { TERM_DEPOSIT, LOAN }
-    public enum Kind { OPEN, ACCRUE, REPAY, REDEEM, REVERSE, EARLY_CLOSE, RENEW, RESTRUCTURE, IMPAIR, WRITE_OFF, FEE_ASSESS, FEE_PAY, FEE_WAIVE }
+    public enum Kind { OPEN, ACCRUE, REPAY, REDEEM, REVERSE, EARLY_CLOSE, RENEW, RESTRUCTURE, IMPAIR, WRITE_OFF, FEE_ASSESS, FEE_PAY, FEE_WAIVE, PARTIAL_WRITE_OFF, RECOVERY }
     public record Open(@PositiveOrZero long expectedVersion,@NotNull Type type,@NotNull UUID accountId,
         @NotNull UUID principalLedger,@NotNull UUID accruedInterestLedger,@NotNull UUID interestProfitLossLedger,UUID taxLedger,
         @NotNull @Pattern(regexp="[0-9]{1,18}(\\.[0-9]{1,6})?") String principal,

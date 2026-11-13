@@ -77,8 +77,13 @@ public class ContractService {
             LocalDate through=term&&input.businessDate().isAfter(d.terms().maturityDate())?d.terms().maturityDate():input.businessDate();
             if(amount.signum()!=0||!through.isAfter(before.accruedThrough()))throw error("CONTRACT_ACCRUAL_INVALID");
             var calc=interest(before.principal(),d.terms().annualRatePercent(),d.terms().dayBasis(),before.accruedThrough(),through,before.carry(),scale(d));
-            if(decimal(calc.interest()).signum()>0){lines.add(new JournalModels.Line(d.terms().accruedInterestLedger(),term?JournalModels.Side.CREDIT:JournalModels.Side.DEBIT,calc.interest()));lines.add(new JournalModels.Line(d.terms().interestProfitLossLedger(),term?JournalModels.Side.DEBIT:JournalModels.Side.CREDIT,calc.interest()));}
-            after=new Position(before.principal(),text(interest.add(decimal(calc.interest()))),calc.carry(),through,false);
+            boolean nonAccrual = !term && (principalDaysPastDue(d, before, input.businessDate()) > 90);
+            if(nonAccrual){
+                after=new Position(before.principal(),before.interest(),before.carry(),through,false);
+            }else{
+                if(decimal(calc.interest()).signum()>0){lines.add(new JournalModels.Line(d.terms().accruedInterestLedger(),term?JournalModels.Side.CREDIT:JournalModels.Side.DEBIT,calc.interest()));lines.add(new JournalModels.Line(d.terms().interestProfitLossLedger(),term?JournalModels.Side.DEBIT:JournalModels.Side.CREDIT,calc.interest()));}
+                after=new Position(before.principal(),text(interest.add(decimal(calc.interest()))),calc.carry(),through,false);
+            }
         }else{
             LocalDate through=term&&input.businessDate().isAfter(d.terms().maturityDate())?d.terms().maturityDate():input.businessDate();if(!before.accruedThrough().equals(through))throw error("CONTRACT_ACCRUAL_REQUIRED");
             if(term&&input.kind()==Kind.REDEEM){
@@ -102,7 +107,7 @@ public class ContractService {
             boolean ready=store.ready(bank);UUID latest=ready?store.latestUnreversed(bank,contractId):null;
             return Map.of("version",bank.version(),"businessDate",date,"items",jdbc.query("SELECT d.*,EXISTS(SELECT 1 FROM platform.contract_reversal r WHERE r.original_id=d.id) reversed FROM platform.contract_delivery d WHERE d.contract_id=? AND d.tenant_id=? ORDER BY d.created_at DESC,d.id DESC LIMIT ? OFFSET ?",(r,n)->{
                 var posting=JSON.readValue(r.getString("payload"),Posting.class);boolean completed=r.getBoolean("completed"),reversed=r.getBoolean("reversed");
-                boolean eligible=completed&&!reversed&&posting.id().equals(latest)&&posting.businessDate().equals(date)&&Set.of(Kind.OPEN,Kind.ACCRUE,Kind.REPAY).contains(posting.kind());
+                boolean eligible=completed&&!reversed&&posting.id().equals(latest)&&posting.businessDate().equals(date)&&Set.of(Kind.OPEN,Kind.ACCRUE,Kind.REPAY,Kind.FEE_PAY).contains(posting.kind());
                 return Map.of("posting",posting,"completed",completed,"reversed",reversed,"reversible",eligible,"maker",r.getString("maker_subject"),"checker",r.getString("reviewer_subject"),"failureCode",Objects.toString(r.getString("failure_code"),""));
             },contractId,bankId,limit,offset),"total",jdbc.queryForObject("SELECT count(*) FROM platform.contract_delivery WHERE contract_id=? AND tenant_id=?",Long.class,contractId,bankId));
         });
@@ -113,7 +118,7 @@ public class ContractService {
         if(jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM platform.contract_delivery WHERE contract_id=? AND NOT completed)",Boolean.class,input.contractId()))throw error("CONTRACT_PENDING");
         var rows=jdbc.queryForList("SELECT payload::text FROM platform.contract_delivery WHERE id=? AND tenant_id=? AND contract_id=? AND completed",String.class,input.originalEventId(),bank.id(),input.contractId());
         if(rows.isEmpty())throw error("CONTRACT_CORRECTION_INVALID");var original=JSON.readValue(rows.getFirst(),Posting.class);
-        if(!Set.of(Kind.OPEN,Kind.ACCRUE,Kind.REPAY).contains(original.kind())||jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM platform.contract_reversal WHERE original_id=?)",Boolean.class,input.originalEventId()))throw error("CONTRACT_CORRECTION_INVALID");
+        if(!Set.of(Kind.OPEN,Kind.ACCRUE,Kind.REPAY,Kind.FEE_PAY).contains(original.kind())||jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM platform.contract_reversal WHERE original_id=?)",Boolean.class,input.originalEventId()))throw error("CONTRACT_CORRECTION_INVALID");
         if(!original.businessDate().equals(input.businessDate()))throw error("CONTRACT_CORRECTION_CLOSED_DAY");
         if(!input.originalEventId().equals(store.latestUnreversed(bank,input.contractId())))throw error("CONTRACT_CORRECTION_DEPENDENCIES");
         var before=store.position(bank,input.contractId());if(!before.equals(original.after()))throw error("CONTRACT_POSITION_CHANGED");
@@ -123,10 +128,15 @@ public class ContractService {
         var movement=decimal(original.customerMovement()).negate();var balance=customerStore.position(bank,a);
         if(!balance.reconciled())throw error("FUNDING_UNRECONCILED");
         if(movement.signum()<0&&decimal(balance.withdrawable()).compareTo(movement.abs())<0)throw error("INSUFFICIENT_AVAILABLE_BALANCE");
-        if(movement.signum()!=0)TransactionLimits.check(jdbc,bank.id(),a.terms().currency(),d.terms().type()==Type.TERM_DEPOSIT?"TD_OPEN_REVERSAL":original.kind()==Kind.OPEN?"LOAN_DISBURSE_REVERSAL":"LOAN_REPAY_REVERSAL",input.businessDate(),movement.abs());
+        if(movement.signum()!=0)TransactionLimits.check(jdbc,bank.id(),a.terms().currency(),d.terms().type()==Type.TERM_DEPOSIT?"TD_OPEN_REVERSAL":original.kind()==Kind.OPEN?"LOAN_DISBURSE_REVERSAL":original.kind()==Kind.FEE_PAY?"LOAN_FEE_REVERSAL":"LOAN_REPAY_REVERSAL",input.businessDate(),movement.abs());
         var lines=original.journal()==null?List.<JournalModels.Line>of():original.journal().lines().stream().map(l->new JournalModels.Line(l.ledgerId(),l.side()==JournalModels.Side.DEBIT?JournalModels.Side.CREDIT:JournalModels.Side.DEBIT,l.amount())).toList();
         var p=posting(bank,id,d,Kind.REVERSE,input.businessDate(),before,after,text(movement),text(decimal(original.tax()).negate()),lines,input.reason());
-        return new Posting(p.id(),p.contract(),p.kind(),p.businessDate(),p.before(),p.after(),p.customerMovement(),p.tax(),p.journal(),p.reason(),original.id());
+        LoanFeeModels.Details feeServicing=null;
+        if(original.feeServicing()!=null){
+            var of=original.feeServicing();
+            feeServicing=new LoanFeeModels.Details(of.change(),of.feeId(),of.dueDate(),of.receivableLedger(),of.incomeLedger(),of.after(),of.before(),of.tax());
+        }
+        return new Posting(p.id(),p.contract(),p.kind(),p.businessDate(),p.before(),p.after(),p.customerMovement(),p.tax(),p.journal(),p.reason(),original.id(),null,null,feeServicing);
     }
     public void correct(Actor actor,UUID bankId,Correction input,UUID id,String maker){var bank=tenants.get(bankId,true);authority(actor,bankId,com.cbs.approvals.ApprovalModels.Action.CONTRACT_CORRECTION,input,id,true);save(actor,bank,validateCorrection(bank,input,id),maker);}
     Posting posting(Tenant bank,UUID id,Definition d,Kind kind,LocalDate date,Position before,Position after,String movement,String tax,List<JournalModels.Line> lines,String reason){
@@ -151,7 +161,7 @@ public class ContractService {
     private com.cbs.access.BankDuties duties;
     @org.springframework.beans.factory.annotation.Autowired void duties(com.cbs.access.BankDuties duties){this.duties=duties;}
     public void deliver(UUID id){tx.executeWithoutResult(t->{var banks=jdbc.queryForList("SELECT tenant_id FROM platform.contract_delivery WHERE id=?",UUID.class,id);if(banks.isEmpty())return;var bank=tenants.get(banks.getFirst(),true);var jobs=jdbc.query("SELECT * FROM platform.contract_delivery WHERE id=? AND NOT completed FOR UPDATE",(r,n)->new Dispatch(JSON.readValue(r.getString("payload"),Posting.class),r.getString("maker_subject"),r.getString("reviewer_issuer"),r.getString("reviewer_subject"),r.getObject("correlation_id",UUID.class)),id);if(jobs.isEmpty())return;var job=jobs.getFirst();var p=job.posting();String failure=null;
-        try{if(!store.posted(bank,id)){if(p.contract().terms().type()==Type.LOAN){var scope=lending.request(id);if(scope==null)throw new TenantException(403,"LENDING_REAUTHORIZATION_REQUIRED","Legacy pending loan requires authority review");lending.maker(new Actor(job.issuer(),job.maker(),false,job.correlationId()),bank.id(),scope);lending.checker(new Actor(job.issuer(),job.checker(),false,job.correlationId()),bank.id(),scope,id,false);}if(bank.status()!=Status.ACTIVE)throw error("ACCOUNT_BANK_NOT_ACTIVE");duties.requireAtDelivery(id);accounts.requireMatching(bank,p.contract().account());if(p.kind()==Kind.OPEN&&p.contract().terms().type()==Type.LOAN)credit.requireDisbursement(bank,p.contract().terms(),p.contract().id());if(p.kind()==Kind.RESTRUCTURE)credit.requireDisbursement(bank,p.loanServicing().renewedTerms(),p.contract().id());if(!Set.of(Kind.ACCRUE,Kind.IMPAIR,Kind.WRITE_OFF,Kind.FEE_ASSESS,Kind.FEE_WAIVE).contains(p.kind())&&!(p.kind()==Kind.REVERSE&&decimal(p.customerMovement()).signum()==0))customers.requireEligible(bank,p.contract().account().customerId());}store.post(bank,job);}catch(TenantException e){failure=e.code();}
+        try{if(!store.posted(bank,id)){if(p.contract().terms().type()==Type.LOAN){var scope=lending.request(id);if(scope==null)throw new TenantException(403,"LENDING_REAUTHORIZATION_REQUIRED","Legacy pending loan requires authority review");lending.maker(new Actor(job.issuer(),job.maker(),false,job.correlationId()),bank.id(),scope);lending.checker(new Actor(job.issuer(),job.checker(),false,job.correlationId()),bank.id(),scope,id,false);}if(bank.status()!=Status.ACTIVE)throw error("ACCOUNT_BANK_NOT_ACTIVE");duties.requireAtDelivery(id);accounts.requireMatching(bank,p.contract().account());if(p.kind()==Kind.OPEN&&p.contract().terms().type()==Type.LOAN)credit.requireDisbursement(bank,p.contract().terms(),p.contract().id());if(p.kind()==Kind.RESTRUCTURE)credit.requireDisbursement(bank,p.loanServicing().renewedTerms(),p.contract().id());if(!Set.of(Kind.ACCRUE,Kind.IMPAIR,Kind.WRITE_OFF,Kind.FEE_ASSESS,Kind.FEE_WAIVE,Kind.PARTIAL_WRITE_OFF).contains(p.kind())&&!(p.kind()==Kind.REVERSE&&decimal(p.customerMovement()).signum()==0))customers.requireEligible(bank,p.contract().account().customerId());}store.post(bank,job);}catch(TenantException e){failure=e.code();}
         jdbc.update("UPDATE platform.contract_delivery SET completed=?,failure_code=?,attempts=attempts+1,last_attempt_at=clock_timestamp() WHERE id=?",failure==null,failure,id);jdbc.update("UPDATE platform.journal_delivery SET completed=?,failure_code=?,completed_at=CASE WHEN ? THEN clock_timestamp() ELSE NULL END WHERE request_id=?",failure==null,failure,failure==null,id);
         if(failure==null){if(p.kind()==Kind.RESTRUCTURE)jdbc.update("UPDATE platform.contract SET current_terms=?::jsonb WHERE id=?",JSON.writeValueAsString(p.loanServicing().renewedTerms()),p.contract().id());if(p.kind()==Kind.RENEW)jdbc.update("UPDATE platform.contract SET current_terms=?::jsonb WHERE id=?",JSON.writeValueAsString(p.servicing().renewedTerms()),p.contract().id());jdbc.update("UPDATE platform.contract SET position=?::jsonb,status=? WHERE id=?",JSON.writeValueAsString(p.after()),p.kind()==Kind.REVERSE&&p.after().closed()?"CANCELLED":p.kind()==Kind.WRITE_OFF?"WRITTEN_OFF":p.after().closed()?"CLOSED":"ACTIVE",p.contract().id());tenants.audit(new Actor(job.issuer(),job.checker(),true,job.correlationId()),bank.id(),"CONTRACT_"+p.kind()+"_POSTED",bank.version(),bank.status(),bank.status(),p.reason(),null,null,Map.of("contractId",p.contract().id(),"eventId",id));}
     });}

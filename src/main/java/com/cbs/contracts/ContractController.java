@@ -3,6 +3,7 @@ package com.cbs.contracts;
 import static com.cbs.access.RequestIdentity.actor;
 import com.cbs.approvals.*;
 import jakarta.validation.Valid;
+import java.time.LocalDate;
 import java.util.*;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken;
@@ -12,8 +13,26 @@ import org.springframework.web.bind.annotation.*;
 @RequestMapping({"/api/v1/admin/tenants/{bank}/contracts","/api/v1/banks/{bank}/lending-operations/contracts"})
 @ConditionalOnProperty(name="cbs.tenancy.enabled",havingValue="true",matchIfMissing=true)
 public class ContractController {
-    private final LoanFeeService fees;private final LoanServicingService loans;private final TermServicingService servicing;private final ContractService service;private final ApprovalService approvals;
-    public ContractController(LoanFeeService fees,LoanServicingService loans,TermServicingService servicing,ContractService service,ApprovalService approvals){this.fees=fees;this.loans=loans;this.servicing=servicing;this.service=service;this.approvals=approvals;}
+    private final LoanFeeService fees;
+    private final LoanServicingService loans;
+    private final TermServicingService servicing;
+    private final ContractService service;
+    private final ApprovalService approvals;
+    private final LoanMoratoriumService moratoria;
+    private final LoanEclService ecl;
+
+    public ContractController(LoanFeeService fees, LoanServicingService loans, TermServicingService servicing,
+                              ContractService service, ApprovalService approvals,
+                              LoanMoratoriumService moratoria, LoanEclService ecl) {
+        this.fees = fees;
+        this.loans = loans;
+        this.servicing = servicing;
+        this.service = service;
+        this.approvals = approvals;
+        this.moratoria = moratoria;
+        this.ecl = ecl;
+    }
+
     @PostMapping("/fees/preview") public ContractModels.Posting feePreview(JwtAuthenticationToken jwt,@PathVariable UUID bank,@Valid @RequestBody LoanFeeModels.Change input){return fees.preview(actor(jwt),bank,input);}
     @PostMapping("/fees") public ApprovalModels.Request fee(JwtAuthenticationToken jwt,@PathVariable UUID bank,@RequestHeader("Idempotency-Key") UUID key,@Valid @RequestBody LoanFeeModels.Change input){return approvals.loanFee(actor(jwt),key,bank,input);}
     @PostMapping("/loan-servicing/preview") public ContractModels.Posting loanPreview(JwtAuthenticationToken jwt,@PathVariable UUID bank,@Valid @RequestBody LoanServicingModels.Instruction input){return loans.preview(actor(jwt),bank,input);}
@@ -33,4 +52,19 @@ public class ContractController {
     @PostMapping("/events/preview") public ContractModels.Posting previewEvent(JwtAuthenticationToken jwt,@PathVariable UUID bank,@Valid @RequestBody ContractModels.Event input){return service.previewEvent(actor(jwt),bank,input);}
     @PostMapping("/events") public ApprovalModels.Request event(JwtAuthenticationToken jwt,@PathVariable UUID bank,@RequestHeader("Idempotency-Key") UUID key,@Valid @RequestBody ContractModels.Event input){return approvals.contractEvent(actor(jwt),key,bank,input);}
     @PostMapping("/events/{id}/retry") public void retry(JwtAuthenticationToken jwt,@PathVariable UUID bank,@PathVariable UUID id){service.retry(actor(jwt),bank,id);}
+
+    @PostMapping("/moratoria")
+    public LoanMoratoriumModels.MoratoriumRecord grantMoratorium(JwtAuthenticationToken jwt, @PathVariable UUID bank, @Valid @RequestBody LoanMoratoriumModels.MoratoriumGrant input) {
+        return moratoria.grant(actor(jwt), bank, input);
+    }
+
+    @GetMapping("/{id}/moratoria")
+    public List<LoanMoratoriumModels.MoratoriumRecord> listMoratoria(JwtAuthenticationToken jwt, @PathVariable UUID bank, @PathVariable UUID id) {
+        return moratoria.list(actor(jwt), bank, id);
+    }
+
+    @GetMapping("/ecl/evaluate")
+    public LoanEclModels.EclReport evaluateEcl(JwtAuthenticationToken jwt, @PathVariable UUID bank, @RequestParam(required = false) LocalDate asOf) {
+        return ecl.evaluate(actor(jwt), bank, asOf);
+    }
 }
