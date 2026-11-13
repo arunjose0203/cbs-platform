@@ -1,0 +1,151 @@
+{
+  "realm": "cbs",
+  "displayName": "CBS",
+  "enabled": true,
+  "sslRequired": "all",
+  "registrationAllowed": false,
+  "registrationEmailAsUsername": false,
+  "resetPasswordAllowed": false,
+  "rememberMe": false,
+  "editUsernameAllowed": false,
+  "loginWithEmailAllowed": false,
+  "duplicateEmailsAllowed": false,
+  "verifyEmail": false,
+  "bruteForceProtected": true,
+  "permanentLockout": false,
+  "failureFactor": 5,
+  "waitIncrementSeconds": 60,
+  "maxFailureWaitSeconds": 900,
+  "maxDeltaTimeSeconds": 43200,
+  "quickLoginCheckMilliSeconds": 1000,
+  "minimumQuickLoginWaitSeconds": 60,
+  "accessTokenLifespan": 900,
+  "accessTokenLifespanForImplicitFlow": 0,
+  "ssoSessionIdleTimeout": 900,
+  "ssoSessionMaxLifespan": 28800,
+  "offlineSessionIdleTimeout": 0,
+  "offlineSessionMaxLifespanEnabled": true,
+  "offlineSessionMaxLifespan": 0,
+  "accessCodeLifespan": 60,
+  "accessCodeLifespanLogin": 900,
+  "accessCodeLifespanUserAction": 300,
+  "actionTokenGeneratedByAdminLifespan": 86400,
+  "actionTokenGeneratedByUserLifespan": 300,
+  "revokeRefreshToken": true,
+  "refreshTokenMaxReuse": 0,
+  "defaultSignatureAlgorithm": "RS256",
+  "passwordPolicy": "length(14) and maxLength(128) and digits(1) and upperCase(1) and lowerCase(1) and specialChars(1) and notUsername and notEmail and passwordHistory(12)",
+  "otpPolicyType": "totp",
+  "otpPolicyAlgorithm": "HmacSHA1",
+  "otpPolicyDigits": 6,
+  "otpPolicyPeriod": 30,
+  "otpPolicyLookAheadWindow": 1,
+  "otpPolicyCodeReusable": false,
+  "eventsEnabled": true,
+  "eventsExpiration": 7776000,
+  "adminEventsEnabled": true,
+  "adminEventsDetailsEnabled": false,
+  "internationalizationEnabled": true,
+  "supportedLocales": ["en", "fr", "sw"],
+  "defaultLocale": "en",
+  "browserSecurityHeaders": {
+    "contentSecurityPolicy": "frame-src 'self'; frame-ancestors 'self'; object-src 'none';",
+    "xFrameOptions": "SAMEORIGIN",
+    "xContentTypeOptions": "nosniff",
+    "referrerPolicy": "no-referrer",
+    "strictTransportSecurity": "max-age=31536000; includeSubDomains",
+    "xRobotsTag": "none"
+  },
+  "roles": {
+    "realm": [
+      {"name": "PLATFORM_ADMIN", "description": "CBS platform administration. Bank duties are granted inside CBS, not here."}
+    ]
+  },
+  "requiredActions": [
+    {"alias": "CONFIGURE_TOTP", "name": "Configure OTP", "providerId": "CONFIGURE_TOTP", "enabled": true, "defaultAction": true, "priority": 10, "config": {}},
+    {"alias": "UPDATE_PASSWORD", "name": "Update Password", "providerId": "UPDATE_PASSWORD", "enabled": true, "defaultAction": false, "priority": 20, "config": {}}
+  ],
+  "browserFlow": "cbs-password-and-otp",
+  "authenticatorConfig": [
+    {"alias": "cbs-password-reference", "config": {"default.reference.value": "pwd", "default.reference.maxAge": "1800"}},
+    {"alias": "cbs-mfa-reference", "config": {"default.reference.value": "mfa", "default.reference.maxAge": "1800"}}
+  ],
+  "authenticationFlows": [{
+    "alias": "cbs-password-and-otp",
+    "description": "Always require password and OTP; no cookie-only alternative",
+    "providerId": "basic-flow",
+    "topLevel": true,
+    "builtIn": false,
+    "authenticationExecutions": [
+      {"authenticator": "auth-username-password-form", "authenticatorConfig": "cbs-password-reference", "requirement": "REQUIRED", "priority": 10, "authenticatorFlow": false, "userSetupAllowed": false},
+      {"authenticator": "auth-otp-form", "authenticatorConfig": "cbs-mfa-reference", "requirement": "REQUIRED", "priority": 20, "authenticatorFlow": false, "userSetupAllowed": true}
+    ]
+  }],
+  "clients": [
+    {
+      "clientId": "cbs-portal",
+      "name": "CBS Administration Portal",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "implicitFlowEnabled": false,
+      "serviceAccountsEnabled": false,
+      "frontchannelLogout": true,
+      "fullScopeAllowed": false,
+      "redirectUris": ["https://${CBS_DOMAIN}/admin/index.html"],
+      "webOrigins": ["https://${CBS_DOMAIN}"],
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "post.logout.redirect.uris": "https://${CBS_DOMAIN}/admin/index.html",
+        "oauth2.device.authorization.grant.enabled": "false",
+        "oidc.ciba.grant.enabled": "false",
+        "use.refresh.tokens": "false",
+        "client_credentials.use_refresh_token": "false"
+      },
+      "defaultClientScopes": ["basic", "profile", "email"],
+      "optionalClientScopes": [],
+      "protocolMappers": [
+        {"name": "CBS API audience", "protocol": "openid-connect", "protocolMapper": "oidc-audience-mapper", "config": {"included.custom.audience": "cbs-api", "access.token.claim": "true", "id.token.claim": "false"}},
+        {"name": "CBS roles", "protocol": "openid-connect", "protocolMapper": "oidc-usermodel-realm-role-mapper", "config": {"claim.name": "roles", "jsonType.label": "String", "multivalued": "true", "access.token.claim": "true", "id.token.claim": "false"}},
+        {"name": "Verified authentication methods", "protocol": "openid-connect", "protocolMapper": "oidc-amr-mapper", "config": {"access.token.claim": "true", "id.token.claim": "true"}}
+      ]
+    },
+    {
+      "clientId": "cbs-identity-operator",
+      "name": "CBS identity operations (key rotation, staff sign-in accounts)",
+      "description": "Disabled by default. Enable for an operations window, run ops/identity_admin.py, then disable again.",
+      "enabled": false,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "clientAuthenticatorType": "client-secret",
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "implicitFlowEnabled": false,
+      "serviceAccountsEnabled": true,
+      "fullScopeAllowed": true,
+      "redirectUris": [],
+      "webOrigins": [],
+      "attributes": {
+        "access.token.lifespan": "120",
+        "oauth2.device.authorization.grant.enabled": "false",
+        "oidc.ciba.grant.enabled": "false"
+      },
+      "defaultClientScopes": ["roles"],
+      "optionalClientScopes": []
+    }
+  ],
+  "scopeMappings": [
+    {"client": "cbs-portal", "roles": ["PLATFORM_ADMIN"]}
+  ],
+  "users": [
+    {
+      "username": "service-account-cbs-identity-operator",
+      "enabled": true,
+      "serviceAccountClientId": "cbs-identity-operator",
+      "realmRoles": [],
+      "clientRoles": {"realm-management": ["view-realm", "manage-realm", "view-users", "manage-users"]}
+    }
+  ]
+}

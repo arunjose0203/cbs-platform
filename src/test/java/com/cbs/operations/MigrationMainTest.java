@@ -20,6 +20,22 @@ class MigrationMainTest {
             assertThatThrownBy(()->MigrationMain.options(bad)).isInstanceOf(IllegalArgumentException.class);
         assertThat(com.cbs.tenancy.BankDatabaseProvisioner.expectedBankVersion()).matches("[0-9]+");
     }
+    @Test void firstAdministratorNeedsTheExactHttpsIssuerAndPrintableNames() {
+        assertThatCode(()->MigrationMain.validate(new MigrationMain.FirstAdministrator("https://id.bank.co.ke/realms/cbs","3f2a-subject","Jane Otieno","jane@bank.co.ke"),false)).doesNotThrowAnyException();
+        assertThatCode(()->MigrationMain.validate(new MigrationMain.FirstAdministrator("http://127.0.0.1:8180/realms/cbs-dev","s","Local",null),true)).doesNotThrowAnyException();
+        for(var bad:java.util.List.of(
+                new MigrationMain.FirstAdministrator("http://127.0.0.1:8180/realms/cbs-dev","s","Local",null),
+                new MigrationMain.FirstAdministrator("https://user@id.bank.co.ke/realms/cbs","s","N",null),
+                new MigrationMain.FirstAdministrator("https://id.bank.co.ke/realms/cbs?x=1","s","N",null),
+                new MigrationMain.FirstAdministrator("https://id.bank.co.ke/realms/cbs","","N",null),
+                new MigrationMain.FirstAdministrator("https://id.bank.co.ke/realms/cbs","s\u0000","N",null),
+                new MigrationMain.FirstAdministrator("https://id.bank.co.ke/realms/cbs","s","x".repeat(201),null),
+                new MigrationMain.FirstAdministrator("https://id.bank.co.ke/realms/cbs","s","N","not-an-email"),
+                new MigrationMain.FirstAdministrator("https://IDENTITY_DOMAIN/realms/cbs","s","N",null),
+                new MigrationMain.FirstAdministrator("https://id.bank.co.ke/realms/cbs","REPLACE_WITH_SUBJECT","N",null)))
+            assertThatCode(()->MigrationMain.validate(bad,false)).as(bad.toString()).isInstanceOf(MigrationMain.Refused.class);
+        assertThat(new MigrationMain.Plan(null,java.util.Map.of()).firstAdministrator()).isNull();
+    }
     @Test void localTestCannotContactRemoteDatabase() {
         assertThatCode(()->MigrationMain.validate(new MigrationMain.Database("jdbc:postgresql://127.0.0.1:55433/drill","owner","/secret",null),true,false)).doesNotThrowAnyException();
         assertThatThrownBy(()->MigrationMain.validate(new MigrationMain.Database("jdbc:postgresql://remote:5432/drill","owner","/secret",null),true,false)).isInstanceOf(IllegalArgumentException.class);

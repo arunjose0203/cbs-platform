@@ -3395,6 +3395,41 @@ class TenantAdministrationIntegrationTest {
         assertThatThrownBy(()->com.cbs.operations.MigrationMain.run(plan,new com.cbs.operations.MigrationMain.Options(true,java.util.Set.of("drill-c"),false,null))).isInstanceOf(IllegalArgumentException.class);
     }
     /**
+     * P-03: production forbids the runtime bootstrap subject, so the offline migration job registers the first
+     * administrator for an identity provider. It is audited, repeatable for the same subject, refused for any other
+     * subject of that issuer, and the registered person can then sign in with MFA.
+     */
+    @Test void migrationJobRegistersTheFirstAdministratorForAnIdentityProviderOnce()throws Exception{
+        var dir=java.nio.file.Files.createTempDirectory("cbs-first-admin");
+        var t=TestDatabases.target("control");var file=dir.resolve("control.pw");java.nio.file.Files.writeString(file,t.password());
+        var control=new com.cbs.operations.MigrationMain.Database(t.url(),t.name(),file.toString(),null);
+        var options=new com.cbs.operations.MigrationMain.Options(true,java.util.Set.of(),false,null);
+        String issuer="https://id-"+UUID.randomUUID()+".bank.example/realms/cbs";
+        var first=new com.cbs.operations.MigrationMain.FirstAdministrator(issuer,"first-subject","First administrator","first@bank.example");
+        var report=com.cbs.operations.MigrationMain.run(new com.cbs.operations.MigrationMain.Plan(control,Map.of(),first),options);
+        assertThat(report.firstAdministrator()).isEqualTo("REGISTERED");
+        UUID staff=jdbc.queryForObject("SELECT id FROM platform.staff_identity WHERE issuer=? AND subject='first-subject' AND active",UUID.class,issuer);
+        assertThat(jdbc.queryForObject("SELECT actor_subject||':'||action FROM platform.identity_audit WHERE staff_id=?",String.class,staff))
+            .isEqualTo("system:migration-job:FIRST_ADMIN_REGISTERED");
+        // Re-running the same plan changes nothing.
+        assertThat(com.cbs.operations.MigrationMain.run(new com.cbs.operations.MigrationMain.Plan(control,Map.of(),first),options).firstAdministrator()).isEqualTo("CURRENT");
+        // Nobody else can be added for this issuer through the job.
+        var other=new com.cbs.operations.MigrationMain.FirstAdministrator(issuer,"second-subject","Someone else",null);
+        assertThatThrownBy(()->com.cbs.operations.MigrationMain.run(new com.cbs.operations.MigrationMain.Plan(control,Map.of(),other),options))
+            .isInstanceOf(com.cbs.operations.MigrationMain.Refused.class).hasMessageContaining("through the portal");
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM platform.staff_identity WHERE issuer=?",Integer.class,issuer)).isEqualTo(1);
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM platform.identity_audit WHERE actor_issuer=?",Integer.class,issuer)).isEqualTo(1);
+        // A non-HTTPS issuer is refused before anything runs.
+        assertThatThrownBy(()->com.cbs.operations.MigrationMain.run(new com.cbs.operations.MigrationMain.Plan(control,Map.of(),
+            new com.cbs.operations.MigrationMain.FirstAdministrator("http://id.bank.example/realms/cbs","x","X",null)),options))
+            .isInstanceOf(com.cbs.operations.MigrationMain.Refused.class).hasMessageContaining("HTTPS");
+        // The registered administrator signs in with MFA.
+        var now=Instant.now();
+        var jwt=org.springframework.security.oauth2.jwt.Jwt.withTokenValue("first-admin").header("alg","RS256").issuer(issuer).subject("first-subject")
+            .issuedAt(now).expiresAt(now.plusSeconds(900)).claim("sid","first-session").claim("auth_time",now.getEpochSecond()).claim("amr",List.of("pwd","mfa")).build();
+        assertThat(access.authenticate(jwt,true).staff().displayName()).isEqualTo("First administrator");
+    }
+    /**
      * P-06 write-path measurement (opt-in: -Dcbs.perf=true, with -Dcbs.perf.accounts and -Dcbs.perf.operations).
      * Makers submit withdrawals on separate accounts concurrently; every submission carries the bank version, so
      * concurrent makers contend on it (STALE_VERSION retries measure that serialization). A checker approves each,

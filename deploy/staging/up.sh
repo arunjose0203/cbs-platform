@@ -1,6 +1,6 @@
 #!/bin/sh
 # One-command staging bring-up:
-#   preflight -> offline migrations -> runtime grants -> app + edge -> readiness over HTTPS.
+#   preflight -> offline migrations -> runtime grants -> identity + app + edge -> readiness over HTTPS.
 #
 #   deploy/staging/up.sh [--env-file /etc/cbs/staging.env] [--skip-migrations]
 #
@@ -56,8 +56,8 @@ else
     echo "3/5 Runtime grants unchanged"
 fi
 
-echo "4/5 Starting app and edge"
-compose up -d --wait app edge
+echo "4/5 Starting identity, app and edge"
+compose up -d --wait identity app edge
 
 echo "5/5 Checking readiness through the edge"
 attempt=0
@@ -70,4 +70,9 @@ until curl --fail --silent --show-error --max-time 10 "https://${CBS_DOMAIN}/hea
     fi
     sleep "${CBS_READY_INTERVAL:-5}"
 done
+# P-03: CBS validates tokens against this realm; its discovery document must be reachable over HTTPS.
+if ! curl --fail --silent --show-error --max-time 10 "https://${IDENTITY_DOMAIN}/realms/cbs/.well-known/openid-configuration" >/dev/null; then
+    echo "Staff sign-in is not reachable at https://${IDENTITY_DOMAIN}/realms/cbs" >&2
+    exit 5
+fi
 echo "CBS staging is ready at https://${CBS_DOMAIN}/admin/"
