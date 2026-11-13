@@ -301,8 +301,7 @@ public class BankDuties {
             item.put("lastSeen",row.get("lastSeen"));
             var dutyRows=jdbc.queryForList("SELECT payload::text FROM platform.bank_duty WHERE tenant_id=? AND staff_id=? AND active",String.class,bankId,id);
             Grant duty=dutyRows.isEmpty()?null:JSON.readValue(dutyRows.getFirst(),Grant.class);
-            item.put("duties",duty==null?null:Map.of("submit",sorted(duty.submit()),"approve",sorted(duty.approve()),"audit",duty.audit(),
-                    "expiresAt",duty.expiresAt()==null?"":duty.expiresAt().toString()));
+            item.put("duties",duty==null?null:dutiesView(duty));
             var lendingRoles=new ArrayList<String>();
             for(String payload:jdbc.queryForList("SELECT payload::text FROM platform.lending_access WHERE tenant_id=? AND staff_id=? AND active",String.class,bankId,id))
                 for(var role:JSON.readTree(payload).path("roles")) lendingRoles.add(role.asText());
@@ -355,6 +354,16 @@ public class BankDuties {
     }
 
     private static List<String> sorted(List<Duty> duties) { return duties.stream().map(Enum::name).sorted().toList(); }
+
+    /** Fixed key order: the snapshot hash must be identical across restarts and application instances. */
+    static Map<String,Object> dutiesView(Grant duty) {
+        var view=new LinkedHashMap<String,Object>();
+        view.put("submit",sorted(duty.submit()));
+        view.put("approve",sorted(duty.approve()));
+        view.put("audit",duty.audit());
+        view.put("expiresAt",duty.expiresAt()==null?"":duty.expiresAt().toString());
+        return view;
+    }
 
     static String hash(Map<String,Object> snapshot) {
         try {

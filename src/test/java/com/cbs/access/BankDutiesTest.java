@@ -73,6 +73,12 @@ class BankDutiesTest {
         assertThat(BankDuties.hash(snapshot)).isNotEqualTo(first);
     }
 
+    @Test void reviewedDutiesSerializeInAFixedOrderSoHashesAreReproducible() {
+        var view = BankDuties.dutiesView(grant(List.of(Duty.TREASURY, Duty.FINANCE), List.of(Duty.COMPLIANCE), true, NOW));
+        assertThat(JsonMapper.builder().build().writeValueAsString(view))
+                .isEqualTo("{\"submit\":[\"FINANCE\",\"TREASURY\"],\"approve\":[\"COMPLIANCE\"],\"audit\":true,\"expiresAt\":\"2026-11-13T10:00:00Z\"}");
+    }
+
     private static Grant grant(List<Duty> submit, List<Duty> approve, boolean audit, Instant expiresAt) {
         return new Grant(1, UUID.fromString("00000000-0000-0000-0000-000000000001"), true, submit, approve, audit, expiresAt, "Test grant");
     }

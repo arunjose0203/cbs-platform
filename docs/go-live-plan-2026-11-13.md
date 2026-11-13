@@ -349,7 +349,21 @@ These are estimates for one developer working with Claude, assuming decisions D0
 9. Start **Round 9** (access governance).
 10. Rotate development credentials (0.6) and book the external pen test.
 
-## 13. Keeping this plan current
+## 13. Progress log
+
+**13 November 2026**
+
+- **Phase 0:**
+  - 0.1 is partly done. Git for Windows is installed, line endings and file modes are pinned for this repo, and the baseline commit `bd91c56` is on `cbs-rounds-1-8`.
+  - **Finding:** GitHub has only `master` (`7486d03`). Rounds 1–8, Phase 0 and Round 9 exist only on this machine until they are pushed.
+  - Local integration testing works with a dedicated non-superuser `cbs_test` login (see `CLAUDE.md`).
+  - A local-only test failure in `RuntimeDatabaseGuardIntegrationTest` (it assumed a superuser login) is fixed.
+  - A duplicate UI message key is fixed.
+  - 0.2–0.8 are open.
+- **Round 9a (bank duties and access reviews):** delivered on branch `round-09-bank-duties`; see [bank-duties.md](bank-duties.md).
+- **Round 9b** remains: direct, non-approval administrator routes by duty, and a duty recheck at delivery.
+
+## 14. Keeping this plan current
 
 - After each round, update the matrix follow-up line and `application-progress.md` as usual. Tick the round's exit criterion here.
 - Re-estimate the section 1 percentages after Phase 0, after the decisions return, and after each UAT phase.

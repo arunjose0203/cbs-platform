@@ -26,6 +26,14 @@ $env:CBS_DB_USER='cbs_test'; $env:CBS_DB_PASSWORD='<local test password>'
 Tests always run in UTC (pom `argLine`). Never point integration tests at the development
 database used by `scripts/run.ps1`.
 
+Local setup (PostgreSQL 16+): the test login must be able to `SET ROLE` to the fixture roles it creates,
+or database creation fails with "must be able to SET ROLE". CI uses a superuser; locally use a
+non-superuser role instead:
+`CREATE ROLE cbs_test LOGIN CREATEDB CREATEROLE; CREATE DATABASE cbs_test OWNER cbs_test;
+ALTER ROLE cbs_test SET createrole_self_grant = 'set, inherit';`
+Run Maven through `cmd /c "...mvn.cmd ... > log 2>&1"` when capturing output: `scripts/mvn.ps1` sets
+`$ErrorActionPreference='Stop'`, so PowerShell redirection turns build warnings on stderr into failures.
+
 Run locally: terminal 1 `./scripts/run-local-identity.ps1` (Keycloak :8180), terminal 2
 `./scripts/run.ps1` (CBS :8080), portal http://127.0.0.1:8080/admin/index.html.
 `.local/` and `.tools/` hold local secrets and tools; never commit or print their contents.
