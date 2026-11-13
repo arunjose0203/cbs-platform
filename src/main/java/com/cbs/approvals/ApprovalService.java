@@ -133,7 +133,7 @@ public class ApprovalService {
         if(lendingScoped) return null;
         if(paymentScoped(action)) return actor.platformAdmin()?com.cbs.access.BankDuties.Duty.PAYMENTS:null;
         if(action==Action.ACCOUNT_OPERATION){var change=(com.cbs.accounts.OperationModels.Change)input;
-            if(change.kind()!=com.cbs.accounts.OperationModels.Kind.CLOSURE_SETTLEMENT&&branchOperations.branch(bank,change.accountId())!=null) return null;}
+            if(change.kind()!=com.cbs.accounts.OperationModels.Kind.CLOSURE_SETTLEMENT&&change.kind()!=com.cbs.accounts.OperationModels.Kind.CLOSURE_SETTLEMENT_REVERSAL&&branchOperations.branch(bank,change.accountId())!=null) return null;}
         if(action==Action.CASH_OPERATION&&((com.cbs.cash.CashModels.Change)input).kind()!=com.cbs.cash.CashModels.Kind.REGISTER) return null;
         return com.cbs.access.BankDuties.duty(action);
     }

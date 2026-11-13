@@ -7,12 +7,26 @@ import java.util.*;
 
 public final class CustomerModels {
     private CustomerModels() { }
-    public enum State { PROSPECT, ACTIVE, BLOCKED }
+    public enum State { PROSPECT, ACTIVE, BLOCKED, DECEASED }
     public enum DocumentType { NATIONAL_ID, PASSPORT, REGISTRATION_CERTIFICATE }
     /** INDIVIDUAL is assumed when absent, so existing profiles are unchanged. */
     public enum CustomerType { INDIVIDUAL, ORGANIZATION }
     /** Age of majority used for minors' accounts. */
     public static final int MAJORITY_AGE=18;
+    public record DocumentUpload(
+        @NotNull DocumentType documentType,
+        @NotBlank @Size(max=255) String fileName,
+        @NotBlank @Size(max=100) String contentType,
+        LocalDate retentionUntil,
+        @NotBlank String base64Content) {}
+    public record DocumentSummary(UUID id,UUID customerId,String documentType,String fileName,String contentType,long fileSize,String sha256,LocalDate retentionUntil,java.time.Instant uploadedAt,String uploadedBy,boolean archived) {}
+    public record DecryptedDocument(UUID id,String fileName,String contentType,byte[] data) {}
+    public record KycReviewInput(
+        @NotBlank @Pattern(regexp="LOW|MEDIUM|HIGH") String riskRating,
+        @NotNull LocalDate reviewedAt,
+        @NotBlank @Size(max=160) String reviewReference,
+        @Size(max=1000) String notes) {}
+    public record KycReviewSummary(UUID id,UUID customerId,String riskRating,LocalDate reviewedAt,LocalDate nextReviewDue,String reviewerSubject,String reviewReference,String notes,boolean overdue) {}
     public record Profile(
         @NotBlank @Size(max=160) @Pattern(regexp="[^\\p{Cntrl}]+") String fullName,
         @NotNull LocalDate birthDate,

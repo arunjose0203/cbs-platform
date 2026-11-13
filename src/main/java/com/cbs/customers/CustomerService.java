@@ -94,6 +94,7 @@ public class CustomerService {
     private String organizationProblem(UUID bankId,UUID organization){return jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM platform.customer_party WHERE tenant_id=? AND organization_id=? AND role='DIRECTOR')",Boolean.class,bankId,organization)?null:"ORGANIZATION_PARTIES_REQUIRED";}
     public static void checkEligible(Definition customer){
         var p=customer.profile();
+        if(p.state()==State.DECEASED)throw error(409,"CUSTOMER_DECEASED");
         if(p.state()!=State.ACTIVE||p.reviewReference().isBlank()||(p.documentExpiry()!=null&&p.documentExpiry().isBefore(LocalDate.now(java.time.ZoneOffset.UTC))))throw error(409,"ACCOUNT_CUSTOMER_NOT_READY");
     }
     public void initialize(Actor actor,UUID bankId,ChangeRequest input){
@@ -115,10 +116,13 @@ public class CustomerService {
         if((p.kind()==CustomerType.ORGANIZATION)!=(p.documentType()==DocumentType.REGISTRATION_CERTIFICATE))throw error(400,"CUSTOMER_TYPE_DOCUMENT_MISMATCH");
         if(p.documentExpiry()!=null&&(p.documentExpiry().isBefore(p.birthDate())||p.documentExpiry().getYear()>2200))throw error(400,"CUSTOMER_INVALID_PROFILE");
         if(p.state()==State.ACTIVE&&(p.reviewReference().isBlank()||(p.documentExpiry()!=null&&p.documentExpiry().isBefore(today))))throw error(400,"CUSTOMER_REVIEW_REQUIRED");
+        if(p.state()==State.DECEASED&&input.customerId()==null)throw error(400,"CUSTOMER_INITIAL_STATE");
+        if(p.state()==State.DECEASED&&p.reviewReference().isBlank())throw error(400,"CUSTOMER_DECEASED_REVIEW_REQUIRED");
         UUID exclude=input.customerId()==null?new UUID(0,0):input.customerId();
         if(jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM platform.customer_registry WHERE tenant_id=? AND document_key=? AND id<>?)",Boolean.class,bank.id(),documentKey(p),exclude))throw error(409,"CUSTOMER_DOCUMENT_DUPLICATE");
         if(jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM platform.customer_registry WHERE tenant_id=? AND name_key=? AND birth_date=? AND id<>?)",Boolean.class,bank.id(),nameKey(p.fullName()),p.birthDate(),exclude)&&input.duplicateReview().isBlank())throw error(409,"CUSTOMER_DUPLICATE_REVIEW_REQUIRED");
         if(input.customerId()!=null){var row=current(bank.id(),input.customerId());if(!row.delivery().equals("APPLIED"))throw error(409,"CUSTOMER_DELIVERY_PENDING");
+            if(row.definition().profile().state()==State.DECEASED&&p.state()!=State.DECEASED)throw error(409,"CUSTOMER_ALREADY_DECEASED");
             if(row.definition().profile().kind()!=p.kind())throw error(409,"CUSTOMER_TYPE_IMMUTABLE");
             if(!row.definition().equals(store.read(bank,input.customerId())))throw error(503,"CUSTOMER_RECONCILIATION_REQUIRED");}
     }
@@ -150,5 +154,28 @@ public class CustomerService {
         jdbc.update("UPDATE platform.customer_delivery SET completed=true,completed_at=clock_timestamp() WHERE request_id=?",id);jdbc.update("UPDATE platform.customer_registry SET delivery='APPLIED' WHERE id=? AND request_id=?",job.definition().id(),id);
         tenants.audit(new Actor(job.reviewerIssuer(),job.reviewerSubject(),true,job.correlationId()),bank.id(),"CUSTOMER_CHANGE_DELIVERED",bank.version(),bank.status(),bank.status(),"Delivered approved request "+id,null,null,Map.of("customerId",job.definition().id(),"requestId",id));
     });}
+    public KycReviewSummary recordReview(Actor actor,UUID bankId,UUID customerId,KycReviewInput input){
+        AccessService.admin(actor);var bank=tenants.get(bankId,false);
+        if(!jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM platform.customer_registry WHERE tenant_id=? AND id=?)",Boolean.class,bankId,customerId))throw error(404,"CUSTOMER_NOT_FOUND");
+        LocalDate today=LocalDate.now(java.time.ZoneOffset.UTC);
+        if(input.reviewedAt().isAfter(today))throw error(400,"REVIEW_DATE_FUTURE");
+        int years=switch(input.riskRating()){case "HIGH"->1;case "MEDIUM"->2;case "LOW"->3;default->2;};
+        LocalDate nextDue=input.reviewedAt().plusYears(years);
+        UUID id=UUID.randomUUID();
+        jdbc.update("INSERT INTO platform.customer_kyc_review(id,tenant_id,customer_id,risk_rating,reviewed_at,next_review_due,reviewer_subject,review_reference,notes) VALUES (?,?,?,?,?,?,?,?,?)",
+                id,bankId,customerId,input.riskRating(),input.reviewedAt(),nextDue,actor.subject(),input.reviewReference().trim(),input.notes());
+        tenants.audit(actor,bankId,"CUSTOMER_KYC_REVIEWED",bank.version(),bank.status(),bank.status(),"KYC review recorded ("+input.riskRating()+")",null,null,Map.of("customerId",customerId,"reviewId",id,"riskRating",input.riskRating(),"nextReviewDue",nextDue));
+        return new KycReviewSummary(id,customerId,input.riskRating(),input.reviewedAt(),nextDue,actor.subject(),input.reviewReference().trim(),input.notes(),nextDue.isBefore(today));
+    }
+    public List<KycReviewSummary> listReviews(Actor actor,UUID bankId,UUID customerId){
+        AccessService.admin(actor);LocalDate today=LocalDate.now(java.time.ZoneOffset.UTC);
+        return jdbc.query("SELECT id,customer_id,risk_rating,reviewed_at,next_review_due,reviewer_subject,review_reference,notes FROM platform.customer_kyc_review WHERE tenant_id=? AND customer_id=? ORDER BY reviewed_at DESC",
+                (r,n)->new KycReviewSummary(r.getObject(1,UUID.class),r.getObject(2,UUID.class),r.getString(3),r.getDate(4).toLocalDate(),r.getDate(5).toLocalDate(),r.getString(6),r.getString(7),r.getString(8),r.getDate(5).toLocalDate().isBefore(today)),bankId,customerId);
+    }
+    public List<KycReviewSummary> listOverdueReviews(Actor actor,UUID bankId){
+        AccessService.admin(actor);LocalDate today=LocalDate.now(java.time.ZoneOffset.UTC);
+        return jdbc.query("SELECT DISTINCT ON (customer_id) id,customer_id,risk_rating,reviewed_at,next_review_due,reviewer_subject,review_reference,notes FROM platform.customer_kyc_review WHERE tenant_id=? ORDER BY customer_id,reviewed_at DESC",
+                (r,n)->new KycReviewSummary(r.getObject(1,UUID.class),r.getObject(2,UUID.class),r.getString(3),r.getDate(4).toLocalDate(),r.getDate(5).toLocalDate(),r.getString(6),r.getString(7),r.getString(8),r.getDate(5).toLocalDate().isBefore(today)),bankId).stream().filter(KycReviewSummary::overdue).toList();
+    }
     private static TenantException error(int status,String code){return new TenantException(status,code,"Customer onboarding operation could not be completed");}
 }

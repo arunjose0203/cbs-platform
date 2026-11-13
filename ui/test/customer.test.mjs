@@ -20,3 +20,34 @@ test('customer setup and inactive bank controls prevent mutation forms',async()=
   await ui.render(host,()=>false);assert.equal(host.innerHTML,'old');await ui.render(host,()=>true);await ui.action('new');await ui.action('prepare');assert.equal(forms.length,0);assert.match(host.innerHTML,/Prepare customer storage/);
   setLanguage('fr');assert.equal(t('Customers'),'Clients');setLanguage('sw');assert.equal(t('Customers'),'Wateja');setLanguage('en');
 });
+test('customer documents and kyc reviews render and post correctly',async()=>{
+  const posts=[];let submitForm;
+  const docs=[{id:'d1',fileName:'id.pdf',documentType:'NATIONAL_ID',fileSize:2048,retentionUntil:'2033-01-01'}];
+  const reviews=[{id:'r1',riskRating:'HIGH',reviewedAt:'2026-01-01',nextReviewDue:'2027-01-01',overdue:false,reviewReference:'REV-01'}];
+  const ui=createCustomerUi({
+    refresh:async()=>{},
+    field:(name,label,val,opts)=>`<input name="${name}" value="${val||''}">`,
+    form:(title,fields,fn)=>{submitForm=fn;},
+    api:async(path,opts)=>{
+      if(opts){posts.push({path,...opts});return {};}
+      if(path==='/admin/tenants?limit=100')return {items:banks};
+      if(path.endsWith('/documents'))return docs;
+      if(path.endsWith('/kyc-reviews'))return reviews;
+      return {version:1,storageReady:true,total:1,items:[{id:'c1',customerNumber:'C001',fullName:'Deceased Person',state:'DECEASED',delivery:'APPLIED'}]};
+    }
+  });
+  const host={innerHTML:''};
+  await ui.render(host,()=>true);
+  assert.match(host.innerHTML,/Deceased/);
+  await ui.action('docs','c1');
+  assert.ok(submitForm);
+  await submitForm({documentType:'PASSPORT',fileName:'passport.pdf',contentType:'application/pdf',retentionUntil:'2033-11-01',base64Content:'AQID'});
+  assert.equal(posts[0].path,'/admin/tenants/a/customers/c1/documents');
+  assert.equal(posts[0].body.fileName,'passport.pdf');
+
+  await ui.action('kyc-review','c1');
+  assert.ok(submitForm);
+  await submitForm({riskRating:'HIGH',reviewedAt:'2026-11-13',reviewReference:'REV-99',notes:'Urgent'});
+  assert.equal(posts[1].path,'/admin/tenants/a/customers/c1/kyc-reviews');
+  assert.equal(posts[1].body.riskRating,'HIGH');
+});

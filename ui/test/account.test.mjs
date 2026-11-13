@@ -82,3 +82,26 @@ test('mandate form offers only roles valid for the holder and submits for approv
  await submit({rule:'ANY_ONE',party0:'d1',role0:'SIGNATORY',party1:'',reason:'Board resolution'});
  assert.equal(posts[0].path,'/admin/tenants/a/accounts/mandates');assert.deepEqual(posts[0].body.parties,[{customerId:'d1',role:'SIGNATORY'}]);assert.equal(posts[0].body.expectedVersion,4);
 });
+test('dormant account state is rendered and can be updated for reactivation',async()=>{
+ let submit,fieldsHtml;const posts=[];
+ const dormantAccount={id:'d',accountNumber:'A001',customerNumber:'C001',name:'Savings',productCode:'SAV',currency:'KES',state:'DORMANT',delivery:'APPLIED'};
+ const ui=createAccountUi({
+  field:(name,label,val,opts)=>`[${name}:${val}:${(opts?.choices||[]).map(c=>c.value).join('|')}]`,
+  form:(_t,h,fn)=>{fieldsHtml=h;submit=fn;},
+  api:async(path,options)=>{
+   if(options){posts.push({path,...options});return {};}
+   if(path==='/admin/tenants?limit=100')return {items:banks};
+   if(path.endsWith('/d'))return {definition:{id:'d',name:'Savings',state:'DORMANT',customerId:'c',legalEntityId:'entity',terms:{id:'p',revision:1,currency:'KES'}},delivery:'APPLIED'};
+   return {version:6,storageReady:true,total:1,items:[dormantAccount]};
+  }
+ });
+ const host={innerHTML:''};
+ await ui.render(host,()=>true);
+ assert.match(host.innerHTML,/Dormant/);
+ await ui.action('edit','d');
+ assert.match(fieldsHtml,/\[state:DORMANT:AWAITING_FUNDING\|ACTIVE\|FROZEN\|DORMANT\]/);
+ await submit({name:'Savings',state:'ACTIVE',reason:'Reactivation request with fresh KYC'});
+ assert.equal(posts[0].path,'/admin/tenants/a/accounts');
+ assert.equal(posts[0].body.state,'ACTIVE');
+ assert.equal(posts[0].body.expectedVersion,6);
+});

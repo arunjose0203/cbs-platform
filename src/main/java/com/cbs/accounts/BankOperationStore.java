@@ -38,7 +38,7 @@ public class BankOperationStore {
    try(var s=c.createStatement();var r=s.executeQuery("SELECT to_regclass('bank.closure_settlement') IS NOT NULL")){r.next();if(!r.getBoolean(1))throw error("ACCOUNT_STORAGE_NOT_READY");}
    if(new BigDecimal(p.held()).signum()!=0||amount.compareTo(new BigDecimal(p.posted()))!=0)throw error("CLOSURE_SETTLEMENT_AMOUNT_MISMATCH");
   }
-  else if(input.kind()!=Kind.RELEASE&&input.kind()!=Kind.WITHDRAWAL_REVERSAL&&amount.compareTo(new BigDecimal(p.withdrawable()))>0)throw error("INSUFFICIENT_AVAILABLE_BALANCE");
+  else if(input.kind()!=Kind.RELEASE&&input.kind()!=Kind.WITHDRAWAL_REVERSAL&&input.kind()!=Kind.CLOSURE_SETTLEMENT_REVERSAL&&amount.compareTo(new BigDecimal(p.withdrawable()))>0)throw error("INSUFFICIENT_AVAILABLE_BALANCE");
   if((input.kind()==Kind.TRANSFER||input.kind()==Kind.TRANSFER_REVERSAL)&&!position(c,e.destination()).reconciled())throw error("FUNDING_UNRECONCILED");
   if(input.kind()==Kind.RELEASE){
    try(var s=c.prepareStatement("SELECT amount FROM bank.account_operation h WHERE request_id=? AND account_id=? AND kind='HOLD' AND NOT EXISTS(SELECT 1 FROM bank.account_operation r WHERE r.original_id=h.request_id)")){
@@ -65,9 +65,16 @@ public class BankOperationStore {
    try(var s=c.prepareStatement("INSERT INTO bank.account_operation(request_id,kind,account_id,destination_id,amount,original_id,journal_id,payload) VALUES (?,?,?,?,?,?,?,?::jsonb)")){
     s.setObject(1,e.id());s.setString(2,input.kind().name());s.setObject(3,input.accountId());s.setObject(4,input.destinationId());s.setBigDecimal(5,new BigDecimal(input.amount()));s.setObject(6,input.originalId());s.setObject(7,e.journal()==null?null:e.id());s.setString(8,payload);s.executeUpdate();
    }
-   if(e.journal()!=null){insertEntry(c,e.id(),input.accountId(),new BigDecimal(input.amount()).multiply(input.kind()==Kind.WITHDRAWAL_REVERSAL?BigDecimal.ONE:BigDecimal.ONE.negate()));if(e.destination()!=null)insertEntry(c,e.id(),input.destinationId(),new BigDecimal(input.amount()));}
+   if(e.journal()!=null){
+    boolean creditCustomer=input.kind()==Kind.WITHDRAWAL_REVERSAL||input.kind()==Kind.CLOSURE_SETTLEMENT_REVERSAL;
+    insertEntry(c,e.id(),input.accountId(),new BigDecimal(input.amount()).multiply(creditCustomer?BigDecimal.ONE:BigDecimal.ONE.negate()));
+    if(e.destination()!=null)insertEntry(c,e.id(),input.destinationId(),new BigDecimal(input.amount()));
+   }
    if(input.kind()==Kind.CLOSURE_SETTLEMENT)try(var s=c.prepareStatement("INSERT INTO bank.closure_settlement(request_id,account_id,amount,forfeited_carry) VALUES (?,?,?,coalesce((SELECT carry_after FROM bank.servicing_event WHERE account_id=? ORDER BY business_date DESC LIMIT 1),0))")){
     s.setObject(1,e.id());s.setObject(2,input.accountId());s.setBigDecimal(3,new BigDecimal(input.amount()));s.setObject(4,input.accountId());s.executeUpdate();
+   }
+   if(input.kind()==Kind.CLOSURE_SETTLEMENT_REVERSAL)try(var s=c.prepareStatement("INSERT INTO bank.closure_settlement_reversal(request_id,original_id) VALUES (?,?)")){
+    s.setObject(1,e.id());s.setObject(2,input.originalId());s.executeUpdate();
    }
  }
  private void insertEntry(Connection c,UUID id,UUID account,BigDecimal amount)throws SQLException{try(var s=c.prepareStatement("INSERT INTO bank.customer_entry(request_id,account_id,amount) VALUES (?,?,?)")){s.setObject(1,id);s.setObject(2,account);s.setBigDecimal(3,amount);s.executeUpdate();}}

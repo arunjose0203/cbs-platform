@@ -2,7 +2,7 @@ import {escapeHtml as e,errorMessage} from './model.js';
 import {t} from './i18n.js';
 export function createOperationUi({api,form,field}){
  let selected='',offset=0;
- const label=kind=>({TRANSFER:'Internal transfer',WITHDRAWAL:'Record withdrawal',HOLD:'Place hold',RELEASE:'Release hold',FUNDING_REVERSAL:'Reverse funding',WITHDRAWAL_REVERSAL:'Reverse withdrawal',TRANSFER_REVERSAL:'Reverse transfer',CLOSURE_SETTLEMENT:'Final closure settlement'})[kind]||kind;
+ const label=kind=>({TRANSFER:'Internal transfer',WITHDRAWAL:'Record withdrawal',HOLD:'Place hold',RELEASE:'Release hold',FUNDING_REVERSAL:'Reverse funding',WITHDRAWAL_REVERSAL:'Reverse withdrawal',TRANSFER_REVERSAL:'Reverse transfer',CLOSURE_SETTLEMENT:'Final closure settlement',CLOSURE_SETTLEMENT_REVERSAL:'Reverse closure settlement'})[kind]||kind;
  const note=text=>'<p class="field full reference-note">'+e(t(text))+'</p>';
  const button=(label,action,id,disabled=false)=>'<button type="button" class="button secondary" data-action="account-operation-'+action+'" data-id="'+e(id)+'" '+(disabled?'disabled':'')+'>'+e(t(label))+'</button>';
  async function action(name,id,bankId,isCurrent){

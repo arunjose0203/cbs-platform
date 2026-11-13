@@ -13,14 +13,14 @@ public final class TransactionLimits {
  private TransactionLimits() {}
  public record Change(@PositiveOrZero long expectedVersion,
   @NotNull @Pattern(regexp="[A-Z]{3}") String currency,
-  @NotNull @Pattern(regexp="FUNDING|TRANSFER|WITHDRAWAL|FUNDING_REVERSAL|HOLD|CASH_RECEIVE|CASH_DISPATCH|CASH_TRANSFER|CASH_DEPOSIT|CASH_WITHDRAWAL|CASH_SHORTAGE|CASH_OVERAGE|CASH_REVERSAL|WITHDRAWAL_REVERSAL|TRANSFER_REVERSAL|FX_CONVERSION|FX_REVERSAL|TD_OPEN|TD_REDEEM|LOAN_DISBURSE|LOAN_REPAY|TD_OPEN_REVERSAL|LOAN_DISBURSE_REVERSAL|LOAN_REPAY_REVERSAL|LOAN_FEE_ASSESS|LOAN_FEE_PAY|LOAN_FEE_WAIVE|LOAN_IMPAIR|LOAN_RESTRUCTURE|LOAN_WRITE_OFF|TD_EARLY_CLOSE|TD_RENEW|CLOSURE_SETTLEMENT") String operation,
+  @NotNull @Pattern(regexp="FUNDING|TRANSFER|WITHDRAWAL|FUNDING_REVERSAL|HOLD|CASH_RECEIVE|CASH_DISPATCH|CASH_TRANSFER|CASH_DEPOSIT|CASH_WITHDRAWAL|CASH_SHORTAGE|CASH_OVERAGE|CASH_REVERSAL|WITHDRAWAL_REVERSAL|TRANSFER_REVERSAL|FX_CONVERSION|FX_REVERSAL|TD_OPEN|TD_REDEEM|LOAN_DISBURSE|LOAN_REPAY|TD_OPEN_REVERSAL|LOAN_DISBURSE_REVERSAL|LOAN_REPAY_REVERSAL|LOAN_FEE_ASSESS|LOAN_FEE_PAY|LOAN_FEE_WAIVE|LOAN_IMPAIR|LOAN_RESTRUCTURE|LOAN_WRITE_OFF|TD_EARLY_CLOSE|TD_RENEW|CLOSURE_SETTLEMENT|CLOSURE_SETTLEMENT_REVERSAL") String operation,
   @NotNull @Pattern(regexp="[0-9]{1,18}(\\.[0-9]{1,6})?") String perTransaction,
   @NotNull @Pattern(regexp="[0-9]{1,18}(\\.[0-9]{1,6})?") String dailyTotal,
   @NotBlank @Size(max=500) @Pattern(regexp="[^\\p{Cntrl}]+") String reason) {}
  public static void validate(Tenant bank,Change change){
   if(bank.version()!=change.expectedVersion())throw error("STALE_VERSION");
   if(bank.status()!=Status.ACTIVE)throw error("ACCOUNT_BANK_NOT_ACTIVE");
-  if(!Set.of("FUNDING","TRANSFER","WITHDRAWAL","FUNDING_REVERSAL","HOLD","CASH_RECEIVE","CASH_DISPATCH","CASH_TRANSFER","CASH_DEPOSIT","CASH_WITHDRAWAL","CASH_SHORTAGE","CASH_OVERAGE","CASH_REVERSAL","WITHDRAWAL_REVERSAL","TRANSFER_REVERSAL","FX_CONVERSION","FX_REVERSAL","TD_OPEN","TD_REDEEM","LOAN_DISBURSE","LOAN_REPAY","TD_OPEN_REVERSAL","LOAN_DISBURSE_REVERSAL","LOAN_REPAY_REVERSAL","LOAN_FEE_ASSESS","LOAN_FEE_PAY","LOAN_FEE_WAIVE","LOAN_IMPAIR","LOAN_RESTRUCTURE","LOAN_WRITE_OFF","TD_EARLY_CLOSE","TD_RENEW","CLOSURE_SETTLEMENT").contains(change.operation()))throw error("LIMIT_INVALID");
+  if(!Set.of("FUNDING","TRANSFER","WITHDRAWAL","FUNDING_REVERSAL","HOLD","CASH_RECEIVE","CASH_DISPATCH","CASH_TRANSFER","CASH_DEPOSIT","CASH_WITHDRAWAL","CASH_SHORTAGE","CASH_OVERAGE","CASH_REVERSAL","WITHDRAWAL_REVERSAL","TRANSFER_REVERSAL","FX_CONVERSION","FX_REVERSAL","TD_OPEN","TD_REDEEM","LOAN_DISBURSE","LOAN_REPAY","TD_OPEN_REVERSAL","LOAN_DISBURSE_REVERSAL","LOAN_REPAY_REVERSAL","LOAN_FEE_ASSESS","LOAN_FEE_PAY","LOAN_FEE_WAIVE","LOAN_IMPAIR","LOAN_RESTRUCTURE","LOAN_WRITE_OFF","TD_EARLY_CLOSE","TD_RENEW","CLOSURE_SETTLEMENT","CLOSURE_SETTLEMENT_REVERSAL").contains(change.operation()))throw error("LIMIT_INVALID");
   try {
    int precision=Currency.getInstance(change.currency()).getDefaultFractionDigits();
    var single=new BigDecimal(change.perTransaction());var daily=new BigDecimal(change.dailyTotal());
@@ -41,6 +41,8 @@ public final class TransactionLimits {
  public static void check(JdbcTemplate jdbc,UUID bank,String currency,String operation,LocalDate day,BigDecimal amount){
   if(operation.equals("RELEASE"))return;
   var policies=jdbc.query("SELECT per_transaction,daily_total FROM platform.transaction_limit WHERE tenant_id=? AND currency=? AND operation=?",(r,n)->new BigDecimal[]{r.getBigDecimal(1),r.getBigDecimal(2)},bank,currency,operation);
+  if(policies.isEmpty()&&operation.equals("CLOSURE_SETTLEMENT_REVERSAL"))
+   policies=jdbc.query("SELECT per_transaction,daily_total FROM platform.transaction_limit WHERE tenant_id=? AND currency=? AND operation='CLOSURE_SETTLEMENT'",(r,n)->new BigDecimal[]{r.getBigDecimal(1),r.getBigDecimal(2)},bank,currency);
   // Missing configuration must never grant unlimited transaction authority.
   if(policies.isEmpty())throw error("TRANSACTION_LIMIT_REQUIRED");
   BigDecimal used;

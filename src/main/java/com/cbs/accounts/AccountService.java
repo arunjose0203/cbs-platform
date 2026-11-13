@@ -81,7 +81,7 @@ public class AccountService {
             boolean funded=jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM platform.account_ledger WHERE account_id=?)",Boolean.class,d.id());
             if(funded&&input.state()==State.AWAITING_FUNDING)throw error(409,"FUNDING_BALANCE_NOT_ZERO");
             if(input.state()==State.CLOSED)closure.requireEligible(bank,d);
-            if(!funded&&input.state()==State.ACTIVE)throw error(409,"FUNDING_REQUIRED");
+            if(!funded&&(input.state()==State.ACTIVE||input.state()==State.DORMANT))throw error(409,"FUNDING_REQUIRED");
             // Blocking or closing must remain possible even when the customer is no longer eligible.
             if(input.state()==State.AWAITING_FUNDING||input.state()==State.ACTIVE)customers.requireEligible(bank,input.customerId());
         }else{
@@ -135,5 +135,15 @@ public class AccountService {
         jdbc.update("UPDATE platform.account_delivery SET completed=true,completed_at=clock_timestamp() WHERE request_id=?",id);jdbc.update("UPDATE platform.account_registry SET delivery='APPLIED' WHERE id=? AND request_id=?",job.definition().id(),id);
         tenants.audit(new Actor(job.reviewerIssuer(),job.reviewerSubject(),true,job.correlationId()),bank.id(),"ACCOUNT_CHANGE_DELIVERED",bank.version(),bank.status(),bank.status(),"Delivered approved request "+id,null,null,Map.of("accountId",job.definition().id(),"requestId",id));
     });}
+    public List<Map<String,Object>> dormancyCandidates(Actor actor,UUID bankId,int thresholdDays){
+        AccessService.admin(actor);var bank=tenants.get(bankId,false);
+        java.time.LocalDate cutoff=java.time.LocalDate.now(java.time.ZoneOffset.UTC).minusDays(thresholdDays);
+        return jdbc.queryForList("SELECT a.id,a.account_number,a.name,a.state,d.payload->'terms'->>'currency' AS currency,coalesce((SELECT max(completed_at::date) FROM platform.account_operation o WHERE o.account_id=a.id AND o.completed),a.created_at::date) AS last_activity FROM platform.account_registry a JOIN platform.account_delivery d ON d.request_id=a.request_id WHERE a.tenant_id=? AND a.state='ACTIVE' AND coalesce((SELECT max(completed_at::date) FROM platform.account_operation o WHERE o.account_id=a.id AND o.completed),a.created_at::date)<=? ORDER BY last_activity ASC",bankId,cutoff);
+    }
+    public List<Map<String,Object>> unclaimedAssets(Actor actor,UUID bankId,int dormancyDays){
+        AccessService.admin(actor);var bank=tenants.get(bankId,false);
+        java.time.LocalDate cutoff=java.time.LocalDate.now(java.time.ZoneOffset.UTC).minusDays(dormancyDays);
+        return jdbc.queryForList("SELECT a.id,a.account_number,a.name,a.state,d.payload->'terms'->>'currency' AS currency,coalesce((SELECT max(completed_at::date) FROM platform.account_operation o WHERE o.account_id=a.id AND o.completed),a.created_at::date) AS last_activity FROM platform.account_registry a JOIN platform.account_delivery d ON d.request_id=a.request_id WHERE a.tenant_id=? AND a.state='DORMANT' AND coalesce((SELECT max(completed_at::date) FROM platform.account_operation o WHERE o.account_id=a.id AND o.completed),a.created_at::date)<=? ORDER BY last_activity ASC",bankId,cutoff);
+    }
     private static TenantException error(int status,String code){return new TenantException(status,code,"Deposit account operation could not be completed");}
 }

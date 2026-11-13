@@ -45,13 +45,14 @@ public class AccountClosureService {
                 }
                 // A residual sub-unit carry is forfeited only by a recorded final settlement with that exact carry.
                 try(var q=c.prepareStatement("SELECT coalesce((SELECT carry_after FROM bank.servicing_event WHERE account_id=? ORDER BY business_date DESC LIMIT 1),0)")){q.setObject(1,account.id());try(var r=q.executeQuery()){r.next();var value=r.getBigDecimal(1);carry=value.stripTrailingZeros().toPlainString();
-                    if(ready)try(var z=c.prepareStatement("SELECT forfeited_carry FROM bank.closure_settlement WHERE account_id=?")){z.setObject(1,account.id());try(var zr=z.executeQuery()){if(zr.next()){settled=true;if(value.signum()!=0&&zr.getBigDecimal(1).compareTo(value)!=0)blockers.add("ACCOUNT_CLOSURE_CARRY_SETTLEMENT");}else if(value.signum()!=0)blockers.add("ACCOUNT_CLOSURE_CARRY_SETTLEMENT");}}
+                    if(ready)try(var z=c.prepareStatement("SELECT s.forfeited_carry FROM bank.closure_settlement s WHERE s.account_id=? AND NOT EXISTS(SELECT 1 FROM bank.closure_settlement_reversal r WHERE r.original_id=s.request_id)")){z.setObject(1,account.id());try(var zr=z.executeQuery()){if(zr.next()){settled=true;if(value.signum()!=0&&zr.getBigDecimal(1).compareTo(value)!=0)blockers.add("ACCOUNT_CLOSURE_CARRY_SETTLEMENT");}else if(value.signum()!=0)blockers.add("ACCOUNT_CLOSURE_CARRY_SETTLEMENT");}}
                     else if(value.signum()!=0)blockers.add("ACCOUNT_CLOSURE_CARRY_SETTLEMENT");}}
             }catch(java.sql.SQLException e){throw new TenantException(503,"ACCOUNT_DATABASE_UNAVAILABLE","Closure checks could not be completed");}
-            // Contract recovery, late provider returns and final servicing settlement need dedicated workflows.
-            if(jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM platform.contract WHERE account_id=?)",Boolean.class,account.id()))blockers.add("ACCOUNT_CLOSURE_CONTRACT_REVIEW");
-            if(jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM platform.payment_order WHERE account_id=?)",Boolean.class,account.id()))blockers.add("ACCOUNT_CLOSURE_PAYMENT_REVIEW");
         }
+        // Contract recovery: only active/unclosed contracts block closure
+        if(jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM platform.contract WHERE account_id=? AND status<>'CLOSED')",Boolean.class,account.id()))blockers.add("ACCOUNT_CLOSURE_CONTRACT_REVIEW");
+        // Payment review: only in-flight payments or open investigations block closure
+        if(jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM platform.payment_order WHERE account_id=? AND state NOT IN ('SETTLED','REFUNDED')) OR EXISTS(SELECT 1 FROM platform.payment_case c JOIN platform.payment_order o ON o.id=c.payment_id WHERE o.account_id=? AND c.status='OPEN')",Boolean.class,account.id(),account.id()))blockers.add("ACCOUNT_CLOSURE_PAYMENT_REVIEW");
         if(jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM platform.servicing_run WHERE tenant_id=? AND NOT completed)",Boolean.class,bank.id()))blockers.add("ACCOUNT_CLOSURE_SERVICING_REQUIRED");
         return new Check(bank.version(),account.id(),posted,held,ledger,carry,settled,List.copyOf(new LinkedHashSet<>(blockers)));
     }
@@ -67,7 +68,7 @@ public class AccountClosureService {
     }
     /** After an approved (or pending) final settlement, only the closure itself may follow. */
     public static void requireNotSettling(JdbcTemplate jdbc,UUID account){
-        if(jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM platform.account_operation WHERE account_id=? AND payload->'change'->>'kind'='CLOSURE_SETTLEMENT')",Boolean.class,account))
+        if(jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM platform.account_operation o WHERE o.account_id=? AND o.payload->'change'->>'kind'='CLOSURE_SETTLEMENT' AND NOT EXISTS(SELECT 1 FROM platform.account_operation r WHERE r.account_id=? AND r.payload->'change'->>'kind'='CLOSURE_SETTLEMENT_REVERSAL' AND (r.payload->'change'->>'originalId')::uuid=o.request_id AND r.completed))",Boolean.class,account,account))
             throw new TenantException(409,"ACCOUNT_PENDING_CLOSURE","The account is pending closure after final settlement");
     }
     public void requireEligible(Tenant bank,AccountModels.Definition account){

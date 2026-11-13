@@ -18,6 +18,14 @@ public class AccountController {
     private final AccountService accounts;private final ApprovalService approvals;private final com.cbs.accounts.FundingService funding;
     public AccountController(AccountService accounts,ApprovalService approvals,com.cbs.accounts.FundingService funding){this.funding=funding;this.accounts=accounts;this.approvals=approvals;}
     @GetMapping Directory list(JwtAuthenticationToken jwt,@PathVariable UUID bankId,@RequestParam(defaultValue="") String search,@RequestParam(required=false) State state,@RequestParam(defaultValue="25") int limit,@RequestParam(defaultValue="0") int offset){return accounts.list(actor(jwt),bankId,search,state,limit,offset);}
+    @GetMapping("/dormancy-candidates")
+    java.util.List<java.util.Map<String,Object>> dormancyCandidates(JwtAuthenticationToken jwt,@PathVariable UUID bankId,@RequestParam(defaultValue="365") int thresholdDays){
+        return accounts.dormancyCandidates(actor(jwt),bankId,thresholdDays);
+    }
+    @GetMapping("/unclaimed-assets")
+    java.util.List<java.util.Map<String,Object>> unclaimedAssets(JwtAuthenticationToken jwt,@PathVariable UUID bankId,@RequestParam(defaultValue="1825") int dormancyDays){
+        return accounts.unclaimedAssets(actor(jwt),bankId,dormancyDays);
+    }
     @GetMapping("/{id}") Detail detail(JwtAuthenticationToken jwt,@PathVariable UUID bankId,@PathVariable UUID id){return accounts.detail(actor(jwt),bankId,id);}
     @GetMapping("/{id}/closure") AccountClosureService.Check closure(JwtAuthenticationToken jwt,@PathVariable UUID bankId,@PathVariable UUID id){return accounts.closure(actor(jwt),bankId,id);}
     @PostMapping @ResponseStatus(HttpStatus.ACCEPTED)

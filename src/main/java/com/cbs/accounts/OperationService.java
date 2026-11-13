@@ -41,7 +41,8 @@ public class OperationService {
   });
  }
  private AccountModels.Definition account(Tenant bank,UUID id,boolean release){
-  requireIdle(jdbc,id);AccountClosureService.requireNotSettling(jdbc,id);var row=accounts.current(bank.id(),id);var a=row.definition();
+  requireIdle(jdbc,id);if(!release)AccountClosureService.requireNotSettling(jdbc,id);var row=accounts.current(bank.id(),id);var a=row.definition();
+  if(a.state()==AccountModels.State.DORMANT)throw error("ACCOUNT_DORMANT");
   if(!row.delivery().equals("APPLIED")||(!release&&a.state()!=AccountModels.State.ACTIVE)||a.state()==AccountModels.State.CLOSED)throw error("FUNDING_ACCOUNT_NOT_READY");
   accounts.requireMatching(bank,a);if(!release)customers.requireEligible(bank,a.customerId());return a;
  }
@@ -54,9 +55,10 @@ public class OperationService {
   if(bank.version()!=input.expectedVersion())throw error("STALE_VERSION");if(!store.ready(bank))throw error("OPERATION_STORAGE_NOT_READY");
   if(!reference.read(bank).businessDate().equals(input.businessDate()))throw error("JOURNAL_BUSINESS_DATE_INVALID");
   if(input.kind()==null||input.amount()==null||!input.amount().matches("[0-9]{1,18}(\\.[0-9]{1,6})?"))throw error("JOURNAL_AMOUNT_INVALID");
-  var a=account(bank,input.accountId(),input.kind()==Kind.RELEASE);var amount=new BigDecimal(input.amount());
+  boolean isSettlementReversal=input.kind()==Kind.CLOSURE_SETTLEMENT_REVERSAL;
+  var a=account(bank,input.accountId(),input.kind()==Kind.RELEASE||isSettlementReversal);var amount=new BigDecimal(input.amount());
   if(amount.signum()<=0||amount.stripTrailingZeros().scale()>Currency.getInstance(a.terms().currency()).getDefaultFractionDigits())throw error("JOURNAL_AMOUNT_INVALID");
-  boolean reverseOperation=input.kind()==Kind.WITHDRAWAL_REVERSAL||input.kind()==Kind.TRANSFER_REVERSAL;
+  boolean reverseOperation=input.kind()==Kind.WITHDRAWAL_REVERSAL||input.kind()==Kind.TRANSFER_REVERSAL||isSettlementReversal;
   if((input.kind()==Kind.TRANSFER||input.kind()==Kind.TRANSFER_REVERSAL)!=(input.destinationId()!=null)||(input.kind()==Kind.WITHDRAWAL||input.kind()==Kind.CLOSURE_SETTLEMENT)!=(input.assetLedgerId()!=null)||(input.kind()==Kind.RELEASE||input.kind()==Kind.FUNDING_REVERSAL||reverseOperation)!=(input.originalId()!=null))throw error("OPERATION_FIELDS_INVALID");
   if(reverseOperation)if(!payment&&jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM platform.payment_order WHERE id=?)",Boolean.class,input.originalId()))throw error("PAYMENT_MANAGED");
   // Customer debits follow the account mandate: joint, organization and minors' accounts need authorised signers.
@@ -72,6 +74,11 @@ public class OperationService {
    if(!cash&&jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM platform.cash_delivery WHERE request_id=?)",Boolean.class,input.originalId()))throw error("CASH_MANAGED");
    if(amount.compareTo(new BigDecimal(old.amount()))!=0||original.journal()==null||original.journal().reversalOf()!=null)throw error("OPERATION_REVERSAL_INVALID");
    if(input.kind()==Kind.WITHDRAWAL_REVERSAL){if(old.kind()!=Kind.WITHDRAWAL||!a.id().equals(old.accountId()))throw error("OPERATION_REVERSAL_INVALID");}
+   else if(isSettlementReversal){
+    if(old.kind()!=Kind.CLOSURE_SETTLEMENT||!a.id().equals(old.accountId()))throw error("OPERATION_REVERSAL_INVALID");
+    if(a.state()==AccountModels.State.CLOSED)throw error("ACCOUNT_ALREADY_CLOSED");
+    if(jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM platform.account_operation WHERE tenant_id=? AND payload->'change'->>'kind'='CLOSURE_SETTLEMENT_REVERSAL' AND (payload->'change'->>'originalId')::uuid=? AND completed)",Boolean.class,bank.id(),input.originalId()))throw error("OPERATION_ALREADY_REVERSED");
+   }
    else{if(old.kind()!=Kind.TRANSFER||!a.id().equals(old.destinationId())||!input.destinationId().equals(old.accountId()))throw error("OPERATION_REVERSAL_INVALID");target=account(bank,input.destinationId(),false);}
    var lines=original.journal().lines().stream().map(l->new JournalModels.Line(l.ledgerId(),l.side()==JournalModels.Side.DEBIT?JournalModels.Side.CREDIT:JournalModels.Side.DEBIT,l.amount())).toList();
    var j=new JournalModels.Change(input.expectedVersion(),input.reference(),input.reason(),input.businessDate(),a.legalEntityId(),a.terms().currency(),lines,input.originalId(),input.reason());
@@ -138,7 +145,7 @@ public class OperationService {
   java.util.function.BiConsumer<UUID,com.cbs.notifications.NotificationModels.Event> note=(account,event)->notifications.record(new com.cbs.notifications.NotificationModels.Movement(bankId,account,event,e.id(),c.amount(),e.journal().currency(),c.businessDate(),c.reference()));
   switch(c.kind()){
    case WITHDRAWAL,FUNDING_REVERSAL,CLOSURE_SETTLEMENT->note.accept(c.accountId(),com.cbs.notifications.NotificationModels.Event.DEBIT);
-   case WITHDRAWAL_REVERSAL->note.accept(c.accountId(),com.cbs.notifications.NotificationModels.Event.CREDIT);
+   case WITHDRAWAL_REVERSAL,CLOSURE_SETTLEMENT_REVERSAL->note.accept(c.accountId(),com.cbs.notifications.NotificationModels.Event.CREDIT);
    case TRANSFER,TRANSFER_REVERSAL->{note.accept(c.accountId(),com.cbs.notifications.NotificationModels.Event.DEBIT);note.accept(c.destinationId(),com.cbs.notifications.NotificationModels.Event.CREDIT);}
    default->{}
   }

@@ -4,6 +4,18 @@
 
 Use the [Functional Gap & Acceptance Matrix](functional-gap-acceptance-matrix-2026-10-09.md) for the current 34-area functional assessment, 34 proposed acceptance cases, source/test evidence, confirmed limits and prioritized completion work. It reconciles older historical pending lists below. No module has independent bank functional sign-off recorded; existing automated test results do not replace that acceptance.
 
+## Round 12: Deposit lifecycle completion — 13 November 2026
+
+Round 12 of the [go-live plan](go-live-plan-2026-11-13.md) completes KYC document object storage, risk-based periodic reviews, account dormancy, deceased-customer workflows, contract/payment-aware account closure, and closure settlement reversal. Control migration **V48**, bank migration **V27**. See [deposit lifecycle completion](deposit-lifecycle-completion.md).
+
+- **Encrypted KYC document storage.** Replaced reference-only documents with AES-256-GCM encrypted object storage (`platform.customer_document`). Keys derived per bank tenant with HMAC-SHA256. Enforces SHA-256 integrity validation on download (`DOCUMENT_INTEGRITY_COMPROMISED`) and statutory retention policies (`DOCUMENT_RETENTION_ACTIVE`).
+- **Periodic KYC review.** Reviews scheduled according to AML risk ratings (`HIGH`: 1y, `MEDIUM`: 2y, `LOW`: 3y). Added validation rejecting future review dates (`REVIEW_DATE_FUTURE`) and tracking overdue reviews.
+- **Account dormancy & unclaimed assets (D14).** Added `DORMANT` account state. Fail-closed controls prevent all operations on dormant accounts (`ACCOUNT_DORMANT`). Admin endpoints track dormancy candidates and unclaimed assets.
+- **Deceased-customer workflow.** Added `DECEASED` customer state with irreversible terminal transition (`CUSTOMER_ALREADY_DECEASED`). Customer operations and eligibility checks fail closed with `CUSTOMER_DECEASED`.
+- **Account closure unblocking.** Closure now inspects contract statuses (`status <> 'CLOSED'`) and payment states (`state NOT IN ('SETTLED', 'REFUNDED')`). Accounts with settled contracts and payments are no longer blocked.
+- **Closure settlement reversal.** Added `CLOSURE_SETTLEMENT_REVERSAL` operation with maker-checker approvals to reverse closure payouts and unblock accounts when required.
+- **UI and verification.** Added KYC document upload/download modals, KYC review dialog with risk-based due dates, customer `DECEASED` badge, account `DORMANT` badge, and settlement reversal UI. Tests: 14 new backend unit tests (100% pass), 123 UI tests pass.
+
 ## Round 11: AML and screening completion — 13 November 2026
 
 Round 11 of the [go-live plan](go-live-plan-2026-11-13.md) completes AML, customer and payment screening, case assignment SLAs, and STR draft exports. Control migration **V47**. See [AML screening completion](aml-screening-completion.md).
