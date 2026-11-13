@@ -58,8 +58,7 @@ class StagingUpTests(unittest.TestCase):
         self.assertIn('CBS_ALLOW_PARTIAL_UPGRADE', result.stderr)
         self.assertFalse(any('grants' in c for c in calls))
         with self.env.open('a') as f:
-            f.write('CBS_ALLOW_PARTIAL_UPGRADE=yes
-')
+            f.write('CBS_ALLOW_PARTIAL_UPGRADE=yes'+chr(10))
         self.calls.unlink()
         result, calls = self.run_up()
         self.assertEqual(result.returncode, 0, result.stderr)
