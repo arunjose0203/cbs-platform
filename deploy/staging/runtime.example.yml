@@ -14,6 +14,8 @@ cbs:
     # Base64 of 32 random bytes (openssl rand -base64 32); escrow it with the database backups:
     # without it, encrypted identity document numbers cannot be read.
     field-key: REPLACE_FROM_SECRET_STORE
+  # notifications:
+  #   callback-secret: REPLACE_FROM_SECRET_STORE   # 32+ characters; signs provider delivery receipts (blank disables the webhook)
   portal:
     client-id: cbs-portal
     redirect-uri: https://CBS_DOMAIN/admin/index.html
