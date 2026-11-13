@@ -16,13 +16,13 @@ Phase 4 acceptance of the [go-live plan](go-live-plan-2026-11-13.md). See [Phase
   - **W06 (Lending & FX):** 28 UI tests + 20 backend tests pass covering CRB returns, non-accrual, moratoria, ECL staging, IAS 21 translation, and partial TD closure.
   - **W07 (Reporting & Localization):** 141 UI tests across English, French, and Kiswahili + tax remittance and DPD/NPL register reports pass.
   - **W08 (Deployment, Recovery & Security):** 49 ops tests + money invariant tests pass covering PITR WAL archiving, Keycloak key rotation, and Prometheus alerts.
-- **Verification results:** 284 backend tests (0 failures, 0 errors), 141 UI portal tests (100% pass), and 49 operations suite tests (100% pass) across the unified V55/V29 codebase.
+- **Verification results:** 284 backend tests (0 failures, 0 errors), 141 UI portal tests (100% pass), and 49 operations suite tests (100% pass) across the unified V56/V29 codebase.
 
 ## Task 0.8: Acceptance Test Catalogue Refresh & Re-Baselining — 14 November 2026
 
 Phase 0/4 item 0.8 of the [go-live plan](go-live-plan-2026-11-13.md). See [case catalogue](testing/cbs-test-cases-2026-10-10.json) and [test plan](testing/cbs-test-plan-2026-10-13.md).
 
-- **Re-baselined to Control V55 and Bank V29.** Re-baselined the 122-record acceptance catalogue from historical V37/V22 to current production schema versions (Flyway Control V55, Bank V29).
+- **Re-baselined to Control V56 and Bank V29.** Re-baselined the 122-record acceptance catalogue from historical V37/V22 to current production schema versions (Flyway Control V56, Bank V29).
 - **14 of 15 Gaps Evaluated as IMPLEMENTED.** Updated GAP-01 through GAP-15 statuses:
   - GAP-01 (Positive-balance closure settlement): `IMPLEMENTED` (Round 12 / W03 settlement).
   - GAP-02 (Final interest, fee, tax, carry settlement): `IMPLEMENTED` (Round 12 / W03 settlement).
