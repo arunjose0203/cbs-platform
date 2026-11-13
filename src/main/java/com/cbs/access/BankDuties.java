@@ -195,6 +195,13 @@ public class BankDuties {
             throw new TenantException(409,"BANK_DUTY_REVOKED_BEFORE_DELIVERY","An approval participant no longer holds the duty for this request");
     }
 
+    /** True when the bank does not enforce duties, or the staff identity holds the duty (submit or approve). */
+    public boolean holds(UUID bank, String issuer, String subject, Duty duty) {
+        if(!enforced(bank)) return true;
+        Grant grant=current(bank,issuer,subject);
+        return grant!=null && (grant.submit().contains(duty) || grant.approve().contains(duty));
+    }
+
     /** Enforced, but fewer than two access administrators remain: only switching enforcement off is possible. */
     public boolean lockedOut(UUID bank) {
         return enforced(bank) && accessAdministrators(bank,null).size()<2;

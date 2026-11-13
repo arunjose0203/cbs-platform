@@ -18,7 +18,7 @@ public class ComplianceWorker {
 
     @Scheduled(fixedDelay=15000, initialDelay=40000)
     public void rescreen() {
-        try { screening.processRuns(40); } catch (RuntimeException e) { LOG.warn("Screening re-run will be retried: {}", e.getClass().getSimpleName()); }
+        try { screening.scheduleRescreens(); screening.processRuns(40); } catch (RuntimeException e) { LOG.warn("Screening re-run will be retried: {}", e.getClass().getSimpleName()); }
     }
 
     @Scheduled(fixedDelay=60000, initialDelay=45000)

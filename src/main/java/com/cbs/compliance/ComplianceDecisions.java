@@ -30,12 +30,14 @@ public class ComplianceDecisions {
         this.jdbc = jdbc; this.tenants = tenants; this.cases = cases; this.tx = new TransactionTemplate(manager);
     }
 
-    private static String table(ItemType type) { return type == ItemType.SCREENING_HIT ? "platform.screening_hit" : "platform.monitoring_alert"; }
+    private static String table(ItemType type) {
+        return switch (type) { case SCREENING_HIT -> "platform.screening_hit"; case MONITORING_ALERT -> "platform.monitoring_alert"; case BENEFICIARY_HIT -> "platform.beneficiary_hit"; };
+    }
 
     private Map<String, Object> item(UUID bankId, ItemType type, UUID id, boolean lock) {
         var rows = jdbc.queryForList("SELECT * FROM " + table(type) + " WHERE tenant_id=? AND id=?" + (lock ? " FOR UPDATE" : ""), bankId, id);
         if (rows.isEmpty()) {
-            throw ScreeningService.error(404, type == ItemType.SCREENING_HIT ? "SCREENING_HIT_NOT_FOUND" : "MONITORING_ALERT_NOT_FOUND", "Alert not found");
+            throw ScreeningService.error(404, switch (type) { case SCREENING_HIT -> "SCREENING_HIT_NOT_FOUND"; case MONITORING_ALERT -> "MONITORING_ALERT_NOT_FOUND"; case BENEFICIARY_HIT -> "BENEFICIARY_HIT_NOT_FOUND"; }, "Alert not found");
         }
         return rows.getFirst();
     }
@@ -62,6 +64,11 @@ public class ComplianceDecisions {
             if (type == ItemType.SCREENING_HIT) {
                 source.put("screeningHitId", id); source.put("list", item.get("list_name")); source.put("entryRef", item.get("entry_ref"));
                 source.put("score", item.get("score").toString()); source.put("matchedName", item.get("matched_name"));
+            } else if (type == ItemType.BENEFICIARY_HIT) {
+                // The paying customer tried to send money to a listed party: the case is opened on the payer.
+                source.put("beneficiaryHitId", id); source.put("beneficiary", item.get("beneficiary")); source.put("beneficiaryName", item.get("beneficiary_name"));
+                source.put("list", item.get("list_name")); source.put("entryRef", item.get("entry_ref")); source.put("score", item.get("score").toString());
+                source.put("matchedName", item.get("matched_name")); source.put("accountId", item.get("account_id"));
             } else {
                 source.put("monitoringAlertId", id); source.put("rule", item.get("rule")); source.put("accountId", item.get("account_id"));
                 source.put("amount", item.get("amount").toString()); source.put("currency", item.get("currency"));
@@ -87,6 +94,8 @@ public class ComplianceDecisions {
         m.put("status", item.get("status"));
         if (input.type() == ItemType.SCREENING_HIT) {
             for (var k : List.of("customer_name", "matched_name", "list_name", "entry_ref", "score")) { m.put(k, String.valueOf(item.get(k))); }
+        } else if (input.type() == ItemType.BENEFICIARY_HIT) {
+            for (var k : List.of("beneficiary", "beneficiary_name", "matched_name", "list_name", "entry_ref", "score", "stage")) { m.put(k, String.valueOf(item.get(k))); }
         } else {
             for (var k : List.of("rule", "account_id", "currency", "business_date", "amount")) { m.put(k, String.valueOf(item.get(k))); }
         }
@@ -105,7 +114,7 @@ public class ComplianceDecisions {
         jdbc.update("UPDATE " + table(input.type()) + " SET status='DISMISSED',approval_id=?,decided_by=?,decided_at=clock_timestamp(),version=version+1,decision=?::jsonb WHERE id=?",
                 approvalId, actor.subject(), JSON.writeValueAsString(Map.of("action", "DISMISSED", "maker", maker, "evidenceReference", input.evidenceReference(), "reason", input.reason())), input.itemId());
         tenants.change(bank, bank.status(), bank.displayName(), bank.defaultLanguage());
-        tenants.audit(actor, bankId, input.type() == ItemType.SCREENING_HIT ? "SCREENING_HIT_DISMISSED" : "MONITORING_ALERT_DISMISSED", bank.version() + 1,
+        tenants.audit(actor, bankId, switch (input.type()) { case SCREENING_HIT -> "SCREENING_HIT_DISMISSED"; case MONITORING_ALERT -> "MONITORING_ALERT_DISMISSED"; case BENEFICIARY_HIT -> "BENEFICIARY_HIT_DISMISSED"; }, bank.version() + 1,
                 bank.status(), bank.status(), input.reason(), null, null, Map.of("itemId", input.itemId(), "approvalId", approvalId));
     }
 }

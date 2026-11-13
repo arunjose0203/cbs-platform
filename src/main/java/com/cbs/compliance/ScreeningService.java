@@ -50,7 +50,7 @@ public class ScreeningService {
 
     public Map<String, Object> upload(Actor actor, UUID bankId, Upload input) {
         AccessService.admin(actor);
-        var rows = parse(input.csv());
+        var rows = rows(input.effectiveFormat() == ListFormat.UN_XML ? UnListXml.records(input.csv()) : records(input.csv()));
         String sha = sha256(input.csv());
         return tx.execute(t -> {
             var bank = tenants.get(bankId, true);
@@ -65,21 +65,23 @@ public class ScreeningService {
                 return list(bankId, (UUID) e.get("id"));
             }
             UUID id = UUID.randomUUID();
-            jdbc.update("INSERT INTO platform.screening_list(id,tenant_id,name,category,source,threshold,sha256,entry_count,issuer,uploaded_by) VALUES (?,?,?,?,?,?,?,?,?,?)",
-                    id, bankId, input.name(), input.category().name(), input.source(), input.threshold(), sha, rows.size(), actor.issuer(), actor.subject());
+            jdbc.update("INSERT INTO platform.screening_list(id,tenant_id,name,category,source,threshold,sha256,entry_count,issuer,uploaded_by,format) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                    id, bankId, input.name(), input.category().name(), input.source(), input.threshold(), sha, rows.size(), actor.issuer(), actor.subject(), input.effectiveFormat().name());
             for (int from = 0; from < rows.size(); from += 1000) {
                 var batch = rows.subList(from, Math.min(rows.size(), from + 1000)).stream().map(r -> new Object[] {
                         id, r.ref(), r.type(), JSON.writeValueAsString(r.names()), r.birthDate(), r.country(), r.program(), r.hash() }).toList();
                 jdbc.batchUpdate("INSERT INTO platform.screening_entry(list_id,entry_ref,entity_type,names,birth_date,country,program,entry_hash) VALUES (?,?,?,?::jsonb,?,?,?,?)", batch);
             }
             tenants.audit(actor, bankId, "SCREENING_LIST_UPLOADED", bank.version(), bank.status(), bank.status(), "Screening list draft uploaded", null, null,
-                    Map.of("listId", id, "name", input.name(), "entries", rows.size(), "sha256", sha));
+                    Map.of("listId", id, "name", input.name(), "entries", rows.size(), "sha256", sha, "format", input.effectiveFormat().name()));
             return list(bankId, id);
         });
     }
 
-    static List<Row> parse(String csv) {
-        var records = records(csv);
+    static List<Row> parse(String csv) { return rows(records(csv)); }
+
+    /** Validates header and rows; shared by the CSV upload and the UN XML adapter. */
+    static List<Row> rows(List<List<String>> records) {
         if (records.isEmpty() || !records.getFirst().equals(List.of("entry_ref", "entity_type", "name", "aliases", "birth_date", "country", "program"))) {
             throw invalid(1, "the header must be entry_ref,entity_type,name,aliases,birth_date,country,program");
         }
@@ -152,9 +154,9 @@ public class ScreeningService {
 
     public List<Map<String, Object>> lists(Actor actor, UUID bankId) {
         AccessService.admin(actor); tenants.get(bankId, false);
-        return jdbc.queryForList("SELECT l.id,l.name,l.category,l.source,l.threshold,l.sha256,l.entry_count,l.status,l.uploaded_by,l.created_at,l.activated_at,"
-                + "r.status AS run_status,r.screened AS run_screened,r.hits AS run_hits FROM platform.screening_list l "
-                + "LEFT JOIN LATERAL (SELECT status,screened,hits FROM platform.screening_run WHERE list_id=l.id ORDER BY created_at DESC LIMIT 1) r ON true "
+        return jdbc.queryForList("SELECT l.id,l.name,l.category,l.source,l.threshold,l.sha256,l.entry_count,l.status,l.uploaded_by,l.created_at,l.activated_at,l.format,l.rescreen_days,"
+                + "r.status AS run_status,r.screened AS run_screened,r.hits AS run_hits,r.reason AS run_reason,r.created_at AS run_created_at FROM platform.screening_list l "
+                + "LEFT JOIN LATERAL (SELECT status,screened,hits,reason,created_at FROM platform.screening_run WHERE list_id=l.id ORDER BY created_at DESC LIMIT 1) r ON true "
                 + "WHERE l.tenant_id=? ORDER BY l.name,l.created_at DESC LIMIT 200", bankId);
     }
 
@@ -167,7 +169,7 @@ public class ScreeningService {
     }
 
     private Map<String, Object> list(UUID bankId, UUID id) {
-        var rows = jdbc.queryForList("SELECT id,name,category,source,threshold,sha256,entry_count,status,uploaded_by,created_at,activated_at FROM platform.screening_list WHERE tenant_id=? AND id=?", bankId, id);
+        var rows = jdbc.queryForList("SELECT id,name,category,source,threshold,sha256,entry_count,status,uploaded_by,created_at,activated_at,format,rescreen_days FROM platform.screening_list WHERE tenant_id=? AND id=?", bankId, id);
         if (rows.isEmpty()) { throw error(404, "SCREENING_LIST_NOT_FOUND", "Screening list not found"); }
         return rows.getFirst();
     }
@@ -191,7 +193,8 @@ public class ScreeningService {
     public Map<String, Object> values(Tenant bank, Activation input) {
         var l = list(bank.id(), input.listId());
         var m = new LinkedHashMap<String, Object>();
-        for (var k : List.of("name", "category", "source", "threshold", "entry_count", "sha256")) { m.put(k, l.get(k)); }
+        for (var k : List.of("name", "category", "source", "threshold", "entry_count", "sha256", "format")) { m.put(k, l.get(k)); }
+        if (input.rescreenDays() != null) { m.put("rescreenDays", input.rescreenDays()); }
         m.put("reason", input.reason());
         return m;
     }
@@ -207,7 +210,7 @@ public class ScreeningService {
         for (UUID old : superseded) {
             jdbc.update("UPDATE platform.screening_run SET status='CANCELLED',finished_at=clock_timestamp() WHERE list_id=? AND status='PENDING'", old);
         }
-        jdbc.update("UPDATE platform.screening_list SET status='ACTIVE',approval_id=?,activated_at=clock_timestamp() WHERE id=?", approvalId, input.listId());
+        jdbc.update("UPDATE platform.screening_list SET status='ACTIVE',approval_id=?,activated_at=clock_timestamp(),rescreen_days=? WHERE id=?", approvalId, input.rescreenDays(), input.listId());
         UUID run = UUID.randomUUID();
         jdbc.update("INSERT INTO platform.screening_run(id,tenant_id,list_id) VALUES (?,?,?)", run, bankId, input.listId());
         tenants.change(bank, bank.status(), bank.displayName(), bank.defaultLanguage());
@@ -235,6 +238,17 @@ public class ScreeningService {
         return index;
     }
 
+    record NameMatch(UUID listId, String listName, NameMatcher.Match match) { }
+
+    /** Matches a name that is not a customer (a payment beneficiary) against every active list. */
+    List<NameMatch> matchName(UUID bankId, String name) {
+        var out = new ArrayList<NameMatch>();
+        for (var list : active(bankId)) {
+            for (var m : list.index().match(name, null, true, list.threshold())) out.add(new NameMatch(list.id(), list.name(), m));
+        }
+        return out;
+    }
+
     /** Screens one customer version against every active list; called when a profile change is applied. */
     public int screenCustomer(UUID bankId, UUID customerId, long version, String fullName, LocalDate birthDate, boolean individual) {
         int hits = 0;
@@ -255,6 +269,21 @@ public class ScreeningService {
                     BigDecimal.valueOf(m.score()), screened, m.matchedName(), trigger);
         }
         return hits;
+    }
+
+    /**
+     * Queues a scheduled re-screen for every active list whose interval has passed since its latest run, unless
+     * one is already pending. Returns the runs queued. Customers are also screened whenever their profile changes.
+     */
+    public int scheduleRescreens() {
+        return jdbc.update("""
+                INSERT INTO platform.screening_run(id,tenant_id,list_id,reason)
+                SELECT gen_random_uuid(),l.tenant_id,l.id,'SCHEDULED' FROM platform.screening_list l
+                WHERE l.status='ACTIVE' AND l.rescreen_days IS NOT NULL
+                  AND NOT EXISTS(SELECT 1 FROM platform.screening_run r WHERE r.list_id=l.id AND r.status='PENDING')
+                  AND coalesce((SELECT max(r.created_at) FROM platform.screening_run r WHERE r.list_id=l.id),l.activated_at)
+                      <= clock_timestamp()-make_interval(days=>l.rescreen_days)
+                """);
     }
 
     /** Processes up to {@code chunks} chunks of pending re-screen runs; returns the chunks processed. */

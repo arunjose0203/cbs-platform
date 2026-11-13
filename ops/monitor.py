@@ -69,6 +69,8 @@ def check(config):
                     metrics['cbs_pending_age_seconds{queue="'+table+'"}'] = max(0,oldest)
                     if oldest > limits['max_pending_age_seconds']:
                         alerts.append('POSTING_OVERDUE:'+table)
+                # Compliance cases past their investigator due date (SLA). A count only: no customer data leaves the database.
+                metrics['cbs_compliance_overdue_cases'] = int(recovery.query(config,d,"SELECT count(*) FROM platform.compliance_case WHERE status='OPEN' AND due_date<current_date"))
         except Exception:
             metrics['cbs_database_up{database="'+d['name']+'"}'] = 0
             alerts.append('DATABASE_CHECK_FAILED:'+d['name'])

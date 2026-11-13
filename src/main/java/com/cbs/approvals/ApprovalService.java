@@ -299,7 +299,7 @@ public class ApprovalService {
                 before=monitoring.before(bank,change.currency());after=monitoring.values(change);label="Transaction monitoring "+change.currency();bankId=id;
             } else if(action==Action.COMPLIANCE_ALERT_DISMISS) {
                 var bank=tenantRepository.get(id,true);var change=(com.cbs.compliance.AutomationModels.Dismiss)input;complianceDecisions.validate(bank,change);
-                before=complianceDecisions.before(bank,change);after=complianceDecisions.values(change);label=(change.type()==com.cbs.compliance.AutomationModels.ItemType.SCREENING_HIT?"Dismiss screening match":"Dismiss monitoring alert");bankId=id;
+                before=complianceDecisions.before(bank,change);after=complianceDecisions.values(change);label=switch(change.type()){case SCREENING_HIT->"Dismiss screening match";case MONITORING_ALERT->"Dismiss monitoring alert";case BENEFICIARY_HIT->"Dismiss beneficiary screening match";};bankId=id;
             } else if(action==Action.REPORT_DEFINITION) {
                 var bank=tenantRepository.get(id,true);var change=(com.cbs.reporting.ReportModels.Definition)input;reportDefinitions.validate(bank,change);
                 before=reportDefinitions.before(bank,change.code());after=reportDefinitions.values(bank,change);label="Report definition "+change.code();bankId=id;

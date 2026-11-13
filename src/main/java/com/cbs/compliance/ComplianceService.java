@@ -52,17 +52,19 @@ public class ComplianceService {
     }
     public Map<String,Object> list(Actor actor,UUID bank,String status,int limit,int offset) {
         AccessService.admin(actor);AccessService.page(limit,offset);
-        if(!Set.of("ALL","OPEN","CLEARED","RESTRICTED","REVIEW_DUE").contains(status))throw error(400,"INVALID_REQUEST");
+        if(!Set.of("ALL","OPEN","CLEARED","RESTRICTED","REVIEW_DUE","OVERDUE","UNASSIGNED").contains(status))throw error(400,"INVALID_REQUEST");
         return tx.execute(t->{
             jdbc.query("SELECT id FROM platform.tenant WHERE id=? FOR SHARE",r->{},bank);var tenant=tenants.get(bank,false);
             String where=" WHERE c.tenant_id=? AND c.issuer=?";
             var args=new ArrayList<Object>(List.of(bank,actor.issuer()));
             if(status.equals("REVIEW_DUE")){where+=" AND c.status='CLEARED' AND (c.review_due<=? OR c.reviewed_customer_version<>r.version)";args.add(today());}
+            else if(status.equals("OVERDUE")){where+=" AND c.status='OPEN' AND c.due_date<?";args.add(today());}
+            else if(status.equals("UNASSIGNED")){where+=" AND c.status='OPEN' AND c.assignee IS NULL";}
             else if(!status.equals("ALL")){where+=" AND c.status=?";args.add(status);}
             String from=" FROM platform.compliance_case c JOIN platform.customer_registry r ON r.tenant_id=c.tenant_id AND r.id=c.customer_id";
             long total=jdbc.queryForObject("SELECT count(*)"+from+where,Long.class,args.toArray());
-            var selected=new ArrayList<Object>();selected.add(today());selected.addAll(args);selected.add(limit);selected.add(offset);
-            var items=jdbc.queryForList("SELECT c.id,c.customer_id,r.customer_number,c.category,c.status,c.version,c.risk,c.review_due,c.updated_at,(c.status<>'CLEARED' OR c.reviewed_customer_version<>r.version OR c.review_due<=?) AS restricted"+from+where+" ORDER BY c.updated_at DESC,c.id LIMIT ? OFFSET ?",selected.toArray());
+            var selected=new ArrayList<Object>();selected.add(today());selected.add(today());selected.addAll(args);selected.add(limit);selected.add(offset);
+            var items=jdbc.queryForList("SELECT c.id,c.customer_id,r.customer_number,c.category,c.status,c.version,c.risk,c.review_due,c.updated_at,c.assignee,c.due_date,(c.status='OPEN' AND c.due_date<?) AS overdue,(c.status<>'CLEARED' OR c.reviewed_customer_version<>r.version OR c.review_due<=?) AS restricted"+from+where+" ORDER BY c.updated_at DESC,c.id LIMIT ? OFFSET ?",selected.toArray());
             return Map.of("version",tenant.version(),"items",items,"total",total,"limit",limit,"offset",offset,"today",today());
         });
     }
@@ -117,6 +119,28 @@ public class ComplianceService {
             command(actor,bankId,id,key,input);changed(actor,bank,"COMPLIANCE_EVIDENCE_ADDED",id,input.reason());return detailValues(actor,tenants.get(bankId,false),id);
         });
     }
+    private com.cbs.access.AccessService access;
+    private com.cbs.access.BankDuties duties;
+    @org.springframework.beans.factory.annotation.Autowired void access(com.cbs.access.AccessService access,com.cbs.access.BankDuties duties){this.access=access;this.duties=duties;}
+    /**
+     * Assigns an open case to an investigator with a due date (the case SLA). Reassignment is allowed and
+     * recorded. The assignee must be an active staff identity and, where duties are enforced, hold the
+     * compliance duty for the bank. Recorded as an immutable ASSIGNED event.
+     */
+    public Map<String,Object> assign(Actor actor,UUID bankId,UUID id,UUID key,Assign input) {
+        AccessService.admin(actor);return tx.execute(t->{
+            UUID saved=replay(actor,bankId,key,input,id);var bank=tenants.get(bankId,true);if(saved!=null)return detailValues(actor,bank,saved);
+            active(bank,input.expectedVersion());var old=scoped(actor,bankId,id);
+            if(((Number)old.get("version")).longValue()!=input.caseVersion())throw error(409,"COMPLIANCE_CASE_STALE");
+            if(!"OPEN".equals(old.get("status")))throw error(409,"COMPLIANCE_CASE_NOT_OPEN");
+            if(input.dueDate().isBefore(today())||input.dueDate().isAfter(today().plusDays(366)))throw error(400,"COMPLIANCE_DUE_DATE_INVALID");
+            access.requireAssignable(actor.issuer(),input.assignee());
+            if(!duties.holds(bankId,actor.issuer(),input.assignee(),com.cbs.access.BankDuties.Duty.COMPLIANCE))throw error(409,"COMPLIANCE_ASSIGNEE_NOT_AUTHORIZED");
+            jdbc.update("UPDATE platform.compliance_case SET assignee=?,due_date=?,version=version+1,updated_at=clock_timestamp() WHERE id=?",input.assignee(),input.dueDate(),id);
+            event(actor,bankId,id,"ASSIGNED",null,Map.of("previousAssignee",String.valueOf(old.get("assignee")),"reason",input.reason()));
+            command(actor,bankId,id,key,input);changed(actor,bank,"COMPLIANCE_CASE_ASSIGNED",id,input.reason());return detailValues(actor,tenants.get(bankId,false),id);
+        });
+    }
     public void validate(Tenant bank,Review input) {
         active(bank,input.expectedVersion());var old=row(bank.id(),input.caseId());
         if(((Number)old.get("version")).longValue()!=input.caseVersion()||((Number)old.get("customer_version")).longValue()!=input.customerVersion())throw error(409,"COMPLIANCE_CASE_STALE");
@@ -133,7 +157,8 @@ public class ComplianceService {
     }
     private void event(Actor actor,UUID bank,UUID id,String action,UUID approval,Map<String,Object> evidence) {
         var state=row(bank,id);var payload=new LinkedHashMap<String,Object>(evidence);
-        payload.put("status",state.get("status"));payload.put("risk",state.get("risk"));payload.put("reviewedCustomerVersion",state.get("reviewed_customer_version"));payload.put("reviewDue",state.get("review_due")==null?null:state.get("review_due").toString());
+        payload.put("status",state.get("status"));payload.put("risk",state.get("risk"));
+        payload.put("assignee",state.get("assignee"));payload.put("dueDate",state.get("due_date")==null?null:state.get("due_date").toString());payload.put("reviewedCustomerVersion",state.get("reviewed_customer_version"));payload.put("reviewDue",state.get("review_due")==null?null:state.get("review_due").toString());
         jdbc.update("INSERT INTO platform.compliance_event(id,tenant_id,case_id,version,action,issuer,subject,correlation_id,approval_id,payload) VALUES (?,?,?,?,?,?,?,?,?,?::jsonb)",UUID.randomUUID(),bank,id,state.get("version"),action,actor.issuer(),actor.subject(),actor.correlationId(),approval,JSON.writeValueAsString(payload));
     }
     private void changed(Actor actor,Tenant bank,String action,UUID id,String reason) {

@@ -9,7 +9,9 @@ public final class AutomationModels {
     private AutomationModels() { }
 
     public enum ListCategory { SANCTIONS, PEP, INTERNAL }
-    public enum ItemType { SCREENING_HIT, MONITORING_ALERT }
+    public enum ItemType { SCREENING_HIT, MONITORING_ALERT, BENEFICIARY_HIT }
+    /** File format of a list upload: the CSV row format, or the UN Security Council consolidated list XML. */
+    public enum ListFormat { CSV, UN_XML }
 
     private static final String EVIDENCE = "[A-Za-z0-9][A-Za-z0-9._/-]*";
     private static final String TEXT = "[^\\p{Cntrl}]+";
@@ -19,11 +21,23 @@ public final class AutomationModels {
             @NotNull ListCategory category,
             @NotBlank @Size(max=200) @Pattern(regexp=TEXT) String source,
             @NotNull @DecimalMin("0.70") @DecimalMax("1.00") BigDecimal threshold,
-            @NotBlank @Size(max=6_000_000) String csv) { }
+            @NotBlank @Size(max=6_000_000) String csv,
+            ListFormat format) {
+        /** The file body travels in {@code csv} for either format; the format defaults to CSV. */
+        public Upload(String name, ListCategory category, String source, BigDecimal threshold, String csv) {
+            this(name, category, source, threshold, csv, null);
+        }
+        public ListFormat effectiveFormat() { return format == null ? ListFormat.CSV : format; }
+    }
 
+    /** Activation of a draft list version; rescreenDays, when set, re-screens every customer on that interval. */
+    @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
     public record Activation(@PositiveOrZero long expectedVersion, @NotNull UUID listId,
             @NotBlank @Pattern(regexp="[0-9a-f]{64}") String sha256,
-            @NotBlank @Size(max=500) @Pattern(regexp=TEXT) String reason) { }
+            @NotBlank @Size(max=500) @Pattern(regexp=TEXT) String reason,
+            @Min(1) @Max(366) Integer rescreenDays) {
+        public Activation(long expectedVersion, UUID listId, String sha256, String reason) { this(expectedVersion, listId, sha256, reason, null); }
+    }
 
     private static final String AMOUNT = "[0-9]{1,18}(\\.[0-9]{1,6})?";
 

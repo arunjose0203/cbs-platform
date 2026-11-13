@@ -11,6 +11,11 @@ groups:
         for: 1m
         labels: {severity: critical}
         annotations: {summary: "Check protected CBS monitor output for backup, restore, database or posting failures"}
+      - alert: CbsComplianceCasesOverdue
+        expr: cbs_compliance_overdue_cases > 0
+        for: 15m
+        labels: {severity: warning}
+        annotations: {summary: "Compliance cases are past their investigator due date; review the Overdue filter in Compliance cases"}
       - alert: CbsMonitorMissing
         expr: absent(cbs_monitor_last_run_seconds) or (time() - cbs_monitor_last_run_seconds > 180)
         for: 2m

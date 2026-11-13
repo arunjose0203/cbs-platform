@@ -37,6 +37,8 @@ class MonitorTests(unittest.TestCase):
     def test_modified_restore_evidence(self):
         (self.root/'restore').write_text('{"report":{"status":"RESTORE_VERIFIED"},"hmac":"invalid"}')
         self.assertIn('RESTORE_EVIDENCE_MISSING_OR_INVALID',self.check()['alerts'])
+    def test_overdue_compliance_cases_are_reported_as_a_count(self):
+        self.assertEqual(self.check(pending=3)['metrics']['cbs_compliance_overdue_cases'],3)
     def test_database_failure(self):self.assertIn('DATABASE_CHECK_FAILED:control',self.check(db_error=True)['alerts'])
 
 if __name__=='__main__':unittest.main()

@@ -19,6 +19,8 @@ public class ComplianceAutomationController {
     private final MonitoringService monitoring;
     private final ComplianceDecisions decisions;
     private final ApprovalService approvals;
+    private BeneficiaryScreening beneficiaries;
+    @org.springframework.beans.factory.annotation.Autowired void beneficiaries(BeneficiaryScreening beneficiaries) { this.beneficiaries = beneficiaries; }
 
     public ComplianceAutomationController(ScreeningService screening, MonitoringService monitoring, ComplianceDecisions decisions, ApprovalService approvals) {
         this.screening = screening; this.monitoring = monitoring; this.decisions = decisions; this.approvals = approvals;
@@ -48,6 +50,18 @@ public class ComplianceAutomationController {
     @PostMapping("/screening/hits/{id}/escalate")
     public Map<String, Object> escalateHit(JwtAuthenticationToken jwt, @PathVariable UUID bank, @PathVariable UUID id, @Valid @RequestBody Escalate input) {
         return decisions.escalate(actor(jwt), bank, ItemType.SCREENING_HIT, id, input);
+    }
+
+    @GetMapping("/screening/beneficiary-hits")
+    public Map<String, Object> beneficiaryHits(JwtAuthenticationToken jwt, @PathVariable UUID bank, @RequestParam(defaultValue="OPEN") String status,
+            @RequestParam(defaultValue="25") int limit, @RequestParam(defaultValue="0") int offset) { return beneficiaries.hits(actor(jwt), bank, status, limit, offset); }
+
+    @GetMapping("/screening/beneficiary-hits/{id}")
+    public Map<String, Object> beneficiaryHit(JwtAuthenticationToken jwt, @PathVariable UUID bank, @PathVariable UUID id) { return beneficiaries.hit(actor(jwt), bank, id); }
+
+    @PostMapping("/screening/beneficiary-hits/{id}/escalate")
+    public Map<String, Object> escalateBeneficiary(JwtAuthenticationToken jwt, @PathVariable UUID bank, @PathVariable UUID id, @Valid @RequestBody Escalate input) {
+        return decisions.escalate(actor(jwt), bank, ItemType.BENEFICIARY_HIT, id, input);
     }
 
     @GetMapping("/monitoring/policies")

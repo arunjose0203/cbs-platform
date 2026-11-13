@@ -33,14 +33,21 @@ public class PaymentService {
   if(!a.terms().currency().equals("KES"))throw error("PAYMENT_KES_ONLY");
   if(!jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM platform.compliance_case WHERE tenant_id=? AND customer_id=? AND status='CLEARED')",Boolean.class,bank.id(),a.customerId()))throw error("PAYMENT_VERIFICATION_REQUIRED");
  }
+ private com.cbs.compliance.BeneficiaryScreening beneficiaries;
+ @org.springframework.beans.factory.annotation.Autowired void beneficiaries(com.cbs.compliance.BeneficiaryScreening beneficiaries){this.beneficiaries=beneficiaries;}
+ /** Payee screening at each stage; a match that compliance has not dismissed refuses the payout. */
+ private void screenBeneficiary(Tenant bank,Order input,com.cbs.compliance.BeneficiaryScreening.Stage stage){
+  var account=accounts.current(bank.id(),input.accountId()).definition();
+  beneficiaries.require(bank.id(),input.accountId(),account.customerId(),input.beneficiary(),input.beneficiaryName(),stage);
+ }
  public void validate(Actor actor,Tenant bank,Order input){
   AccessService.admin(actor);if(!gateway.binding(bank.id(),input.settlementLedgerId()))throw error("PAYMENT_SANDBOX_NOT_CONFIGURED");
-  eligible(bank,input.accountId());branches.authorize(actor,bank.id(),debit(input),false);operations.validatePayment(bank,debit(input),UUID.randomUUID());
+  eligible(bank,input.accountId());screenBeneficiary(bank,input,com.cbs.compliance.BeneficiaryScreening.Stage.SUBMIT);branches.authorize(actor,bank.id(),debit(input),false);operations.validatePayment(bank,debit(input),UUID.randomUUID());
  }
  public Map<String,Object> values(Tenant bank,Order input){var values=new LinkedHashMap<>(operations.values(bank,debit(input)));values.put("provider","Safaricom M-Pesa Kenya / SANDBOX");values.put("beneficiary",input.beneficiary());values.put("beneficiaryName",input.beneficiaryName());values.put("settlementLedgerId",input.settlementLedgerId());return values;}
  public void record(Actor actor,UUID bank,Order input,UUID request){branches.record(actor,bank,debit(input),request);}
  public void enqueue(Actor actor,UUID bankId,Order input,UUID request,String maker){
-  var bank=tenants.get(bankId,true);if(!gateway.binding(bankId,input.settlementLedgerId()))throw error("PAYMENT_SANDBOX_NOT_CONFIGURED");eligible(bank,input.accountId());
+  var bank=tenants.get(bankId,true);if(!gateway.binding(bankId,input.settlementLedgerId()))throw error("PAYMENT_SANDBOX_NOT_CONFIGURED");eligible(bank,input.accountId());screenBeneficiary(bank,input,com.cbs.compliance.BeneficiaryScreening.Stage.APPROVAL);
   operations.enqueuePayment(actor,bankId,debit(input),request,maker);
   jdbc.update("INSERT INTO platform.payment_order(id,tenant_id,account_id,payload,issuer,maker,provider_profile) VALUES (?,?,?,?::jsonb,?,?,?)",request,bankId,input.accountId(),JSON.writeValueAsString(input),actor.issuer(),maker,gateway.profile(bankId));
   event(bankId,request,actor.subject(),"APPROVED",Map.of("environment","SANDBOX","currency","KES"));
@@ -67,7 +74,7 @@ public class PaymentService {
   AccessService.admin(actor);String token=token();
   Order input=tx.execute(t->{var bank=tenants.get(bankId,true);var payment=row(actor,bankId,id);if(!payment.get("state").equals("APPROVED"))return null;
    if(bank.status()!=Status.ACTIVE)throw error("ACCOUNT_BANK_NOT_ACTIVE");var value=order(payment);if(!gateway.binding(bankId,value.settlementLedgerId())||!payment.get("provider_profile").equals(gateway.profile(bankId)))throw error("PAYMENT_SANDBOX_NOT_CONFIGURED");
-   eligible(bank,value.accountId());duties.requireAtDelivery(id);branches.review(actor,id,false);access.requireAssignable(actor.issuer(),payment.get("maker").toString());
+   eligible(bank,value.accountId());screenBeneficiary(bank,value,com.cbs.compliance.BeneficiaryScreening.Stage.DISPATCH);duties.requireAtDelivery(id);branches.review(actor,id,false);access.requireAssignable(actor.issuer(),payment.get("maker").toString());
    var maker=new Actor(actor.issuer(),payment.get("maker").toString(),true,actor.correlationId());branches.authorize(maker,bankId,debit(value),false);
    var scope=branches.scope(id);if(scope!=null&&!scope.branchId().equals(branches.branch(bankId,value.accountId())))throw error("BRANCH_ACCESS_DENIED");
    if(!jdbc.queryForObject("SELECT completed FROM platform.account_operation WHERE request_id=?",Boolean.class,id))throw error("PAYMENT_POSTING_REQUIRED");
