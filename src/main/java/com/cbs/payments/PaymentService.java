@@ -108,6 +108,15 @@ public class PaymentService {
    tenants.change(bank,bank.status(),bank.displayName(),bank.defaultLanguage());
   });
  }
+ /**
+  * Latest acceptable provider settlement date: today in the bank's own time zone, or the bank's business date when
+  * that is later (weekends and holidays roll the business date forward, and orders carry it). Comparing with today
+  * in UTC refused same-day statements for three hours every night in East Africa and for whole weekends.
+  */
+ static LocalDate latestSettlementDate(com.cbs.reference.ReferenceModels.Settings settings){
+  LocalDate today=LocalDate.now(java.time.ZoneId.of(settings.businessTimezone()));
+  return settings.businessDate().isAfter(today)?settings.businessDate():today;
+ }
  static Callback parseCallback(String raw){
   try{var n=JSON.readTree(raw).path("Result");String code=n.path("ResultCode").asText(),conversation=n.path("ConversationID").asText(),originator=n.path("OriginatorConversationID").asText(),receipt=n.path("TransactionID").asText();
    if(!code.matches("-?[0-9]{1,8}")||!DarajaSandboxGateway.validIdentifier(conversation)||!DarajaSandboxGateway.validIdentifier(originator)||(!receipt.isEmpty()&&!DarajaSandboxGateway.validIdentifier(receipt)))throw error("PAYMENT_CALLBACK_INVALID");
@@ -119,7 +128,7 @@ public class PaymentService {
   PaymentAccess.require(jdbc,actor,bankId,PaymentAccess.Capability.MAKE);return tx.execute(t->{jdbc.query("SELECT pg_advisory_xact_lock(hashtextextended(?,0))",r->{},actor.issuer()+":"+actor.subject()+":"+key);var bank=tenants.get(bankId,true);PaymentAccess.require(jdbc,actor,bankId,PaymentAccess.Capability.MAKE);var payment=row(actor,bankId,input.paymentId());
    var old=jdbc.queryForList("SELECT id,tenant_id,payload=?::jsonb AS matches FROM platform.payment_statement WHERE issuer=? AND subject=? AND idempotency_key=?",JSON.writeValueAsString(input),actor.issuer(),actor.subject(),key);if(!old.isEmpty()){var previous=old.getFirst();if(!bankId.equals(previous.get("tenant_id"))||!Boolean.TRUE.equals(previous.get("matches")))throw error("IDEMPOTENCY_CONFLICT");return (UUID)previous.get("id");}
    if(bank.version()!=input.expectedVersion())throw error("STALE_VERSION");if(List.of("SETTLED","REFUND_PENDING","REFUNDED","RETURN_PENDING","RETURNED").contains(payment.get("state")))throw error("PAYMENT_ALREADY_RESOLVED");
-   if(input.settlementDate().isBefore(order(payment).businessDate())||input.settlementDate().isAfter(LocalDate.now(java.time.ZoneOffset.UTC)))throw error("PAYMENT_STATEMENT_INVALID");
+   if(input.settlementDate().isBefore(order(payment).businessDate())||input.settlementDate().isAfter(latestSettlementDate(reference.read(bank))))throw error("PAYMENT_STATEMENT_INVALID");
    UUID id=UUID.randomUUID();jdbc.update("INSERT INTO platform.payment_statement(id,tenant_id,payment_id,issuer,subject,idempotency_key,payload) VALUES (?,?,?,?,?,?,?::jsonb)",id,bankId,input.paymentId(),actor.issuer(),actor.subject(),key,JSON.writeValueAsString(input));event(bankId,input.paymentId(),actor.subject(),"STATEMENT_RECORDED",Map.of("statementId",id,"evidenceReference",input.evidenceReference()));changed(actor,bank,"PAYMENT_STATEMENT_RECORDED",input.paymentId());return id;
   });
  }

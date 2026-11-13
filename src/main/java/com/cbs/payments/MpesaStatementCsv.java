@@ -12,9 +12,11 @@ public final class MpesaStatementCsv {
  private MpesaStatementCsv() {}
  public static BigDecimal money(String text){if(text==null||!text.matches("-?[0-9]{1,18}(\\.[0-9]{1,2})?"))throw error("STATEMENT_MONEY_INVALID");return new BigDecimal(text);}
  public static String text(BigDecimal amount){return amount.stripTrailingZeros().toPlainString();}
- public static List<Line> parse(Upload upload){
+ public static List<Line> parse(Upload upload){return parse(upload,LocalDate.now(ZoneOffset.ofHours(14)));}
+ /** Parses a statement whose period may not end after {@code latest} (the bank's latest settlement date). */
+ public static List<Line> parse(Upload upload,LocalDate latest){
   if(upload.csv()==null||upload.csv().getBytes(java.nio.charset.StandardCharsets.UTF_8).length>1048576)throw error("STATEMENT_FILE_TOO_LARGE");
-  if(upload.fromDate()==null||upload.toDate()==null||upload.fromDate().isAfter(upload.toDate())||upload.fromDate().getYear()<1900||upload.toDate().isAfter(LocalDate.now(ZoneOffset.UTC)))throw error("STATEMENT_PERIOD_INVALID");
+  if(upload.fromDate()==null||upload.toDate()==null||upload.fromDate().isAfter(upload.toDate())||upload.fromDate().getYear()<1900||upload.toDate().isAfter(latest))throw error("STATEMENT_PERIOD_INVALID");
   var records=records(upload.csv());if(records.isEmpty())throw error("STATEMENT_CSV_INVALID");var header=records.getFirst();
   if(header.size()>40||header.stream().anyMatch(String::isBlank)||new HashSet<>(header).size()!=header.size())throw error("STATEMENT_COLUMNS_INVALID");
   if(upload.columns()==null||!FIELDS.containsAll(upload.columns().keySet()))throw error("STATEMENT_COLUMNS_INVALID");
