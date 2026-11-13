@@ -3,7 +3,8 @@
 Baseline Release SHA: `08df29af9cac1e3e2979bf9df06eb0ea36429b29`  
 Control Schema: **V55** (`V55__batch_schedule.sql`)  
 Bank Schema: **V29** (`V29__partial_term_closures.sql`)  
-Packaged Artifact: `cbs-platform-0.1.0-SNAPSHOT.jar`
+Packaged Artifact: `cbs-platform-0.1.0-SNAPSHOT.jar`  
+Artifact SHA-256: `428b8e7cc0cfa0e1b68b2871819004fbff2bd829d3a1505fcf3057e4a37b6058`
 
 ---
 
