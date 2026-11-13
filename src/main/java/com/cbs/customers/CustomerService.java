@@ -16,11 +16,19 @@ import tools.jackson.databind.json.JsonMapper;
 @Service
 @ConditionalOnProperty(name="cbs.tenancy.enabled",havingValue="true",matchIfMissing=true)
 public class CustomerService {
-    private final JdbcTemplate jdbc;private final TenantRepository tenants;private final BankCustomerStore store;private final BankDatabaseProvisioner databases;private final TransactionTemplate tx;
+    private final JdbcTemplate jdbc;private final TenantRepository tenants;private final BankCustomerStore store;private final BankDatabaseProvisioner databases;private final TransactionTemplate tx;private final com.cbs.privacy.PersonalDataCipher cipher;
     private static final JsonMapper JSON=JsonMapper.builder().build();
     private static final Set<String> COUNTRIES=Set.of(Locale.getISOCountries());
-    public CustomerService(JdbcTemplate jdbc,TenantRepository tenants,BankCustomerStore store,BankDatabaseProvisioner databases,PlatformTransactionManager manager){this.jdbc=jdbc;this.tenants=tenants;this.store=store;this.databases=databases;this.tx=new TransactionTemplate(manager);}
+    public CustomerService(JdbcTemplate jdbc,TenantRepository tenants,BankCustomerStore store,BankDatabaseProvisioner databases,PlatformTransactionManager manager,com.cbs.privacy.PersonalDataCipher cipher){this.jdbc=jdbc;this.tenants=tenants;this.store=store;this.databases=databases;this.tx=new TransactionTemplate(manager);this.cipher=cipher;}
+    /** Normalized document key of a profile whose number is in plaintext. Records made before Round 18 store it as is. */
     public static String documentKey(Profile p){return p.documentCountry()+":"+p.documentType()+":"+p.documentNumber().replaceAll("[ -]","").toUpperCase(Locale.ROOT);}
+    /** Blind index stored for uniqueness and duplicate checks instead of the document number (Round 18). */
+    public static String documentIndex(com.cbs.privacy.PersonalDataCipher cipher,UUID bankId,Profile p){return cipher.index(bankId,documentKey(open(cipher,bankId,p)));}
+    public static Profile open(com.cbs.privacy.PersonalDataCipher cipher,UUID bankId,Profile p){return com.cbs.privacy.PersonalDataCipher.sealed(p.documentNumber())?p.withDocumentNumber(cipher.open(bankId,p.documentNumber())):p;}
+    /** The change with its document number encrypted, before it is stored anywhere. */
+    public Change seal(UUID bankId,Change c){return new Change(c.expectedVersion(),c.customerId(),c.profile().withDocumentNumber(cipher.seal(bankId,c.profile().documentNumber())),c.duplicateReview(),c.reason());}
+    /** A stored definition as staff see it, with the document number decrypted. */
+    public Definition open(Definition d){return new Definition(d.id(),d.bankId(),d.customerNumber(),d.version(),open(cipher,d.bankId(),d.profile()));}
     private static String nameKey(String s){return s.strip().replaceAll("\\s+"," ").toLowerCase(Locale.ROOT);}
     private boolean ready(Tenant bank){return List.of(Status.ACTIVE,Status.SUSPENDED).contains(bank.status())&&store.ready(bank);}
     public Directory list(Actor actor,UUID bankId,String search,State state,int limit,int offset){
@@ -35,6 +43,8 @@ public class CustomerService {
             var rows=jdbc.query("SELECT r.*,d.payload,d.failure_code"+from+where+" ORDER BY r.customer_number LIMIT ? OFFSET ?",(r,n)->{
                 var d=JSON.readValue(r.getString("payload"),Definition.class);return new Summary(d.id(),d.customerNumber(),d.profile().fullName(),d.profile().state(),d.version(),r.getString("delivery"),r.getObject("request_id",UUID.class),r.getString("failure_code"),d.profile().kind());
             },args.toArray());
+            // Searches are recorded (without the search text, which may itself be personal data).
+            if(!search.isBlank())tenants.audit(actor,bankId,"CUSTOMER_DIRECTORY_SEARCHED",bank.version(),bank.status(),bank.status(),"Customer directory searched",null,null,Map.of("results",total));
             return new Directory(bankId,bank.version(),ready(bank),rows,total,limit,offset);
         });
     }
@@ -46,9 +56,11 @@ public class CustomerService {
         AccessService.admin(actor);return tx.execute(t->{
             jdbc.query("SELECT id FROM platform.tenant WHERE id=? FOR SHARE",r->{},bankId);var bank=tenants.get(bankId,false);var row=current(bankId,id);
             if(row.delivery().equals("APPLIED")&&!row.definition().equals(store.read(bank,id)))throw error(503,"CUSTOMER_RECONCILIATION_REQUIRED");
-            tenants.audit(actor,bankId,"CUSTOMER_PROFILE_VIEWED",bank.version(),bank.status(),bank.status(),"Customer detail viewed",null,null,Map.of("customerId",id));return row;
+            tenants.audit(actor,bankId,"CUSTOMER_PROFILE_VIEWED",bank.version(),bank.status(),bank.status(),"Customer detail viewed",null,null,Map.of("customerId",id));return new Detail(open(row.definition()),row.delivery(),row.requestId(),row.failureCode());
         });
     }
+    /** Current approved profile with the document number decrypted, for the subject-access report (caller audits). */
+    public Definition protectedView(UUID bankId,UUID id){return open(current(bankId,id).definition());}
     // Internal account-opening checks; caller holds the tenant lock.
     public String number(UUID bankId,UUID id){return current(bankId,id).definition().customerNumber();}
     /**
@@ -109,7 +121,7 @@ public class CustomerService {
     public void validate(Tenant bank,Change input){
         if(bank.version()!=input.expectedVersion())throw error(409,"STALE_VERSION");if(bank.status()!=Status.ACTIVE)throw error(409,"CUSTOMER_BANK_NOT_ACTIVE");
         if(!store.ready(bank))throw error(409,"CUSTOMER_STORAGE_NOT_READY");
-        var p=input.profile();LocalDate today=LocalDate.now(java.time.ZoneOffset.UTC);
+        var p=open(cipher,bank.id(),input.profile());LocalDate today=LocalDate.now(java.time.ZoneOffset.UTC);
         if(p.birthDate().isAfter(today)||p.birthDate().isBefore(LocalDate.of(1900,1,1))||!COUNTRIES.contains(p.nationality())||!COUNTRIES.contains(p.residenceCountry())||!COUNTRIES.contains(p.documentCountry()))throw error(400,"CUSTOMER_INVALID_PROFILE");
         if(p.documentNumber().replaceAll("[ -]","").length()<3)throw error(400,"CUSTOMER_INVALID_PROFILE");
         // Organizations identify with a registration certificate; people with an identity document.
@@ -119,15 +131,16 @@ public class CustomerService {
         if(p.state()==State.DECEASED&&input.customerId()==null)throw error(400,"CUSTOMER_INITIAL_STATE");
         if(p.state()==State.DECEASED&&p.reviewReference().isBlank())throw error(400,"CUSTOMER_DECEASED_REVIEW_REQUIRED");
         UUID exclude=input.customerId()==null?new UUID(0,0):input.customerId();
-        if(jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM platform.customer_registry WHERE tenant_id=? AND document_key=? AND id<>?)",Boolean.class,bank.id(),documentKey(p),exclude))throw error(409,"CUSTOMER_DOCUMENT_DUPLICATE");
+        // Records made before Round 18 hold the plaintext key; newer ones the blind index.
+        if(jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM platform.customer_registry WHERE tenant_id=? AND document_key IN (?,?) AND id<>?)",Boolean.class,bank.id(),documentKey(p),cipher.index(bank.id(),documentKey(p)),exclude))throw error(409,"CUSTOMER_DOCUMENT_DUPLICATE");
         if(jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM platform.customer_registry WHERE tenant_id=? AND name_key=? AND birth_date=? AND id<>?)",Boolean.class,bank.id(),nameKey(p.fullName()),p.birthDate(),exclude)&&input.duplicateReview().isBlank())throw error(409,"CUSTOMER_DUPLICATE_REVIEW_REQUIRED");
         if(input.customerId()!=null){var row=current(bank.id(),input.customerId());if(!row.delivery().equals("APPLIED"))throw error(409,"CUSTOMER_DELIVERY_PENDING");
             if(row.definition().profile().state()==State.DECEASED&&p.state()!=State.DECEASED)throw error(409,"CUSTOMER_ALREADY_DECEASED");
             if(row.definition().profile().kind()!=p.kind())throw error(409,"CUSTOMER_TYPE_IMMUTABLE");
             if(!row.definition().equals(store.read(bank,input.customerId())))throw error(503,"CUSTOMER_RECONCILIATION_REQUIRED");}
     }
-    public Map<String,Object> before(UUID bankId,Change input){return input.customerId()==null?Map.of():values(current(bankId,input.customerId()).definition().profile(),"");}
-    public Map<String,Object> values(Change input){return values(input.profile(),input.duplicateReview());}
+    public Map<String,Object> before(UUID bankId,Change input){return input.customerId()==null?Map.of():values(open(cipher,bankId,current(bankId,input.customerId()).definition().profile()),"");}
+    public Map<String,Object> values(UUID bankId,Change input){return values(open(cipher,bankId,input.profile()),input.duplicateReview());}
     private Map<String,Object> values(Profile p,String duplicateReview){
         Map<String,Object> m=new LinkedHashMap<>();m.put("fullName",p.fullName().trim());m.put("birthDate",p.birthDate().toString());m.put("nationality",p.nationality());m.put("residenceCountry",p.residenceCountry());m.put("address",p.address().trim());m.put("phone",p.phone());m.put("email",p.email());m.put("documentType",p.documentType().name());m.put("documentCountry",p.documentCountry());String number=p.documentNumber().replaceAll("[ -]","");m.put("documentNumber","••••"+number.substring(Math.max(0,number.length()-2)));m.put("documentExpiry",p.documentExpiry()==null?"":p.documentExpiry().toString());m.put("documentReference",p.documentReference());m.put("state",p.state().name());m.put("reviewReference",p.reviewReference());m.put("duplicateReview",duplicateReview);return m;
     }
@@ -137,8 +150,9 @@ public class CustomerService {
         AccessService.admin(reviewer);var bank=tenants.get(bankId,true);validate(bank,input);UUID id=input.customerId()==null?UUID.randomUUID():input.customerId();
         var old=input.customerId()==null?null:current(bankId,id).definition();String number=old==null?"C"+id.toString().replace("-","").toUpperCase(Locale.ROOT):old.customerNumber();
         long version=old==null?0:old.version()+1;var d=new Definition(id,bankId,number,version,input.profile());var p=input.profile();
-        if(old==null)jdbc.update("INSERT INTO platform.customer_registry(id,tenant_id,customer_number,document_key,name_key,birth_date,version,request_id,delivery,customer_type) VALUES (?,?,?,?,?,?,?,?,'PENDING',?)",id,bankId,number,documentKey(p),nameKey(p.fullName()),p.birthDate(),version,requestId,p.kind().name());
-        else jdbc.update("UPDATE platform.customer_registry SET document_key=?,name_key=?,birth_date=?,version=?,request_id=?,delivery='PENDING' WHERE tenant_id=? AND id=?",documentKey(p),nameKey(p.fullName()),p.birthDate(),version,requestId,bankId,id);
+        String index=documentIndex(cipher,bankId,p);
+        if(old==null)jdbc.update("INSERT INTO platform.customer_registry(id,tenant_id,customer_number,document_key,name_key,birth_date,version,request_id,delivery,customer_type) VALUES (?,?,?,?,?,?,?,?,'PENDING',?)",id,bankId,number,index,nameKey(p.fullName()),p.birthDate(),version,requestId,p.kind().name());
+        else jdbc.update("UPDATE platform.customer_registry SET document_key=?,name_key=?,birth_date=?,version=?,request_id=?,delivery='PENDING' WHERE tenant_id=? AND id=?",index,nameKey(p.fullName()),p.birthDate(),version,requestId,bankId,id);
         jdbc.update("INSERT INTO platform.customer_delivery(request_id,tenant_id,customer_id,payload,maker_subject,reviewer_issuer,reviewer_subject,correlation_id) VALUES (?,?,?,?::jsonb,?,?,?,?)",requestId,bankId,id,JSON.writeValueAsString(d),maker,reviewer.issuer(),reviewer.subject(),reviewer.correlationId());
         // Every approved profile version is screened against the bank's active lists before it is used.
         if(screening!=null)screening.screenCustomer(bankId,id,version,p.fullName(),p.birthDate(),p.kind()==CustomerModels.CustomerType.INDIVIDUAL);

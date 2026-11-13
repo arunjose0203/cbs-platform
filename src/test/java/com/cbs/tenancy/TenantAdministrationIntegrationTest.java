@@ -1452,6 +1452,87 @@ class TenantAdministrationIntegrationTest {
         }
         assertThat(service.auditEvents(ADMIN,bank.id(),100,0).items()).anyMatch(a->a.action().equals("CUSTOMER_PROFILE_VIEWED"));
     }
+    @Test void privacyEncryptsIdentifiersLogsViewsAndHandlesHoldsAndSubjectRequests() throws Exception {
+        var f=fundingFixture("privacy-main");var bank=f.f().bank();UUID b=bank.id();String base="/api/v1/admin/tenants/"+b;
+        var profile=person("Amina Wanjiru","PRIV-12345",java.time.LocalDate.of(1985,4,2));UUID c=onboard(bank,profile);
+        // The document number is never stored in plaintext: approval, delivery, registry and the bank database.
+        assertThat(jdbc.queryForObject("SELECT document_key FROM platform.customer_registry WHERE id=?",String.class,c)).startsWith("bi1:").doesNotContain("12345");
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM platform.approval_request WHERE bank_id=? AND action='CUSTOMER_CHANGE' AND payload::text LIKE '%12345%'",Integer.class,b)).isZero();
+        assertThat(jdbc.queryForObject("SELECT payload::text LIKE '%pd1:%' AND payload::text NOT LIKE '%12345%' FROM platform.customer_delivery WHERE customer_id=?",Boolean.class,c)).isTrue();
+        try(var conn=TestDatabases.bank("privacy");var st=conn.prepareStatement("SELECT c.document_key,c.payload::text,e.payload::text FROM bank.customer c JOIN bank.customer_event e ON e.customer_id=c.id WHERE c.id=?")){
+            st.setObject(1,c);try(var r=st.executeQuery()){assertThat(r.next()).isTrue();assertThat(r.getString(1)).startsWith("bi1:");
+                for(int i=2;i<=3;i++)assertThat(r.getString(i)).contains("pd1:").doesNotContain("12345");}
+        }
+        // Staff still see the number, and every view is logged for the data protection officer.
+        mvc.perform(admin(get(base+"/customers/"+c))).andExpect(status().isOk()).andExpect(jsonPath("$.definition.profile.documentNumber").value("PRIV-12345"));
+        assertThat(customers.detail(ADMIN,b,c).definition().profile()).isEqualTo(profile);
+        mvc.perform(admin(get(base+"/customers?search=Amina"))).andExpect(status().isOk());
+        assertThat(jdbc.queryForList("SELECT change_details::text FROM platform.tenant_audit WHERE tenant_id=? AND action='CUSTOMER_DIRECTORY_SEARCHED'",String.class,b)).singleElement().asString().doesNotContain("Amina");
+        mvc.perform(admin(get(base+"/privacy/customers/"+c+"/views"))).andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].action").value("CUSTOMER_PROFILE_VIEWED")).andExpect(jsonPath("$[0].actorSubject").value("administrator"));
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM platform.tenant_audit WHERE tenant_id=? AND action='CUSTOMER_VIEW_LOG_READ'",Integer.class,b)).isEqualTo(1);
+        // Duplicate checks work on the blind index, and on plaintext keys written before Round 18.
+        assertCode(()->approvals.customer(ADMIN,UUID.randomUUID(),b,customerChange(bank,null,person("Someone Else","priv 12345",java.time.LocalDate.of(1990,1,1)),"Different person")),"CUSTOMER_DOCUMENT_DUPLICATE");
+        String index=jdbc.queryForObject("SELECT document_key FROM platform.customer_registry WHERE id=?",String.class,c);
+        jdbc.update("UPDATE platform.customer_registry SET document_key='KE:NATIONAL_ID:PRIV12345' WHERE id=?",c);
+        assertCode(()->approvals.customer(ADMIN,UUID.randomUUID(),b,customerChange(bank,null,person("Someone Else","PRIV12345",java.time.LocalDate.of(1990,1,1)),"Different person")),"CUSTOMER_DOCUMENT_DUPLICATE");
+        jdbc.update("UPDATE platform.customer_registry SET document_key=? WHERE id=?",index,c);
+        // Profile changes keep idempotent retries, masked previews and control/bank reconciliation working.
+        var moved=new com.cbs.customers.CustomerModels.Profile("Amina Wanjiru",profile.birthDate(),"KE","KE","New fictional address","+254700000002","demo@example.test",com.cbs.customers.CustomerModels.DocumentType.NATIONAL_ID,"KE","PRIV-12345",null,"DOC/PRIV",com.cbs.customers.CustomerModels.State.ACTIVE,"REVIEW/PRIV");
+        UUID key=UUID.randomUUID();var change=customerChange(bank,c,moved,"");var update=approvals.customer(ADMIN,key,b,change);
+        assertThat(approvals.customer(ADMIN,key,b,change).id()).isEqualTo(update.id());
+        assertThat(update.proposedValues().get("documentNumber")).isEqualTo("••••45");assertThat(update.beforeValues().get("documentNumber")).isEqualTo("••••45");
+        approveHttp(update.id());customers.deliver(update.id());
+        assertThat(customers.detail(ADMIN,b,c).definition().profile().address()).isEqualTo("New fictional address");
+        accountFor(f,c,"PRIV_ACC","50");
+        // Legal hold: maker-checker, no double placement, visible to the DPO.
+        var hold=approvals.legalHold(ADMIN,UUID.randomUUID(),b,new com.cbs.privacy.PrivacyModels.Hold(service.get(ADMIN,b).version(),c,true,"COURT/2026/14","Court order to preserve records"));
+        assertThat(hold.proposedValues()).containsEntry("legalHold","active");
+        assertCode(()->approvals.decide(ADMIN,hold.id(),com.cbs.approvals.ApprovalModels.Decision.APPROVE,"Own"),"SELF_APPROVAL_FORBIDDEN");
+        approveHttp(hold.id());
+        assertCode(()->approvals.legalHold(ADMIN,UUID.randomUUID(),b,new com.cbs.privacy.PrivacyModels.Hold(service.get(ADMIN,b).version(),c,true,"COURT/2026/15","Again")),"LEGAL_HOLD_ALREADY_ACTIVE");
+        mvc.perform(admin(get(base+"/privacy/legal-holds"))).andExpect(status().isOk()).andExpect(jsonPath("$[0].reference").value("COURT/2026/14"));
+        mvc.perform(admin(get(base+"/privacy/customers/"+c+"/erasure"))).andExpect(status().isOk())
+                .andExpect(jsonPath("$.blockers").value(org.hamcrest.Matchers.containsInAnyOrder("LEGAL_HOLD","RELATIONSHIP_OPEN")));
+        // Data-subject requests: idempotent registration, due date, access report, closing rules.
+        var today=java.time.LocalDate.now(java.time.ZoneOffset.UTC);
+        String access=json.writeValueAsString(Map.of("customerId",c,"type","ACCESS","receivedOn",today.toString(),"reference","DSR/2026/001","details","Letter received at branch"));
+        UUID dsrKey=UUID.randomUUID();
+        var created=json.readValue(mvc.perform(admin(post(base+"/privacy/requests")).header("Idempotency-Key",dsrKey).contentType("application/json").content(access)).andExpect(status().isCreated())
+                .andExpect(jsonPath("$.dueOn").value(today.plusDays(7).toString())).andExpect(jsonPath("$.status").value("OPEN")).andReturn().getResponse().getContentAsString(),Map.class);
+        String id=(String)created.get("id");
+        mvc.perform(admin(post(base+"/privacy/requests")).header("Idempotency-Key",dsrKey).contentType("application/json").content(access)).andExpect(status().isCreated()).andExpect(jsonPath("$.id").value(id));
+        mvc.perform(admin(post(base+"/privacy/requests")).header("Idempotency-Key",dsrKey).contentType("application/json").content(access.replace("DSR/2026/001","DSR/2026/009"))).andExpect(status().isConflict());
+        mvc.perform(admin(post(base+"/privacy/requests")).header("Idempotency-Key",UUID.randomUUID()).contentType("application/json").content(access.replace(today.toString(),today.plusDays(1).toString()))).andExpect(status().isBadRequest());
+        String complete=json.writeValueAsString(Map.of("outcome","COMPLETED","code","REPORT_SENT","note","Report handed over at the branch"));
+        mvc.perform(admin(post(base+"/privacy/requests/"+id+"/close")).contentType("application/json").content(complete)).andExpect(status().isConflict());
+        String report=mvc.perform(admin(get(base+"/privacy/requests/"+id+"/report"))).andExpect(status().isOk()).andExpect(header().string("Cache-Control","no-store"))
+                .andExpect(jsonPath("$.customer.profile.documentNumber").value("PRIV-12345")).andExpect(jsonPath("$.accounts[0].currency").value(f.f().product().currency()))
+                .andReturn().getResponse().getContentAsString();
+        assertThat(report).doesNotContainIgnoringCase("screening hit").doesNotContain("compliance_case").doesNotContain("COURT/2026/14");
+        mvc.perform(admin(post(base+"/privacy/requests/"+id+"/close")).contentType("application/json").content(complete)).andExpect(status().isOk()).andExpect(jsonPath("$.status").value("COMPLETED"));
+        mvc.perform(admin(post(base+"/privacy/requests/"+id+"/close")).contentType("application/json").content(complete)).andExpect(status().isConflict());
+        mvc.perform(admin(get(base+"/privacy/customers/"+c+"/views"))).andExpect(jsonPath("$[0].action").value("PRIVACY_ACCESS_REPORT_EXPORTED"));
+        String erasure=access.replace("ACCESS","ERASURE").replace("DSR/2026/001","DSR/2026/002").replace(today.toString(),today.minusDays(10).toString());
+        String eid=(String)json.readValue(mvc.perform(admin(post(base+"/privacy/requests")).header("Idempotency-Key",UUID.randomUUID()).contentType("application/json").content(erasure)).andExpect(status().isCreated()).andReturn().getResponse().getContentAsString(),Map.class).get("id");
+        mvc.perform(admin(get(base+"/privacy/requests?overdue=true"))).andExpect(jsonPath("$[0].id").value(eid)).andExpect(jsonPath("$[0].overdue").value(true)).andExpect(jsonPath("$.length()").value(1));
+        mvc.perform(admin(get(base+"/privacy/requests/"+eid+"/report"))).andExpect(status().isConflict());
+        mvc.perform(admin(post(base+"/privacy/requests/"+eid+"/close")).contentType("application/json").content(complete)).andExpect(status().isConflict());
+        mvc.perform(admin(post(base+"/privacy/requests/"+eid+"/close")).contentType("application/json").content(json.writeValueAsString(Map.of("outcome","REJECTED","code","LEGAL_HOLD","note","Records are under a court preservation order"))))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.outcomeCode").value("LEGAL_HOLD"));
+        // Releasing the hold; the retention review lists only customers past the retention period and not held.
+        var release=approvals.legalHold(ADMIN,UUID.randomUUID(),b,new com.cbs.privacy.PrivacyModels.Hold(service.get(ADMIN,b).version(),c,false,"COURT/2026/14","Order lifted"));approveHttp(release.id());
+        mvc.perform(admin(get(base+"/privacy/legal-holds"))).andExpect(jsonPath("$.length()").value(0));
+        mvc.perform(admin(get(base+"/privacy/retention"))).andExpect(status().isOk()).andExpect(jsonPath("$[0].years").value(7));
+        mvc.perform(admin(get(base+"/privacy/retention/candidates"))).andExpect(jsonPath("$.length()").value(0));
+        UUID old=onboard(bank,person("Former Customer","PRIV-77777",java.time.LocalDate.of(1950,1,1)));
+        jdbc.update("UPDATE platform.customer_delivery SET completed_at=completed_at - interval '8 years' WHERE customer_id=?",old);
+        mvc.perform(admin(get(base+"/privacy/retention/candidates"))).andExpect(jsonPath("$.length()").value(1)).andExpect(jsonPath("$[0].customerId").value(old.toString()));
+        mvc.perform(admin(get(base+"/privacy/customers/"+old+"/erasure"))).andExpect(jsonPath("$.blockers.length()").value(0));
+        // Privacy routes need authentication and an administrator.
+        mvc.perform(get(base+"/privacy/requests")).andExpect(status().isUnauthorized());
+        mvc.perform(get(base+"/privacy/requests").header("Authorization","Bearer "+TestIdentity.token("operator",false))).andExpect(status().isForbidden());
+    }
     @Test void customerDuplicateReviewAndHttpAccessAreEnforced() throws Exception {
         Tenant bank=provision(register("customer-guards"));var p=customerProfile("Duplicate Example","AA001",com.cbs.customers.CustomerModels.State.PROSPECT,"");String path="/api/v1/admin/tenants/"+bank.id()+"/customers";
         mvc.perform(get(path)).andExpect(status().isUnauthorized());mvc.perform(get(path).header("Authorization","Bearer "+TestIdentity.token("operator",false))).andExpect(status().isForbidden());

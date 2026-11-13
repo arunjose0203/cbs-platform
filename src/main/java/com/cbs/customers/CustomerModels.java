@@ -49,6 +49,8 @@ public final class CustomerModels {
             this(fullName,birthDate,nationality,residenceCountry,address,phone,email,documentType,documentCountry,documentNumber,documentExpiry,documentReference,state,reviewReference,null);
         }
         public CustomerType kind(){return type==null?CustomerType.INDIVIDUAL:type;}
+        /** Same profile with another document number (sealed or opened by PersonalDataCipher). */
+        public Profile withDocumentNumber(String number){return new Profile(fullName,birthDate,nationality,residenceCountry,address,phone,email,documentType,documentCountry,number,documentExpiry,documentReference,state,reviewReference,type);}
         public boolean minorOn(LocalDate date){return kind()==CustomerType.INDIVIDUAL&&birthDate.plusYears(MAJORITY_AGE).isAfter(date);}
     }
     public record Change(@Min(0) long expectedVersion,UUID customerId,@NotNull @Valid Profile profile,

@@ -10,6 +10,10 @@ cbs:
     issuer: https://IDENTITY_DOMAIN/realms/cbs
     jwk-set-uri: https://IDENTITY_DOMAIN/realms/cbs/protocol/openid-connect/certs
     audience: cbs-api
+  privacy:
+    # Base64 of 32 random bytes (openssl rand -base64 32); escrow it with the database backups:
+    # without it, encrypted identity document numbers cannot be read.
+    field-key: REPLACE_FROM_SECRET_STORE
   portal:
     client-id: cbs-portal
     redirect-uri: https://CBS_DOMAIN/admin/index.html

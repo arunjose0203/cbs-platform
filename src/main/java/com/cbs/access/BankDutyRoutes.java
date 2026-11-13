@@ -65,7 +65,9 @@ public final class BankDutyRoutes {
             duty("/notifications", CUSTOMER), duty("/contracts", CUSTOMER, CUSTOMER, FINANCE),
             // Payments, treasury and compliance.
             duty("/payments", PAYMENTS, PAYMENTS, FINANCE), duty("/statement-imports", PAYMENTS, PAYMENTS, FINANCE),
-            duty("/fx", TREASURY, TREASURY, FINANCE), duty("/compliance", COMPLIANCE));
+            duty("/fx", TREASURY, TREASURY, FINANCE), duty("/compliance", COMPLIANCE),
+            // Privacy (Round 18): the data protection officer works under the compliance duty.
+            duty("/privacy", COMPLIANCE));
 
     private static Rule platform(String prefix) { return new Rule(prefix, Kind.PLATFORM, null, Set.of()); }
     private static Rule lending(String prefix) { return new Rule(prefix, Kind.LENDING, null, Set.of()); }

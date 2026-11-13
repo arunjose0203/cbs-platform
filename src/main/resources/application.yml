@@ -34,6 +34,11 @@ cbs:
     maximum-session-age: PT8H
     maximum-token-age: PT30M
     administrator-mfa-age: PT30M
+  privacy:
+    # Base64 of 32+ random bytes from the secret store; production refuses a blank or development key.
+    field-key: ${CBS_PRIVACY_FIELD_KEY:}
+    # Days allowed to answer a data-subject request; confirm with the bank's data protection officer.
+    request-due-days: ${CBS_PRIVACY_REQUEST_DUE_DAYS:7}
   portal:
     client-id: ${CBS_PORTAL_CLIENT_ID:}
     redirect-uri: ${CBS_PORTAL_REDIRECT_URI:}

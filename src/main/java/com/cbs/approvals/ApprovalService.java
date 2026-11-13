@@ -126,6 +126,9 @@ public class ApprovalService {
     private com.cbs.access.BankDuties duties;
     @org.springframework.beans.factory.annotation.Autowired void duties(com.cbs.access.BankDuties duties){this.duties=duties;}
     public Request bankDuty(Actor actor,UUID key,UUID bankId,com.cbs.access.BankDuties.Grant input){return submit(actor,key,bankId,Action.BANK_DUTY,input.expectedVersion(),input.reason(),input);}
+    private com.cbs.privacy.PrivacyService privacy;
+    @org.springframework.beans.factory.annotation.Autowired void privacy(com.cbs.privacy.PrivacyService privacy){this.privacy=privacy;}
+    public Request legalHold(Actor actor,UUID key,UUID bankId,com.cbs.privacy.PrivacyModels.Hold input){return submit(actor,key,bankId,Action.LEGAL_HOLD,input.expectedVersion(),input.reason(),input);}
     public Request bankDutyPolicy(Actor actor,UUID key,UUID bankId,com.cbs.access.BankDuties.Policy input){return submit(actor,key,bankId,Action.BANK_DUTY_POLICY,input.expectedVersion(),input.reason(),input);}
 
     /** Bank duty for a new request on the platform-administrator path, or null when another model governs it. */
@@ -184,7 +187,8 @@ public class ApprovalService {
         return submit(actor,key,bankId,Action.DEPOSIT_ACCOUNT,input.expectedVersion(),input.reason(),input);
     }
     public Request customer(Actor actor,UUID key,UUID bankId,com.cbs.customers.CustomerModels.Change input){
-        return submit(actor,key,bankId,Action.CUSTOMER_CHANGE,input.expectedVersion(),input.reason(),input);
+        // The document number is encrypted before the request is stored (Round 18).
+        return submit(actor,key,bankId,Action.CUSTOMER_CHANGE,input.expectedVersion(),input.reason(),customers.seal(bankId,input));
     }
     public Request product(Actor actor,UUID key,UUID bankId,com.cbs.products.ProductModels.Change input) {
         return submit(actor,key,bankId,Action.DEPOSIT_PRODUCT,input.expectedVersion(),input.reason(),input);
@@ -300,6 +304,9 @@ public class ApprovalService {
             } else if(action==Action.COMPLIANCE_ALERT_DISMISS) {
                 var bank=tenantRepository.get(id,true);var change=(com.cbs.compliance.AutomationModels.Dismiss)input;complianceDecisions.validate(bank,change);
                 before=complianceDecisions.before(bank,change);after=complianceDecisions.values(change);label=switch(change.type()){case SCREENING_HIT->"Dismiss screening match";case MONITORING_ALERT->"Dismiss monitoring alert";case BENEFICIARY_HIT->"Dismiss beneficiary screening match";};bankId=id;
+            } else if(action==Action.LEGAL_HOLD) {
+                var bank=tenantRepository.get(id,true);var change=(com.cbs.privacy.PrivacyModels.Hold)input;privacy.validate(bank,change);
+                before=privacy.before(id,change);after=privacy.values(id,change);label=change.active()?"Place legal hold":"Release legal hold";bankId=id;
             } else if(action==Action.REPORT_DEFINITION) {
                 var bank=tenantRepository.get(id,true);var change=(com.cbs.reporting.ReportModels.Definition)input;reportDefinitions.validate(bank,change);
                 before=reportDefinitions.before(bank,change.code());after=reportDefinitions.values(bank,change);label="Report definition "+change.code();bankId=id;
@@ -333,7 +340,7 @@ public class ApprovalService {
                 label=change.accountId()==null?"New deposit account": "Deposit account "+change.accountId();bankId=id;
             } else if(action==Action.CUSTOMER_CHANGE) {
                 var bank=tenantRepository.get(id,true);var change=(com.cbs.customers.CustomerModels.Change)input;
-                customers.validate(bank,change);before=customers.before(id,change);after=customers.values(change);
+                customers.validate(bank,change);before=customers.before(id,change);after=customers.values(id,change);
                 label=change.customerId()==null?"New individual customer":"Customer "+change.customerId();bankId=id;
             } else if(action==Action.DEPOSIT_PRODUCT) {
                 var bank=tenantRepository.get(id,true);
@@ -517,6 +524,7 @@ public class ApprovalService {
                         case SCREENING_LIST -> screening.apply(actor,request.targetId(),JSON.readValue(jdbc.queryForObject("SELECT payload::text FROM platform.approval_request WHERE id=?",String.class,id),com.cbs.compliance.AutomationModels.Activation.class),id);
                         case MONITORING_POLICY -> monitoring.apply(actor,request.targetId(),JSON.readValue(jdbc.queryForObject("SELECT payload::text FROM platform.approval_request WHERE id=?",String.class,id),com.cbs.compliance.AutomationModels.Policy.class),id);
                         case COMPLIANCE_ALERT_DISMISS -> complianceDecisions.apply(actor,request.targetId(),JSON.readValue(jdbc.queryForObject("SELECT payload::text FROM platform.approval_request WHERE id=?",String.class,id),com.cbs.compliance.AutomationModels.Dismiss.class),request.makerSubject(),id);
+                        case LEGAL_HOLD -> privacy.apply(actor,request.targetId(),JSON.readValue(jdbc.queryForObject("SELECT payload::text FROM platform.approval_request WHERE id=?",String.class,id),com.cbs.privacy.PrivacyModels.Hold.class),id);
                         case REPORT_DEFINITION -> reportDefinitions.apply(actor,request.targetId(),JSON.readValue(jdbc.queryForObject("SELECT payload::text FROM platform.approval_request WHERE id=?",String.class,id),com.cbs.reporting.ReportModels.Definition.class),id);
                         case PERIOD_CLOSE_POLICY -> {
                             String payload=jdbc.queryForObject("SELECT payload::text FROM platform.approval_request WHERE id=?",String.class,id);

@@ -15,9 +15,9 @@ public class BankCustomerStore {
     /** Duty recheck for a request the bank has no receipt for yet (see BankDuties.requireAtDelivery). */
     private void recheck(java.util.UUID request){var service=duties==null?null:duties.getIfAvailable();if(service!=null)service.requireAtDelivery(request);}
 
-    private final BankDatabaseProvisioner databases;
+    private final BankDatabaseProvisioner databases;private final com.cbs.privacy.PersonalDataCipher cipher;
     private static final JsonMapper JSON=JsonMapper.builder().build();
-    public BankCustomerStore(BankDatabaseProvisioner databases){this.databases=databases;}
+    public BankCustomerStore(BankDatabaseProvisioner databases,com.cbs.privacy.PersonalDataCipher cipher){this.databases=databases;this.cipher=cipher;}
     private Connection connection(Tenant bank){return databases.openOwned(bank.id(),bank.databaseBinding().databaseReference());}
     public boolean ready(Tenant bank){
         try(var c=connection(bank);var s=c.createStatement();var r=s.executeQuery("SELECT to_regclass('bank.customer') IS NOT NULL AND to_regclass('bank.customer_event') IS NOT NULL")){r.next();return r.getBoolean(1);}catch(SQLException e){throw unavailable();}
@@ -49,11 +49,11 @@ public class BankCustomerStore {
                 recheck(job.requestId());
                 if(d.version()==0){
                     try(var s=c.prepareStatement("INSERT INTO bank.customer(id,tenant_id,customer_number,document_key,version,payload) VALUES (?,?,?,?,?,?::jsonb)")){
-                        s.setObject(1,d.id());s.setObject(2,bank.id());s.setString(3,d.customerNumber());s.setString(4,CustomerService.documentKey(d.profile()));s.setLong(5,d.version());s.setString(6,payload);s.executeUpdate();
+                        s.setObject(1,d.id());s.setObject(2,bank.id());s.setString(3,d.customerNumber());s.setString(4,CustomerService.documentIndex(cipher,bank.id(),d.profile()));s.setLong(5,d.version());s.setString(6,payload);s.executeUpdate();
                     }
                 }else{
                     try(var s=c.prepareStatement("UPDATE bank.customer SET document_key=?,version=?,payload=?::jsonb,updated_at=clock_timestamp() WHERE tenant_id=? AND id=? AND version=? AND customer_number=?")){
-                        s.setString(1,CustomerService.documentKey(d.profile()));s.setLong(2,d.version());s.setString(3,payload);s.setObject(4,bank.id());s.setObject(5,d.id());s.setLong(6,d.version()-1);s.setString(7,d.customerNumber());if(s.executeUpdate()!=1)throw new SQLException("Customer version mismatch");
+                        s.setString(1,CustomerService.documentIndex(cipher,bank.id(),d.profile()));s.setLong(2,d.version());s.setString(3,payload);s.setObject(4,bank.id());s.setObject(5,d.id());s.setLong(6,d.version()-1);s.setString(7,d.customerNumber());if(s.executeUpdate()!=1)throw new SQLException("Customer version mismatch");
                     }
                 }
                 try(var s=c.prepareStatement("INSERT INTO bank.customer_event(request_id,customer_id,payload,maker_subject,reviewer_issuer,reviewer_subject,correlation_id) VALUES (?,?,?::jsonb,?,?,?,?)")){
