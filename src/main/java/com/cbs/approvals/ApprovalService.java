@@ -123,6 +123,50 @@ public class ApprovalService {
     @org.springframework.beans.factory.annotation.Autowired void reportDefinitions(com.cbs.reporting.ReportDefinitionService reportDefinitions){this.reportDefinitions=reportDefinitions;}
     private com.cbs.compliance.ScreeningService screening;private com.cbs.compliance.MonitoringService monitoring;private com.cbs.compliance.ComplianceDecisions complianceDecisions;
     @org.springframework.beans.factory.annotation.Autowired void complianceAutomation(com.cbs.compliance.ScreeningService screening,com.cbs.compliance.MonitoringService monitoring,com.cbs.compliance.ComplianceDecisions decisions){this.screening=screening;this.monitoring=monitoring;this.complianceDecisions=decisions;}
+    private com.cbs.access.BankDuties duties;
+    @org.springframework.beans.factory.annotation.Autowired void duties(com.cbs.access.BankDuties duties){this.duties=duties;}
+    public Request bankDuty(Actor actor,UUID key,UUID bankId,com.cbs.access.BankDuties.Grant input){return submit(actor,key,bankId,Action.BANK_DUTY,input.expectedVersion(),input.reason(),input);}
+    public Request bankDutyPolicy(Actor actor,UUID key,UUID bankId,com.cbs.access.BankDuties.Policy input){return submit(actor,key,bankId,Action.BANK_DUTY_POLICY,input.expectedVersion(),input.reason(),input);}
+
+    /** Bank duty for a new request on the platform-administrator path, or null when another model governs it. */
+    private com.cbs.access.BankDuties.Duty submitDuty(Actor actor,Action action,UUID bank,Object input,boolean lendingScoped){
+        if(lendingScoped) return null;
+        if(paymentScoped(action)) return actor.platformAdmin()?com.cbs.access.BankDuties.Duty.PAYMENTS:null;
+        if(action==Action.ACCOUNT_OPERATION){var change=(com.cbs.accounts.OperationModels.Change)input;
+            if(change.kind()!=com.cbs.accounts.OperationModels.Kind.CLOSURE_SETTLEMENT&&branchOperations.branch(bank,change.accountId())!=null) return null;}
+        if(action==Action.CASH_OPERATION&&((com.cbs.cash.CashModels.Change)input).kind()!=com.cbs.cash.CashModels.Kind.REGISTER) return null;
+        return com.cbs.access.BankDuties.duty(action);
+    }
+    /** Same classification for a stored request; branch and cash requests use the path they were submitted on. */
+    private com.cbs.access.BankDuties.Duty storedDuty(Request request){
+        if(request.bankId()==null||lending.request(request.id())!=null||paymentScoped(request.action())) return null;
+        if(request.action()==Action.ACCOUNT_OPERATION&&branchOperations.scope(request.id())!=null) return null;
+        if(request.action()==Action.CASH_OPERATION&&!"REGISTER".equals(JSON.readTree(jdbc.queryForObject("SELECT payload::text FROM platform.approval_request WHERE id=?",String.class,request.id())).path("kind").asText())) return null;
+        return com.cbs.access.BankDuties.duty(request.action());
+    }
+    /** Duty the deciding or reading administrator needs; payment requests only on the administrator path. */
+    private com.cbs.access.BankDuties.Duty reviewDuty(Actor actor,Request request){
+        if(request.bankId()!=null&&paymentScoped(request.action())) return actor.platformAdmin()?com.cbs.access.BankDuties.Duty.PAYMENTS:null;
+        return storedDuty(request);
+    }
+    private com.cbs.access.BankDuties.Duty makerDuty(Request request){
+        if(request.bankId()!=null&&paymentScoped(request.action())){
+            var admin=jdbc.queryForList("SELECT maker_admin FROM platform.payment_approval_scope WHERE request_id=?",Boolean.class,request.id());
+            return !admin.isEmpty()&&Boolean.TRUE.equals(admin.getFirst())?com.cbs.access.BankDuties.Duty.PAYMENTS:null;
+        }
+        return storedDuty(request);
+    }
+    /**
+     * Break-glass: if duties are enforced but fewer than two access administrators remain, platform
+     * administrators may still submit and independently approve switching enforcement off.
+     */
+    private boolean dutyRecovery(Action action,UUID bank,Object input){
+        return action==Action.BANK_DUTY_POLICY&&!((com.cbs.access.BankDuties.Policy)input).enforced()&&duties.lockedOut(bank);
+    }
+    private boolean dutyRecovery(Request request){
+        return request.action()==Action.BANK_DUTY_POLICY&&!Boolean.TRUE.equals(request.proposedValues().get("enforced"))&&duties.lockedOut(request.bankId());
+    }
+
     public Request screeningList(Actor actor,UUID key,UUID bankId,com.cbs.compliance.AutomationModels.Activation input){return submit(actor,key,bankId,Action.SCREENING_LIST,input.expectedVersion(),input.reason(),input);}
     public Request monitoringPolicy(Actor actor,UUID key,UUID bankId,com.cbs.compliance.AutomationModels.Policy input){return submit(actor,key,bankId,Action.MONITORING_POLICY,input.expectedVersion(),input.reason(),input);}
     public Request complianceDismiss(Actor actor,UUID key,UUID bankId,com.cbs.compliance.AutomationModels.Dismiss input){return submit(actor,key,bankId,Action.COMPLIANCE_ALERT_DISMISS,input.expectedVersion(),input.reason(),input);}
@@ -181,6 +225,8 @@ public class ApprovalService {
         return tx.execute(transaction->{
             access.requireAssignable(actor.issuer(),actor.subject());
             if(scopedLoan){tenantRepository.get(id,true);lending.maker(actor,id,lending.scope(id,action,input));}
+            var duty=submitDuty(actor,action,id,input,scopedLoan);
+            if(duty!=null&&!dutyRecovery(action,id,input))duties.require(actor,id,duty,false);
             // Serialize retries before checking the target, including retries after the request was approved.
             jdbc.query("SELECT pg_advisory_xact_lock(hashtextextended(?,0))",rs->{},actor.issuer()+":"+actor.subject()+":"+key);
             var existing=jdbc.query("SELECT * FROM platform.approval_request WHERE issuer=? AND maker_subject=? AND idempotency_key=?",
@@ -198,7 +244,9 @@ public class ApprovalService {
             Map<String,Object> before,after;
             String label;
             UUID bankId=null;
-            if(action==Action.LENDING_ACCESS){var bank=tenantRepository.get(id,true);lending.validateGrant(actor,bank,(com.cbs.access.LendingAccess.Grant)input);before=Map.of();after=Map.of("grant",input);label=bank.displayName();bankId=id;
+            if(action==Action.BANK_DUTY){var bank=tenantRepository.get(id,true);var change=(com.cbs.access.BankDuties.Grant)input;duties.validateGrant(actor,bank,change);before=duties.before(id,change.staffId());after=Map.of("grant",change);label=bank.displayName()+" — bank duties";bankId=id;
+            } else if(action==Action.BANK_DUTY_POLICY){var bank=tenantRepository.get(id,true);var change=(com.cbs.access.BankDuties.Policy)input;duties.validatePolicy(actor,bank,change);before=Map.of("enforced",duties.enforced(id));after=Map.of("enforced",change.enforced());label=bank.displayName()+" — duty segregation";bankId=id;
+            } else if(action==Action.LENDING_ACCESS){var bank=tenantRepository.get(id,true);lending.validateGrant(actor,bank,(com.cbs.access.LendingAccess.Grant)input);before=Map.of();after=Map.of("grant",input);label=bank.displayName();bankId=id;
             } else if(action==Action.LOAN_FEE){var bank=tenantRepository.get(id,true);before=Map.of();after=contracts.values(loanFees.validate(bank,(com.cbs.contracts.LoanFeeModels.Change)input,UUID.randomUUID()));label=bank.displayName();bankId=id;
             } else if(action==Action.LOAN_SERVICING){var bank=tenantRepository.get(id,true);before=Map.of();after=contracts.values(loans.validate(bank,(com.cbs.contracts.LoanServicingModels.Instruction)input,UUID.randomUUID()));label=bank.displayName();bankId=id;
             } else if(action==Action.CREDIT_POLICY){var bank=tenantRepository.get(id,true);credit.validatePolicy(actor,bank,(com.cbs.credit.CreditModels.Policy)input);before=Map.of();after=Map.of("policy",input);label=bank.displayName();bankId=id;
@@ -368,6 +416,17 @@ public class ApprovalService {
         if(bankId!=null) { condition+=" AND bank_id=?"; args.add(bankId); }
         condition+=" AND (NOT EXISTS(SELECT 1 FROM platform.lending_approval_scope ls WHERE ls.request_id=platform.approval_request.id) OR EXISTS(SELECT 1 FROM platform.lending_approval_scope ls JOIN platform.lending_access g ON g.tenant_id=ls.tenant_id JOIN platform.staff_identity si ON si.id=g.staff_id WHERE ls.request_id=platform.approval_request.id AND si.issuer=? AND si.subject=? AND si.active AND g.active AND ((g.payload->>'bankWide')::boolean OR EXISTS(SELECT 1 FROM platform.account_branch ab JOIN platform.branch b ON b.id=ab.branch_id AND b.active WHERE ab.account_id=ls.account_id AND ab.tenant_id=ls.tenant_id AND jsonb_exists(g.payload->'branches',ab.branch_id::text)))))";
         args.add(actor.issuer());args.add(actor.subject());
+        // In banks that enforce duties, list only requests whose duty the reader holds (or audits), and their own.
+        String duty=com.cbs.access.BankDuties.dutySql("platform.approval_request.action");
+        // Requests to switch enforcement off stay visible: they are the documented lockout recovery path.
+        condition+=" AND (bank_id IS NULL OR maker_subject=? OR "+duty+" IS NULL OR (action='BANK_DUTY_POLICY' AND payload->>'enforced'='false')"
+                +" OR NOT EXISTS(SELECT 1 FROM platform.bank_duty_policy dp WHERE dp.tenant_id=platform.approval_request.bank_id AND dp.enforced)"
+                +" OR EXISTS(SELECT 1 FROM platform.lending_approval_scope dls WHERE dls.request_id=platform.approval_request.id)"
+                +" OR EXISTS(SELECT 1 FROM platform.bank_duty dg JOIN platform.staff_identity ds ON ds.id=dg.staff_id WHERE dg.tenant_id=platform.approval_request.bank_id"
+                +" AND ds.issuer=? AND ds.subject=? AND ds.active AND dg.active"
+                +" AND (dg.payload->>'expiresAt' IS NULL OR (dg.payload->>'expiresAt')::timestamptz>clock_timestamp())"
+                +" AND ((dg.payload->>'audit')::boolean OR jsonb_exists(dg.payload->'submit',"+duty+") OR jsonb_exists(dg.payload->'approve',"+duty+"))))";
+        args.add(actor.subject());args.add(actor.issuer());args.add(actor.subject());
         args.add(limit); args.add(offset);
         return new Page<>(jdbc.query("SELECT * FROM platform.approval_request WHERE issuer=?"+condition+
                 " ORDER BY created_at DESC,id LIMIT ? OFFSET ?",(row,n)->request(row),args.toArray()),limit,offset);
@@ -389,6 +448,8 @@ public class ApprovalService {
             var lendingScope=lending.request(id);
             if(lendingScope!=null){tenantRepository.get(request.bankId(),true);if(decision==Decision.CANCEL)lending.maker(actor,request.bankId(),lendingScope);else lending.role(actor,request.bankId(),lendingScope.accountId(),com.cbs.access.LendingAccess.Role.CREDIT_APPROVER);}
             else if(paymentScoped(request.action()))paymentAccess.require(actor,request.bankId(),decision==Decision.CANCEL?com.cbs.payments.PaymentAccess.Capability.MAKE:com.cbs.payments.PaymentAccess.Capability.APPROVE);else if(request.action()==Action.ACCOUNT_OPERATION)branchOperations.review(actor,id,decision==Decision.CANCEL);else if(request.action()==Action.CASH_OPERATION)cash.readRequest(actor,id,true,decision==Decision.CANCEL);else AccessService.admin(actor);
+            // A maker may always withdraw their own request; deciding needs the approve duty.
+            if(decision!=Decision.CANCEL){var duty=reviewDuty(actor,request);if(duty!=null&&!dutyRecovery(request))duties.require(actor,request.bankId(),duty,true);}
             boolean own=request.makerSubject().equals(actor.subject());
             if(decision==Decision.CANCEL && !own) throw error(403,"ONLY_MAKER_CAN_CANCEL");
             if(decision!=Decision.CANCEL && own) throw error(403,"SELF_APPROVAL_FORBIDDEN");
@@ -413,11 +474,15 @@ public class ApprovalService {
                 if(version!=request.expectedVersion()) next=Status.STALE;
                 else {
                     if(lendingScope!=null){lending.maker(new Actor(actor.issuer(),request.makerSubject(),false,actor.correlationId()),request.bankId(),lendingScope);lending.checker(actor,request.bankId(),lendingScope,id,true);}
+                    var makerDuty=makerDuty(request);
+                    if(makerDuty!=null&&!dutyRecovery(request))duties.requireMaker(actor.issuer(),request.makerSubject(),request.bankId(),makerDuty);
                     String auditReason="Approved request "+request.id();
                     ChangeRequest change=new ChangeRequest(request.expectedVersion(),auditReason);
                     switch(request.action()) {
                         case BANK_SUSPEND -> tenants.suspend(actor,request.targetId(),change);
                         case BANK_RESUME -> tenants.resume(actor,request.targetId(),change);
+                        case BANK_DUTY -> duties.applyGrant(actor,request.targetId(),JSON.readValue(jdbc.queryForObject("SELECT payload::text FROM platform.approval_request WHERE id=?",String.class,id),com.cbs.access.BankDuties.Grant.class),id);
+                        case BANK_DUTY_POLICY -> duties.applyPolicy(actor,request.targetId(),JSON.readValue(jdbc.queryForObject("SELECT payload::text FROM platform.approval_request WHERE id=?",String.class,id),com.cbs.access.BankDuties.Policy.class),id);
                         case LENDING_ACCESS -> lending.applyGrant(actor,request.targetId(),JSON.readValue(jdbc.queryForObject("SELECT payload::text FROM platform.approval_request WHERE id=?",String.class,id),com.cbs.access.LendingAccess.Grant.class),id);
                         case LOAN_FEE -> loanFees.apply(actor,request.targetId(),JSON.readValue(jdbc.queryForObject("SELECT payload::text FROM platform.approval_request WHERE id=?",String.class,id),com.cbs.contracts.LoanFeeModels.Change.class),id,request.makerSubject());
                         case LOAN_SERVICING -> loans.apply(actor,request.targetId(),JSON.readValue(jdbc.queryForObject("SELECT payload::text FROM platform.approval_request WHERE id=?",String.class,id),com.cbs.contracts.LoanServicingModels.Instruction.class),id,request.makerSubject());
@@ -540,7 +605,9 @@ public class ApprovalService {
                 (row,n)->request(row),id,actor.issuer());
         if(rows.isEmpty()) throw error(404,"APPROVAL_NOT_FOUND");
         if(lending.request(id)!=null)lending.readRequest(actor,id);else if(paymentScoped(rows.getFirst().action()))paymentAccess.require(actor,rows.getFirst().bankId(),com.cbs.payments.PaymentAccess.Capability.READ);else if(rows.getFirst().action()==Action.ACCOUNT_OPERATION)branchOperations.readRequest(actor,id);else if(rows.getFirst().action()==Action.CASH_OPERATION)cash.readRequest(actor,id,false,false);else AccessService.admin(actor);
-        return rows.getFirst();
+        var request=rows.getFirst();
+        if(!request.makerSubject().equals(actor.subject())){var duty=reviewDuty(actor,request);if(duty!=null&&!dutyRecovery(request))duties.read(actor,request.bankId(),duty);}
+        return request;
     }
     private void audit(Actor actor, UUID id, String action, String reason) {
         jdbc.update("INSERT INTO platform.approval_event(id,request_id,actor_subject,action,reason,correlation_id) VALUES (?,?,?,?,?,?)",

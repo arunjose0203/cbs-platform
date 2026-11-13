@@ -51,7 +51,8 @@ class RuntimeDatabaseGuardIntegrationTest {
                     assertThatCode(()->RuntimeDatabaseGuard.verify(c)).doesNotThrowAnyException();
                     sql.execute("RESET ROLE; GRANT CREATE ON SCHEMA platform TO "+role+"; SET ROLE "+role);
                     assertThatThrownBy(()->RuntimeDatabaseGuard.verify(c)).hasMessageContaining("must not own");
-                    sql.execute("RESET ROLE; REVOKE CREATE ON SCHEMA platform FROM "+role+"; ALTER TABLE platform.fixture OWNER TO "+role+"; SET ROLE "+role);
+                    // Transfer ownership while the role still has CREATE (required unless the test login is a superuser), then revoke it.
+                    sql.execute("RESET ROLE; ALTER TABLE platform.fixture OWNER TO "+role+"; REVOKE CREATE ON SCHEMA platform FROM "+role+"; SET ROLE "+role);
                     assertThatThrownBy(()->RuntimeDatabaseGuard.verify(c)).hasMessageContaining("must not own");
                 } finally {s.execute("DROP DATABASE "+db+" WITH (FORCE)");}
             } finally {s.execute("DROP ROLE "+role);}

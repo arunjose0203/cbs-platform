@@ -2468,6 +2468,109 @@ class TenantAdministrationIntegrationTest {
     private com.cbs.reference.ReferenceModels.Change settingsChange(com.cbs.reference.ReferenceModels.Settings s) {
         return new com.cbs.reference.ReferenceModels.Change(s.version(),s.currencies(),s.languages(),s.defaultLanguage(),s.businessTimezone(),s.businessDate(),s.weekendDays(),s.holidays(),"Review bank settings");
     }
+    @Autowired com.cbs.access.BankDuties duties;
+    private record DutyUser(Actor actor,UUID id){String subject(){return actor.subject();}}
+    private DutyUser dutyUser(String subject){var staff=access.create(ADMIN,new com.cbs.access.AccessModels.StaffInput(subject,subject,subject+"@example.test","Fictional duty segregation test"));return new DutyUser(new Actor(ADMIN.issuer(),subject,true,UUID.randomUUID()),staff.id());}
+    private com.cbs.access.BankDuties.Grant dutyGrant(UUID bank,DutyUser staff,boolean active,List<com.cbs.access.BankDuties.Duty> submit,List<com.cbs.access.BankDuties.Duty> approve,boolean audit,Instant expires){
+        return new com.cbs.access.BankDuties.Grant(service.get(ADMIN,bank).version(),staff.id(),active,submit,approve,audit,expires,"Fictional duty assignment");
+    }
+    private void grantDuties(Actor maker,Actor checker,UUID bank,com.cbs.access.BankDuties.Grant grant){
+        var request=approvals.bankDuty(maker,UUID.randomUUID(),bank,grant);
+        assertThat(approvals.decide(checker,request.id(),com.cbs.approvals.ApprovalModels.Decision.APPROVE,"Verified duty assignment").status()).isEqualTo(com.cbs.approvals.ApprovalModels.Status.APPROVED);
+    }
+    @Test void bankDutiesSegregatePlatformAdministratorsWhenEnforced()throws Exception{
+        var bid=provision(register("bank-duties")).id();
+        var APPROVE=com.cbs.approvals.ApprovalModels.Decision.APPROVE;var APPROVED=com.cbs.approvals.ApprovalModels.Status.APPROVED;var INBOX=com.cbs.approvals.ApprovalModels.Scope.INBOX;
+        var ACCESS=List.of(com.cbs.access.BankDuties.Duty.ACCESS_ADMINISTRATION);var CONFIG=List.of(com.cbs.access.BankDuties.Duty.BANK_CONFIGURATION);List<com.cbs.access.BankDuties.Duty> none=List.of();
+        DutyUser accessA=dutyUser("duty-access-a"),accessB=dutyUser("duty-access-b"),maker=dutyUser("duty-config-maker"),checker=dutyUser("duty-config-checker"),auditor=dutyUser("duty-auditor"),outsider=dutyUser("duty-outsider"),temporary=dutyUser("duty-temporary"),mixed=dutyUser("duty-mixed");
+        java.util.function.Supplier<com.cbs.access.TransactionLimits.Change> limit=()->new com.cbs.access.TransactionLimits.Change(service.get(ADMIN,bid).version(),"INR","FUNDING","1000","5000","Fictional duty-test funding limit");
+        java.util.function.Function<Boolean,com.cbs.access.BankDuties.Policy> policy=on->new com.cbs.access.BankDuties.Policy(service.get(ADMIN,bid).version(),on,on?"Enforce duty segregation for the pilot":"Switch duty segregation off");
+
+        // Not enforced: platform administrators keep today's behaviour, and enforcement needs two access administrators.
+        assertThat(approvals.decide(CHECKER,approvals.limits(ADMIN,UUID.randomUUID(),bid,limit.get()).id(),APPROVE,"Before enforcement").status()).isEqualTo(APPROVED);
+        assertCode(()->approvals.bankDutyPolicy(ADMIN,UUID.randomUUID(),bid,policy.apply(true)),"BANK_DUTY_LOCKOUT");
+        assertCode(()->approvals.bankDuty(ADMIN,UUID.randomUUID(),bid,dutyGrant(bid,maker,true,List.of(com.cbs.access.BankDuties.Duty.FINANCE,com.cbs.access.BankDuties.Duty.FINANCE),none,false,null)),"BANK_DUTY_GRANT_INVALID");
+        assertCode(()->approvals.bankDuty(ADMIN,UUID.randomUUID(),bid,dutyGrant(bid,maker,true,CONFIG,none,false,Instant.now().minusSeconds(5))),"BANK_DUTY_GRANT_INVALID");
+        assertCode(()->approvals.bankDuty(ADMIN,UUID.randomUUID(),bid,dutyGrant(bid,maker,true,none,none,false,null)),"BANK_DUTY_GRANT_INVALID");
+        var own=approvals.bankDuty(ADMIN,UUID.randomUUID(),bid,dutyGrant(bid,accessA,true,ACCESS,ACCESS,false,null));
+        assertCode(()->approvals.decide(accessA.actor(),own.id(),APPROVE,"Own duties"),"BANK_DUTY_SELF_GRANT_APPROVAL");
+        assertThat(approvals.decide(CHECKER,own.id(),APPROVE,"Independent duty review").status()).isEqualTo(APPROVED);
+        grantDuties(ADMIN,CHECKER,bid,dutyGrant(bid,accessB,true,ACCESS,ACCESS,false,null));
+        grantDuties(ADMIN,CHECKER,bid,dutyGrant(bid,maker,true,CONFIG,none,false,null));
+        grantDuties(ADMIN,CHECKER,bid,dutyGrant(bid,checker,true,none,CONFIG,false,null));
+        grantDuties(ADMIN,CHECKER,bid,dutyGrant(bid,auditor,true,none,none,true,null));
+
+        // Enforcement is itself maker-checker, here through HTTP.
+        var enable=mvc.perform(post("/api/v1/admin/tenants/"+bid+"/bank-duties/policy").header("Authorization","Bearer "+TestIdentity.token(accessA.subject(),true))
+                .header("Idempotency-Key",UUID.randomUUID()).contentType("application/json").content(json.writeValueAsString(policy.apply(true))))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.status").value("PENDING")).andReturn();
+        UUID enableId=json.readValue(enable.getResponse().getContentAsString(),com.cbs.approvals.ApprovalModels.Request.class).id();
+        assertThat(approvals.decide(accessB.actor(),enableId,APPROVE,"Segregation approved").status()).isEqualTo(APPROVED);
+        assertThat(duties.enforced(bid)).isTrue();
+
+        // Platform administration alone no longer reaches this bank's work; submit and approve are separate duties.
+        assertCode(()->approvals.limits(ADMIN,UUID.randomUUID(),bid,limit.get()),"BANK_DUTY_REQUIRED");
+        assertCode(()->approvals.limits(checker.actor(),UUID.randomUUID(),bid,limit.get()),"BANK_DUTY_REQUIRED");
+        var pending=approvals.limits(maker.actor(),UUID.randomUUID(),bid,limit.get());
+        assertCode(()->approvals.decide(CHECKER,pending.id(),APPROVE,"No duty"),"BANK_DUTY_REQUIRED");
+        assertCode(()->approvals.decide(auditor.actor(),pending.id(),APPROVE,"Audit only"),"BANK_DUTY_APPROVAL_REQUIRED");
+        assertCode(()->approvals.details(outsider.actor(),pending.id()),"BANK_DUTY_REQUIRED");
+        assertThat(approvals.list(outsider.actor(),INBOX,null,bid,100,0).items().stream().map(r->r.id()).toList()).doesNotContain(pending.id());
+        assertThat(approvals.list(auditor.actor(),INBOX,null,bid,100,0).items().stream().map(r->r.id()).toList()).contains(pending.id());
+        assertThat(approvals.list(checker.actor(),INBOX,null,bid,100,0).items().stream().map(r->r.id()).toList()).contains(pending.id());
+        assertThat(approvals.decide(checker.actor(),pending.id(),APPROVE,"Independent configuration review").status()).isEqualTo(APPROVED);
+
+        // Platform-wide actions are not bank duties.
+        var platformStaff=access.create(ADMIN,new com.cbs.access.AccessModels.StaffInput("duty-platform-"+UUID.randomUUID(),"Platform staff",null,"Platform action test"));
+        var rename=approvals.staff(ADMIN,UUID.randomUUID(),platformStaff.id(),new com.cbs.access.AccessModels.StaffUpdate(platformStaff.version(),"Platform staff renamed",null,true,"Platform-wide change"));
+        assertThat(approvals.decide(CHECKER,rename.id(),APPROVE,"Platform review").status()).isEqualTo(APPROVED);
+
+        // At least two access administrators must remain while enforced.
+        assertCode(()->approvals.bankDuty(accessA.actor(),UUID.randomUUID(),bid,dutyGrant(bid,accessB,false,none,none,false,null)),"BANK_DUTY_LOCKOUT");
+
+        // A time-limited (break-glass) duty ends by itself; the maker is rechecked when the request is approved.
+        Instant expires=Instant.now().plusSeconds(4);
+        grantDuties(accessA.actor(),accessB.actor(),bid,dutyGrant(bid,temporary,true,CONFIG,none,false,expires));
+        var late=approvals.limits(temporary.actor(),UUID.randomUUID(),bid,limit.get());
+        Thread.sleep(Math.max(0,java.time.Duration.between(Instant.now(),expires).toMillis()+250));
+        assertCode(()->approvals.decide(checker.actor(),late.id(),APPROVE,"After expiry"),"BANK_DUTY_MAKER_REVOKED");
+        assertCode(()->approvals.limits(temporary.actor(),UUID.randomUUID(),bid,limit.get()),"BANK_DUTY_REQUIRED");
+        assertThat(approvals.decide(temporary.actor(),late.id(),com.cbs.approvals.ApprovalModels.Decision.CANCEL,"Duty expired").status()).isEqualTo(com.cbs.approvals.ApprovalModels.Status.CANCELLED);
+
+        // Access review: one consolidated view, conflicts flagged, attestation bound to the exact snapshot.
+        grantDuties(accessA.actor(),accessB.actor(),bid,dutyGrant(bid,mixed,true,List.of(com.cbs.access.BankDuties.Duty.ACCESS_ADMINISTRATION,com.cbs.access.BankDuties.Duty.FINANCE),none,false,null));
+        mvc.perform(get("/api/v1/admin/tenants/"+bid+"/bank-duties").header("Authorization","Bearer "+TestIdentity.token(auditor.subject(),true)))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.enforced").value(true)).andExpect(jsonPath("$.snapshotHash").isString());
+        assertCode(()->duties.report(outsider.actor(),bid),"BANK_DUTY_REQUIRED");
+        var adminView=duties.report(accessA.actor(),bid);var auditView=duties.report(auditor.actor(),bid);
+        assertThat(auditView.get("snapshotHash")).isEqualTo(adminView.get("snapshotHash"));
+        @SuppressWarnings("unchecked") var items=(List<Map<String,Object>>)auditView.get("items");
+        assertThat(items).extracting(i->i.get("subject")).contains(accessA.subject(),maker.subject(),auditor.subject(),mixed.subject()).doesNotContain(outsider.subject());
+        assertThat(items.stream().filter(i->i.get("subject").equals(mixed.subject())).findFirst().orElseThrow().get("findings").toString()).contains("CONFLICT_ACCESS_AND_TRANSACTIONS");
+        String hash=(String)auditView.get("snapshotHash");
+        assertCode(()->duties.attest(accessA.actor(),bid,new com.cbs.access.BankDuties.Review(hash,"Self review")),"BANK_DUTY_AUDIT_REQUIRED");
+        var review=duties.attest(auditor.actor(),bid,new com.cbs.access.BankDuties.Review(hash,"Fictional quarterly access review"));
+        assertThat(((Number)review.get("findings")).intValue()).isPositive();
+        grantDuties(accessA.actor(),accessB.actor(),bid,dutyGrant(bid,maker,false,CONFIG,none,false,null));
+        assertCode(()->duties.attest(auditor.actor(),bid,new com.cbs.access.BankDuties.Review(hash,"Stale view")),"ACCESS_REVIEW_STALE");
+        assertThat((List<?>)duties.report(auditor.actor(),bid).get("reviews")).hasSize(1);
+
+        // History, reviews and the switch are protected by the database.
+        assertThatThrownBy(()->jdbc.update("DELETE FROM platform.bank_duty_event WHERE tenant_id=?",bid)).isInstanceOf(DataAccessException.class);
+        assertThatThrownBy(()->jdbc.update("UPDATE platform.access_review SET statement='Edited' WHERE tenant_id=?",bid)).isInstanceOf(DataAccessException.class);
+        assertThatThrownBy(()->jdbc.update("UPDATE platform.bank_duty_policy SET enforced=false WHERE tenant_id=?",bid)).isInstanceOf(DataAccessException.class);
+        assertThatThrownBy(()->jdbc.update("UPDATE platform.bank_duty SET payload=jsonb_set(payload,'{approve}','[\"FINANCE\"]') WHERE tenant_id=? AND staff_id=?",bid,maker.id())).isInstanceOf(DataAccessException.class);
+
+        // Lockout recovery: with one access administrator left, administrators may still switch enforcement off (maker-checker).
+        var disable=approvals.staff(ADMIN,UUID.randomUUID(),accessB.id(),new com.cbs.access.AccessModels.StaffUpdate(access.staff(accessB.id(),false).version(),"duty-access-b",accessB.subject()+"@example.test",false,"Leaver"));
+        assertThat(approvals.decide(CHECKER,disable.id(),APPROVE,"Leaver processed").status()).isEqualTo(APPROVED);
+        assertThat(duties.lockedOut(bid)).isTrue();
+        var recovery=approvals.bankDutyPolicy(ADMIN,UUID.randomUUID(),bid,policy.apply(false));
+        assertThat(approvals.list(CHECKER,INBOX,null,bid,100,0).items().stream().map(r->r.id()).toList()).contains(recovery.id());
+        assertThat(approvals.decide(CHECKER,recovery.id(),APPROVE,"Lockout recovery").status()).isEqualTo(APPROVED);
+        assertThat(duties.enforced(bid)).isFalse();
+        assertThat(approvals.decide(CHECKER,approvals.limits(ADMIN,UUID.randomUUID(),bid,limit.get()).id(),APPROVE,"After recovery").status()).isEqualTo(APPROVED);
+    }
     private com.cbs.access.AccessModels.Staff approvalStaff() {
         return access.create(ADMIN,new com.cbs.access.AccessModels.StaffInput("approval-"+UUID.randomUUID(),"Approval test staff",null,"Test onboarding"));
     }

@@ -1,0 +1,13 @@
+{
+  "enabledPlugins": {
+    "security-guidance@claude-plugins-official": true,
+    "jdtls-lsp@claude-plugins-official": true,
+    "pr-review-toolkit@claude-plugins-official": true,
+    "commit-commands@claude-plugins-official": true,
+    "context7@claude-plugins-official": true,
+    "github@claude-plugins-official": true,
+    "code-review@claude-plugins-official": true,
+    "claude-security@claude-plugins-official": true,
+    "skill-creator@claude-plugins-official": true
+  }
+}
