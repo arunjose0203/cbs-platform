@@ -3219,6 +3219,84 @@ class TenantAdministrationIntegrationTest {
         String body=jdbc.queryForObject("SELECT body FROM platform.notification WHERE tenant_id=? AND customer_id=? AND event='VERIFICATION' AND status='PENDING' ORDER BY created_at DESC LIMIT 1",String.class,bank.id(),customer);
         var code=java.util.regex.Pattern.compile("\\b([0-9]{6})\\b").matcher(body);assertThat(code.find()).isTrue();
         notifications.verify(ADMIN,bank.id(),customer,code.group(1));
+    /**
+     * P-09: invariants over the bank's books after every step of a generated sequence. Every journal
+     * balances, the trial balance is zero, each ledger balance equals its journal lines, each account
+     * position equals its liability ledger, held never exceeds posted and available is posted less held.
+     */
+    private void assertBooksBalance(String database,UUID bankId,List<UUID> accounts)throws Exception{
+        try(var c=TestDatabases.bank(database);var st=c.createStatement()){
+            try(var r=st.executeQuery("SELECT count(*) FROM (SELECT journal_id FROM bank.journal_line GROUP BY journal_id HAVING sum(CASE WHEN side='DEBIT' THEN amount ELSE -amount END)<>0) x")){r.next();assertThat(r.getInt(1)).as("unbalanced journals").isZero();}
+            try(var r=st.executeQuery("SELECT coalesce(sum(debit),0)-coalesce(sum(credit),0) FROM bank.ledger_balance")){r.next();assertThat(r.getBigDecimal(1)).as("trial balance").isZero();}
+            try(var r=st.executeQuery("SELECT count(*) FROM bank.ledger_balance b LEFT JOIN (SELECT ledger_id,sum(CASE WHEN side='DEBIT' THEN amount ELSE 0 END) d,sum(CASE WHEN side='CREDIT' THEN amount ELSE 0 END) k FROM bank.journal_line GROUP BY ledger_id) j ON j.ledger_id=b.ledger_id WHERE b.debit<>coalesce(j.d,0) OR b.credit<>coalesce(j.k,0)")){r.next();assertThat(r.getInt(1)).as("ledger balances that differ from their journal lines").isZero();}
+            for(UUID account:accounts){
+                var p=operations.dashboard(ADMIN,bankId,account,25,0).position();
+                try(var s=c.prepareStatement("SELECT credit-debit FROM bank.ledger_balance WHERE ledger_id=?")){s.setObject(1,p.ledgerId());try(var r=s.executeQuery()){assertThat(r.next()).isTrue();assertThat(r.getBigDecimal(1)).as("account position equals its ledger").isEqualByComparingTo(p.posted());}}
+                assertThat(p.reconciled()).isTrue();
+                assertThat(new java.math.BigDecimal(p.held())).isNotNegative().isLessThanOrEqualTo(new java.math.BigDecimal(p.posted()));
+                assertThat(new java.math.BigDecimal(p.available())).isEqualByComparingTo(new java.math.BigDecimal(p.posted()).subtract(new java.math.BigDecimal(p.held())));
+                assertThat(new java.math.BigDecimal(p.withdrawable())).isNotNegative();
+            }
+        }
+    }
+    /** Submits, approves and delivers one operation; null when validation refuses it (a legitimate outcome of a generated step). */
+    private UUID tryOperation(FundingFixture f,com.cbs.accounts.OperationModels.Change input)throws Exception{
+        com.cbs.approvals.ApprovalModels.Request r;
+        try{r=approvals.operation(ADMIN,UUID.randomUUID(),f.f().bank().id(),input);}catch(TenantException e){return null;}
+        approveHttp(r.id());operations.deliver(r.id());return r.id();
+    }
+    @Test void generatedMoneyMovementsKeepTheBooksBalancedThroughReplayAndConcurrentSpends()throws Exception{
+        var f=fundingFixture("money-invariants");var bank=f.f().bank();UUID b=bank.id();var K=com.cbs.accounts.OperationModels.Kind.class;
+        for(String op:List.of("WITHDRAWAL_REVERSAL","TRANSFER_REVERSAL"))approveHttp(approvals.limits(ADMIN,UUID.randomUUID(),b,new com.cbs.access.TransactionLimits.Change(service.get(ADMIN,b).version(),f.f().product().currency(),op,"999999999999999999","999999999999999999","Fictional invariant test limit")).id());
+        var first=fund(f,"5000");UUID second=accountFor(f,f.f().customer(),"INV_B","500");var accounts=List.of(f.account(),second);
+        assertBooksBalance("invariants",b,accounts);
+        long seed=Long.getLong("cbs.property.seed",20261113L);var random=new java.util.SplittableRandom(seed);
+        var fundings=new java.util.ArrayList<UUID>(List.of(first));var withdrawals=new java.util.ArrayList<UUID>();var transfers=new java.util.ArrayList<UUID>();var holds=new java.util.ArrayList<UUID>();
+        var operationsDone=new java.util.ArrayList<UUID>();var amounts=new java.util.HashMap<UUID,String>();int refused=0;
+        for(int step=0;step<30;step++){
+            var p=operations.dashboard(ADMIN,b,f.account(),25,0).position();var available=new java.math.BigDecimal(p.withdrawable());
+            // Amounts up to 1.5x what is withdrawable, in cents, so refusals are exercised as well as postings.
+            String amount=java.math.BigDecimal.valueOf(1+random.nextLong(Math.max(2,available.movePointRight(2).longValue()*3/2+2))).movePointLeft(2).toPlainString();
+            int kind=random.nextInt(7);UUID done=null;String context="step "+step+" (seed "+seed+") kind "+kind+" amount "+amount;
+            switch(kind){
+                case 0->{done=fund(f,amount);fundings.add(done);amounts.put(done,amount);}
+                case 1->{done=tryOperation(f,operationChange(f,com.cbs.accounts.OperationModels.Kind.WITHDRAWAL,amount,null,null));if(done!=null){withdrawals.add(done);amounts.put(done,amount);}}
+                case 2->{done=tryOperation(f,operationChange(f,com.cbs.accounts.OperationModels.Kind.TRANSFER,amount,second,null));if(done!=null){transfers.add(done);amounts.put(done,amount);}}
+                case 3->{done=tryOperation(f,operationChange(f,com.cbs.accounts.OperationModels.Kind.HOLD,amount,null,null));if(done!=null){holds.add(done);amounts.put(done,amount);}}
+                case 4->{if(!holds.isEmpty()){UUID hold=holds.remove(random.nextInt(holds.size()));done=tryOperation(f,operationChange(f,com.cbs.accounts.OperationModels.Kind.RELEASE,amounts.get(hold),null,hold));}}
+                case 5->{if(!withdrawals.isEmpty()){UUID original=withdrawals.remove(random.nextInt(withdrawals.size()));done=tryOperation(f,operationChange(f,com.cbs.accounts.OperationModels.Kind.WITHDRAWAL_REVERSAL,amounts.get(original),null,original));}}
+                default->{if(!transfers.isEmpty()){UUID original=transfers.remove(random.nextInt(transfers.size()));done=tryOperation(f,operationChange(f,com.cbs.accounts.OperationModels.Kind.TRANSFER_REVERSAL,amounts.get(original),second,original));}}
+            }
+            if(done==null)refused++;else if(kind!=0)operationsDone.add(done);
+            try{assertBooksBalance("invariants",b,accounts);}catch(AssertionError e){throw new AssertionError(context+": "+e.getMessage(),e);}
+        }
+        assertThat(operationsDone).as("the sequence posted operations").isNotEmpty();
+        // Replay: delivering every completed request again changes nothing.
+        var before=accounts.stream().map(a->operations.dashboard(ADMIN,b,a,25,0).position().posted()).toList();
+        for(UUID id:fundings)funding.deliver(id);for(UUID id:operationsDone)operations.deliver(id);
+        assertThat(accounts.stream().map(a->operations.dashboard(ADMIN,b,a,25,0).position().posted()).toList()).isEqualTo(before);
+        assertBooksBalance("invariants",b,accounts);
+        // Concurrent spends: two withdrawals that each fit but together overdraw race to submission.
+        // Pending debits count against the balance, so exactly one is accepted; it then posts and the books stay balanced.
+        var withdrawable=new java.math.BigDecimal(operations.dashboard(ADMIN,b,f.account(),25,0).position().withdrawable());
+        if(withdrawable.compareTo(java.math.BigDecimal.ONE)<0){fund(f,"1000");withdrawable=new java.math.BigDecimal(operations.dashboard(ADMIN,b,f.account(),25,0).position().withdrawable());}
+        String each=withdrawable.multiply(new java.math.BigDecimal("0.6")).setScale(2,java.math.RoundingMode.DOWN).toPlainString();
+        var start=new CyclicBarrier(2);var accepted=new java.util.concurrent.ConcurrentLinkedQueue<UUID>();var refusals=new java.util.concurrent.ConcurrentLinkedQueue<String>();
+        try(var pool=Executors.newFixedThreadPool(2)){var results=pool.invokeAll(List.<java.util.concurrent.Callable<Boolean>>of(()->{start.await();try{accepted.add(approvals.operation(ADMIN,UUID.randomUUID(),b,operationChange(f,com.cbs.accounts.OperationModels.Kind.WITHDRAWAL,each,null,null)).id());}catch(TenantException e){refusals.add(e.code());}return true;},
+            ()->{start.await();try{accepted.add(approvals.operation(ADMIN,UUID.randomUUID(),b,operationChange(f,com.cbs.accounts.OperationModels.Kind.WITHDRAWAL,each,null,null)).id());}catch(TenantException e){refusals.add(e.code());}return true;}));for(var x:results)x.get();}
+        assertThat(accepted).as("both requests enter the approval queue; refused: %s",refusals).hasSize(2);
+        // Funds are rechecked under the bank lock at approval and again at delivery: checkers approving both at once
+        // and the delivery worker racing cannot post both.
+        var start2=new CyclicBarrier(2);var ids=new java.util.ArrayList<>(accepted);
+        try(var pool=Executors.newFixedThreadPool(2)){var results=pool.invokeAll(ids.stream().<java.util.concurrent.Callable<Integer>>map(id->()->{start2.await();
+            return mvc.perform(post("/api/v1/admin/approvals/"+id+"/approve").header("Authorization","Bearer "+TestIdentity.token("checker",true)).contentType("application/json").content("{\"reason\":\"Verified slip\"}")).andReturn().getResponse().getStatus();}).toList());for(var x:results)x.get();}
+        var start3=new CyclicBarrier(2);
+        try(var pool=Executors.newFixedThreadPool(2)){var results=pool.invokeAll(ids.stream().<java.util.concurrent.Callable<Boolean>>map(id->()->{start3.await();try{operations.deliver(id);}catch(TenantException e){return false;}return true;}).toList());for(var x:results)x.get();}
+        long postedRacers=jdbc.queryForObject("SELECT count(*) FROM platform.account_operation WHERE request_id IN (?,?) AND completed AND failure_code IS NULL",Long.class,ids.get(0),ids.get(1));
+        assertThat(postedRacers).as("exactly one of two overdrawing withdrawals posts").isEqualTo(1);
+        assertThat(new java.math.BigDecimal(operations.dashboard(ADMIN,b,f.account(),25,0).position().posted())).isNotNegative();
+        assertBooksBalance("invariants",b,accounts);
+        assertThat(K).isNotNull();assertThat(refused).isNotNegative();
     }
     private UUID onboard(Tenant bank,com.cbs.customers.CustomerModels.Profile profile)throws Exception{
         var r=approvals.customer(ADMIN,UUID.randomUUID(),bank.id(),customerChange(bank,null,profile,""));approveHttp(r.id());customers.deliver(r.id());

@@ -1,0 +1,39 @@
+name: Explore money properties
+# P-09: the verify workflow runs the money properties with a fixed seed on every push. This nightly job
+# runs them with a new seed and more cases. A failure names the seed; reproduce it locally with
+#   mvn test -Dtest=MoneyPropertyTest "-DargLine=-Duser.timezone=UTC -Dcbs.property.seed=<seed>"
+on:
+  schedule:
+    - cron: '17 2 * * *'
+  workflow_dispatch:
+    inputs:
+      cases:
+        description: Cases per property
+        default: '20000'
+permissions:
+  contents: read
+jobs:
+  explore:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      TZ: UTC
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+      - run: npm ci --prefix ui --ignore-scripts
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+      - name: Run the money properties with a fresh seed
+        run: |
+          SEED=$(( ${{ github.run_id }} % 2147483647 ))
+          echo "Property seed: $SEED"
+          mvn --batch-mode --no-transfer-progress test -Dtest=MoneyPropertyTest -Dsurefire.failIfNoSpecifiedTests=false \
+            "-DargLine=-Duser.timezone=UTC -Dcbs.property.seed=$SEED -Dcbs.property.cases=${{ inputs.cases || '20000' }}"
