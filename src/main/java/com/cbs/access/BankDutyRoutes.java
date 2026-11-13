@@ -62,7 +62,8 @@ public final class BankDutyRoutes {
             duty("/customers", CUSTOMER, CUSTOMER, COMPLIANCE, PAYMENTS, FINANCE),
             duty("/accounts", CUSTOMER, CUSTOMER, COMPLIANCE, PAYMENTS, FINANCE),
             duty("/account-operations", CUSTOMER, CUSTOMER, FINANCE), duty("/funding", CUSTOMER, CUSTOMER, FINANCE),
-            duty("/notifications", CUSTOMER), duty("/contracts", CUSTOMER, CUSTOMER, FINANCE),
+            // Message wording is bank configuration (Round 10); customer staff read it.
+            duty("/notifications/templates", CONFIG, CONFIG, CUSTOMER), duty("/notifications", CUSTOMER), duty("/contracts", CUSTOMER, CUSTOMER, FINANCE),
             // Payments, treasury and compliance.
             duty("/payments", PAYMENTS, PAYMENTS, FINANCE), duty("/statement-imports", PAYMENTS, PAYMENTS, FINANCE),
             duty("/fx", TREASURY, TREASURY, FINANCE), duty("/compliance", COMPLIANCE),

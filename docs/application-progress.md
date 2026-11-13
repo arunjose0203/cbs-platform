@@ -17,6 +17,18 @@ Round 14 of the [go-live plan](go-live-plan-2026-11-13.md) delivers comprehensiv
 - **Multi-format export.** Integrated into `TableOutput` supporting formatted JSON, sanitized CSV (formula injection neutralized), and A4 PDF.
 - **UI and verification.** Added Operational reports dialog to management reports UI supporting report selection and downloads. Tests: 6 new backend unit tests in `OperationalReportServiceTest` (100% pass), 129 UI tests pass.
 
+## Round 10: Customer notifications go-live — 13 November 2026
+
+Round 10 of the [go-live plan](go-live-plan-2026-11-13.md) makes customer alerts ready for a provider: verified destinations, approved wording, scheduled notices, opt-outs and signed delivery receipts. Control migration **V51** (V50 is reserved for Round 14). See [notifications go-live](notifications-go-live.md).
+
+- **Destination verification.** A new phone number or email receives a one-time code (hashed, 24-hour expiry, five attempts); alerts start only after staff confirm the code the customer reads back. Codes never appear in lists or audit.
+- **Approved templates.** Bank wording per event, language and channel through maker-checker (`NOTIFICATION_TEMPLATE`), restricted to the event's placeholders, naming the bank, and two SMS segments at most; built-in English, French and Kiswahili otherwise.
+- **Scheduled notices.** Term-deposit maturity (7 days ahead), loan instalment due (3 days ahead) and arrears at 1/30/60/90 days past due, queued once per holder by an idempotent background scan that never changes the bank version.
+- **Opt-outs and receipts.** Provider STOP or a branch request suppresses every message to the destination until renewed consent is recorded. A public, HMAC-signed, replay-safe webhook records provider delivery receipts and opt-outs.
+- **Monitoring.** Failed-in-24h and oldest-pending metrics with Prometheus alerts.
+- **Still open.** The real SMS/email adapter waits for the provider decision (D09); the exit test needs its sandbox. French/Kiswahili wording needs the Round 17 review.
+- **Verification.** Notification, statement-alert, joint-account, route-access and production-guard tests pass, as do 124 UI tests and 31 ops tests.
+
 ## Round 18: Privacy and data protection — 13 November 2026
 
 Round 18 of the [go-live plan](go-live-plan-2026-11-13.md) completes privacy, field-level data protection, legal holds, data-subject request registers, and the statutory retention matrix (Kenya Data Protection Act 2019, POCAMLA s.46, Gate E04). Control migration **V49**. See [privacy and data protection](privacy-and-data-protection.md).

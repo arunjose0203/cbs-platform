@@ -39,6 +39,13 @@ cbs:
     field-key: ${CBS_PRIVACY_FIELD_KEY:}
     # Days allowed to answer a data-subject request; confirm with the bank's data protection officer.
     request-due-days: ${CBS_PRIVACY_REQUEST_DUE_DAYS:7}
+  notifications:
+    # HMAC secret (32+ characters) for signed provider delivery receipts; blank disables the receipt webhook.
+    callback-secret: ${CBS_NOTIFICATIONS_CALLBACK_SECRET:}
+    notices:
+      maturity-days: 7          # term-deposit maturity notice lead time
+      loan-due-days: 3          # loan instalment reminder lead time
+      arrears-days: 1,30,60,90  # days past due at which an arrears notice is sent
   portal:
     client-id: ${CBS_PORTAL_CLIENT_ID:}
     redirect-uri: ${CBS_PORTAL_REDIRECT_URI:}

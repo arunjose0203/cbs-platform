@@ -71,6 +71,9 @@ def check(config):
                         alerts.append('POSTING_OVERDUE:'+table)
                 # Compliance cases past their investigator due date (SLA). A count only: no customer data leaves the database.
                 metrics['cbs_compliance_overdue_cases'] = int(recovery.query(config,d,"SELECT count(*) FROM platform.compliance_case WHERE status='OPEN' AND due_date<current_date"))
+                # Customer messages that exhausted their retries in the last day, and the oldest message still queued. Counts only.
+                metrics['cbs_notifications_failed_24h'] = int(recovery.query(config,d,"SELECT count(*) FROM platform.notification WHERE status='FAILED' AND last_attempt_at>clock_timestamp()-interval '24 hours'"))
+                metrics['cbs_notifications_pending_age_seconds'] = max(0,float(recovery.query(config,d,"SELECT coalesce(max(extract(epoch FROM (clock_timestamp()-created_at))),0) FROM platform.notification WHERE status='PENDING'")))
         except Exception:
             metrics['cbs_database_up{database="'+d['name']+'"}'] = 0
             alerts.append('DATABASE_CHECK_FAILED:'+d['name'])

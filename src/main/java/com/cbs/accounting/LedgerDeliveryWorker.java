@@ -28,6 +28,11 @@ public class LedgerDeliveryWorker {
     @Scheduled(fixedDelay=30000,initialDelay=35000)
     public void postPeriodCloses(){try{for(var id:periods.pending())try{periods.deliver(id);}catch(RuntimeException ignored){org.slf4j.LoggerFactory.getLogger(getClass()).warn("Period close remains pending");}}catch(RuntimeException ignored){org.slf4j.LoggerFactory.getLogger(getClass()).warn("Period close polling failed");}}
     @org.springframework.beans.factory.annotation.Autowired void notifications(com.cbs.notifications.NotificationService notifications){this.notifications=notifications;}
+    private com.cbs.notifications.NoticeService notices;
+    @org.springframework.beans.factory.annotation.Autowired void notices(com.cbs.notifications.NoticeService notices){this.notices=notices;}
+    /** Queues term-deposit maturity, loan due and arrears notices; idempotent, so a missed run is caught up by the next. */
+    @Scheduled(fixedDelayString="${cbs.notifications.notices.scan-interval-ms:900000}",initialDelay=60000)
+    public void queueNotices(){try{notices.scan();}catch(RuntimeException ignored){org.slf4j.LoggerFactory.getLogger(getClass()).warn("Customer notices will be retried");}}
     /** Sends queued customer alerts; a missing provider leaves them queued. */
     @Scheduled(fixedDelay=15000,initialDelay=20000)
     public void sendNotifications(){try{notifications.dispatch();}catch(RuntimeException ignored){org.slf4j.LoggerFactory.getLogger(getClass()).warn("Customer alert delivery will be retried");}}

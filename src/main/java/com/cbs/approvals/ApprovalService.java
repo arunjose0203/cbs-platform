@@ -129,6 +129,7 @@ public class ApprovalService {
     private com.cbs.privacy.PrivacyService privacy;
     @org.springframework.beans.factory.annotation.Autowired void privacy(com.cbs.privacy.PrivacyService privacy){this.privacy=privacy;}
     public Request legalHold(Actor actor,UUID key,UUID bankId,com.cbs.privacy.PrivacyModels.Hold input){return submit(actor,key,bankId,Action.LEGAL_HOLD,input.expectedVersion(),input.reason(),input);}
+    public Request notificationTemplate(Actor actor,UUID key,UUID bankId,com.cbs.notifications.NotificationModels.Template input){return submit(actor,key,bankId,Action.NOTIFICATION_TEMPLATE,input.expectedVersion(),input.reason(),input);}
     public Request bankDutyPolicy(Actor actor,UUID key,UUID bankId,com.cbs.access.BankDuties.Policy input){return submit(actor,key,bankId,Action.BANK_DUTY_POLICY,input.expectedVersion(),input.reason(),input);}
 
     /** Bank duty for a new request on the platform-administrator path, or null when another model governs it. */
@@ -307,6 +308,9 @@ public class ApprovalService {
             } else if(action==Action.LEGAL_HOLD) {
                 var bank=tenantRepository.get(id,true);var change=(com.cbs.privacy.PrivacyModels.Hold)input;privacy.validate(bank,change);
                 before=privacy.before(id,change);after=privacy.values(id,change);label=change.active()?"Place legal hold":"Release legal hold";bankId=id;
+            } else if(action==Action.NOTIFICATION_TEMPLATE) {
+                var bank=tenantRepository.get(id,true);var change=(com.cbs.notifications.NotificationModels.Template)input;notifications.validate(bank,change);
+                before=notifications.before(id,change);after=notifications.values(change);label="Message template "+change.event()+" "+change.language()+" "+change.channel();bankId=id;
             } else if(action==Action.REPORT_DEFINITION) {
                 var bank=tenantRepository.get(id,true);var change=(com.cbs.reporting.ReportModels.Definition)input;reportDefinitions.validate(bank,change);
                 before=reportDefinitions.before(bank,change.code());after=reportDefinitions.values(bank,change);label="Report definition "+change.code();bankId=id;
@@ -525,6 +529,7 @@ public class ApprovalService {
                         case MONITORING_POLICY -> monitoring.apply(actor,request.targetId(),JSON.readValue(jdbc.queryForObject("SELECT payload::text FROM platform.approval_request WHERE id=?",String.class,id),com.cbs.compliance.AutomationModels.Policy.class),id);
                         case COMPLIANCE_ALERT_DISMISS -> complianceDecisions.apply(actor,request.targetId(),JSON.readValue(jdbc.queryForObject("SELECT payload::text FROM platform.approval_request WHERE id=?",String.class,id),com.cbs.compliance.AutomationModels.Dismiss.class),request.makerSubject(),id);
                         case LEGAL_HOLD -> privacy.apply(actor,request.targetId(),JSON.readValue(jdbc.queryForObject("SELECT payload::text FROM platform.approval_request WHERE id=?",String.class,id),com.cbs.privacy.PrivacyModels.Hold.class),id);
+                        case NOTIFICATION_TEMPLATE -> notifications.apply(actor,request.targetId(),JSON.readValue(jdbc.queryForObject("SELECT payload::text FROM platform.approval_request WHERE id=?",String.class,id),com.cbs.notifications.NotificationModels.Template.class),id);
                         case REPORT_DEFINITION -> reportDefinitions.apply(actor,request.targetId(),JSON.readValue(jdbc.queryForObject("SELECT payload::text FROM platform.approval_request WHERE id=?",String.class,id),com.cbs.reporting.ReportModels.Definition.class),id);
                         case PERIOD_CLOSE_POLICY -> {
                             String payload=jdbc.queryForObject("SELECT payload::text FROM platform.approval_request WHERE id=?",String.class,id);

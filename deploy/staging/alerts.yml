@@ -16,6 +16,16 @@ groups:
         for: 15m
         labels: {severity: warning}
         annotations: {summary: "Compliance cases are past their investigator due date; review the Overdue filter in Compliance cases"}
+      - alert: CbsCustomerNotificationsFailing
+        expr: cbs_notifications_failed_24h > 0
+        for: 15m
+        labels: {severity: warning}
+        annotations: {summary: "Customer alerts failed after all retries; check the provider and the Failed filter in Customer alerts"}
+      - alert: CbsCustomerNotificationsStuck
+        expr: cbs_notifications_pending_age_seconds > 3600
+        for: 15m
+        labels: {severity: warning}
+        annotations: {summary: "Customer alerts have been queued for over an hour; the SMS/email provider may be unavailable or unbound"}
       - alert: CbsMonitorMissing
         expr: absent(cbs_monitor_last_run_seconds) or (time() - cbs_monitor_last_run_seconds > 180)
         for: 2m
