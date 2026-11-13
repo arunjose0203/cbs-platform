@@ -104,9 +104,18 @@ public class PaymentService {
    if(jdbc.queryForObject("SELECT count(*) FROM platform.payment_observation WHERE payment_id=?",Integer.class,id)>=100)throw error("PAYMENT_CALLBACK_LIMIT");
    jdbc.update("INSERT INTO platform.payment_observation(payment_id,fingerprint,payload) VALUES (?,?,?::jsonb)",id,fingerprint,payload);event(bankId,id,"provider-callback","UNVERIFIED_CALLBACK",observation);
    if(observation.code().equals("0")&&jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM platform.payment_resolution r JOIN platform.payment_order p ON p.id=r.payment_id WHERE r.payment_id=? AND (r.outcome='REFUND' OR (lower(r.provider_reference)<>lower(?) AND ?<>'') OR (?<>'' AND (p.payload->>'amount')::numeric<>nullif(?,'')::numeric)))",Boolean.class,id,observation.receipt(),observation.receipt(),observation.amount(),observation.amount()))jdbc.update("UPDATE platform.payment_order SET reconciliation_conflict=true WHERE id=?",id);
-   // Observations never settle, refund, change balances or establish final provider success.
-   tenants.change(bank,bank.status(),bank.displayName(),bank.defaultLanguage());
+   // Observations never settle, refund, change balances or establish final provider success. P-10: they also do not
+   // bump the bank version: a public callback must not make every pending maker request for the bank go stale.
   });
+ }
+ /**
+  * Latest acceptable provider settlement date: today in the bank's own time zone, or the bank's business date when
+  * that is later (weekends and holidays roll the business date forward, and orders carry it). Comparing with today
+  * in UTC refused same-day statements for three hours every night in East Africa and for whole weekends.
+  */
+ static LocalDate latestSettlementDate(com.cbs.reference.ReferenceModels.Settings settings){
+  LocalDate today=LocalDate.now(java.time.ZoneId.of(settings.businessTimezone()));
+  return settings.businessDate().isAfter(today)?settings.businessDate():today;
  }
  static Callback parseCallback(String raw){
   try{var n=JSON.readTree(raw).path("Result");String code=n.path("ResultCode").asText(),conversation=n.path("ConversationID").asText(),originator=n.path("OriginatorConversationID").asText(),receipt=n.path("TransactionID").asText();
@@ -119,7 +128,7 @@ public class PaymentService {
   PaymentAccess.require(jdbc,actor,bankId,PaymentAccess.Capability.MAKE);return tx.execute(t->{jdbc.query("SELECT pg_advisory_xact_lock(hashtextextended(?,0))",r->{},actor.issuer()+":"+actor.subject()+":"+key);var bank=tenants.get(bankId,true);PaymentAccess.require(jdbc,actor,bankId,PaymentAccess.Capability.MAKE);var payment=row(actor,bankId,input.paymentId());
    var old=jdbc.queryForList("SELECT id,tenant_id,payload=?::jsonb AS matches FROM platform.payment_statement WHERE issuer=? AND subject=? AND idempotency_key=?",JSON.writeValueAsString(input),actor.issuer(),actor.subject(),key);if(!old.isEmpty()){var previous=old.getFirst();if(!bankId.equals(previous.get("tenant_id"))||!Boolean.TRUE.equals(previous.get("matches")))throw error("IDEMPOTENCY_CONFLICT");return (UUID)previous.get("id");}
    if(bank.version()!=input.expectedVersion())throw error("STALE_VERSION");if(List.of("SETTLED","REFUND_PENDING","REFUNDED","RETURN_PENDING","RETURNED").contains(payment.get("state")))throw error("PAYMENT_ALREADY_RESOLVED");
-   if(input.settlementDate().isBefore(order(payment).businessDate())||input.settlementDate().isAfter(LocalDate.now(java.time.ZoneOffset.UTC)))throw error("PAYMENT_STATEMENT_INVALID");
+   if(input.settlementDate().isBefore(order(payment).businessDate())||input.settlementDate().isAfter(latestSettlementDate(reference.read(bank))))throw error("PAYMENT_STATEMENT_INVALID");
    UUID id=UUID.randomUUID();jdbc.update("INSERT INTO platform.payment_statement(id,tenant_id,payment_id,issuer,subject,idempotency_key,payload) VALUES (?,?,?,?,?,?,?::jsonb)",id,bankId,input.paymentId(),actor.issuer(),actor.subject(),key,JSON.writeValueAsString(input));event(bankId,input.paymentId(),actor.subject(),"STATEMENT_RECORDED",Map.of("statementId",id,"evidenceReference",input.evidenceReference()));changed(actor,bank,"PAYMENT_STATEMENT_RECORDED",input.paymentId());return id;
   });
  }

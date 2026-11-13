@@ -129,6 +129,11 @@ public class ApprovalService {
     private com.cbs.privacy.PrivacyService privacy;
     @org.springframework.beans.factory.annotation.Autowired void privacy(com.cbs.privacy.PrivacyService privacy){this.privacy=privacy;}
     public Request legalHold(Actor actor,UUID key,UUID bankId,com.cbs.privacy.PrivacyModels.Hold input){return submit(actor,key,bankId,Action.LEGAL_HOLD,input.expectedVersion(),input.reason(),input);}
+    // P-10: KYC reviews and document archiving were applied directly by one administrator.
+    private com.cbs.customers.CustomerDocumentService documents;
+    @org.springframework.beans.factory.annotation.Autowired void documents(com.cbs.customers.CustomerDocumentService documents){this.documents=documents;}
+    public Request kycReview(Actor actor,UUID key,UUID bankId,com.cbs.customers.CustomerModels.KycReviewChange input){return submit(actor,key,bankId,Action.KYC_REVIEW,input.expectedVersion(),"KYC review "+input.reviewReference(),input);}
+    public Request documentArchive(Actor actor,UUID key,UUID bankId,com.cbs.customers.CustomerModels.DocumentArchive input){return submit(actor,key,bankId,Action.CUSTOMER_DOCUMENT_ARCHIVE,input.expectedVersion(),input.reason(),input);}
     public Request notificationTemplate(Actor actor,UUID key,UUID bankId,com.cbs.notifications.NotificationModels.Template input){return submit(actor,key,bankId,Action.NOTIFICATION_TEMPLATE,input.expectedVersion(),input.reason(),input);}
     public Request bankDutyPolicy(Actor actor,UUID key,UUID bankId,com.cbs.access.BankDuties.Policy input){return submit(actor,key,bankId,Action.BANK_DUTY_POLICY,input.expectedVersion(),input.reason(),input);}
 
@@ -305,6 +310,12 @@ public class ApprovalService {
             } else if(action==Action.COMPLIANCE_ALERT_DISMISS) {
                 var bank=tenantRepository.get(id,true);var change=(com.cbs.compliance.AutomationModels.Dismiss)input;complianceDecisions.validate(bank,change);
                 before=complianceDecisions.before(bank,change);after=complianceDecisions.values(change);label=switch(change.type()){case SCREENING_HIT->"Dismiss screening match";case MONITORING_ALERT->"Dismiss monitoring alert";case BENEFICIARY_HIT->"Dismiss beneficiary screening match";};bankId=id;
+            } else if(action==Action.KYC_REVIEW) {
+                var bank=tenantRepository.get(id,true);var change=(com.cbs.customers.CustomerModels.KycReviewChange)input;customers.validateReview(bank,change);
+                before=customers.reviewBefore(id,change.customerId());after=customers.reviewValues(change);label="KYC review "+change.riskRating();bankId=id;
+            } else if(action==Action.CUSTOMER_DOCUMENT_ARCHIVE) {
+                var bank=tenantRepository.get(id,true);var change=(com.cbs.customers.CustomerModels.DocumentArchive)input;documents.validateArchive(bank,change);
+                before=documents.archiveBefore(id,change);after=documents.archiveValues(change);label="Archive KYC document";bankId=id;
             } else if(action==Action.LEGAL_HOLD) {
                 var bank=tenantRepository.get(id,true);var change=(com.cbs.privacy.PrivacyModels.Hold)input;privacy.validate(bank,change);
                 before=privacy.before(id,change);after=privacy.values(id,change);label=change.active()?"Place legal hold":"Release legal hold";bankId=id;
@@ -528,6 +539,8 @@ public class ApprovalService {
                         case SCREENING_LIST -> screening.apply(actor,request.targetId(),JSON.readValue(jdbc.queryForObject("SELECT payload::text FROM platform.approval_request WHERE id=?",String.class,id),com.cbs.compliance.AutomationModels.Activation.class),id);
                         case MONITORING_POLICY -> monitoring.apply(actor,request.targetId(),JSON.readValue(jdbc.queryForObject("SELECT payload::text FROM platform.approval_request WHERE id=?",String.class,id),com.cbs.compliance.AutomationModels.Policy.class),id);
                         case COMPLIANCE_ALERT_DISMISS -> complianceDecisions.apply(actor,request.targetId(),JSON.readValue(jdbc.queryForObject("SELECT payload::text FROM platform.approval_request WHERE id=?",String.class,id),com.cbs.compliance.AutomationModels.Dismiss.class),request.makerSubject(),id);
+                        case KYC_REVIEW -> customers.applyReview(actor,request.targetId(),JSON.readValue(jdbc.queryForObject("SELECT payload::text FROM platform.approval_request WHERE id=?",String.class,id),com.cbs.customers.CustomerModels.KycReviewChange.class),request.makerSubject(),id);
+                        case CUSTOMER_DOCUMENT_ARCHIVE -> documents.applyArchive(actor,request.targetId(),JSON.readValue(jdbc.queryForObject("SELECT payload::text FROM platform.approval_request WHERE id=?",String.class,id),com.cbs.customers.CustomerModels.DocumentArchive.class),id);
                         case LEGAL_HOLD -> privacy.apply(actor,request.targetId(),JSON.readValue(jdbc.queryForObject("SELECT payload::text FROM platform.approval_request WHERE id=?",String.class,id),com.cbs.privacy.PrivacyModels.Hold.class),id);
                         case NOTIFICATION_TEMPLATE -> notifications.apply(actor,request.targetId(),JSON.readValue(jdbc.queryForObject("SELECT payload::text FROM platform.approval_request WHERE id=?",String.class,id),com.cbs.notifications.NotificationModels.Template.class),id);
                         case REPORT_DEFINITION -> reportDefinitions.apply(actor,request.targetId(),JSON.readValue(jdbc.queryForObject("SELECT payload::text FROM platform.approval_request WHERE id=?",String.class,id),com.cbs.reporting.ReportModels.Definition.class),id);

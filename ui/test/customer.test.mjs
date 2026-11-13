@@ -50,4 +50,11 @@ test('customer documents and kyc reviews render and post correctly',async()=>{
   await submitForm({riskRating:'HIGH',reviewedAt:'2026-11-13',reviewReference:'REV-99',notes:'Urgent'});
   assert.equal(posts[1].path,'/admin/tenants/a/customers/c1/kyc-reviews');
   assert.equal(posts[1].body.riskRating,'HIGH');
+  // P-10: a KYC review is submitted for approval with the bank version and a reused idempotency key.
+  assert.equal(posts[1].body.expectedVersion,1);
+  assert.match(posts[1].headers['Idempotency-Key'],/^[0-9a-f-]{36}$/);
+  await submitForm({riskRating:'HIGH',reviewedAt:'2026-11-13',reviewReference:'REV-99',notes:'Urgent'});
+  assert.equal(posts[2].headers['Idempotency-Key'],posts[1].headers['Idempotency-Key'],'an identical retry reuses the key');
+  await submitForm({riskRating:'LOW',reviewedAt:'2026-11-13',reviewReference:'REV-99',notes:'Urgent'});
+  assert.notEqual(posts[3].headers['Idempotency-Key'],posts[1].headers['Idempotency-Key'],'a changed review gets a new key');
 });

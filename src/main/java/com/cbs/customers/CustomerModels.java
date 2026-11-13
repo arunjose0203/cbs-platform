@@ -21,11 +21,19 @@ public final class CustomerModels {
         @NotBlank String base64Content) {}
     public record DocumentSummary(UUID id,UUID customerId,String documentType,String fileName,String contentType,long fileSize,String sha256,LocalDate retentionUntil,java.time.Instant uploadedAt,String uploadedBy,boolean archived) {}
     public record DecryptedDocument(UUID id,String fileName,String contentType,byte[] data) {}
+    /** Body of a KYC review submission (P-10: maker-checker through ApprovalService action KYC_REVIEW). */
     public record KycReviewInput(
+        long expectedVersion,
         @NotBlank @Pattern(regexp="LOW|MEDIUM|HIGH") String riskRating,
         @NotNull LocalDate reviewedAt,
         @NotBlank @Size(max=160) String reviewReference,
         @Size(max=1000) String notes) {}
+    /** Approval payload for KYC_REVIEW: the maker's review of one customer. */
+    public record KycReviewChange(long expectedVersion, UUID customerId, String riskRating, LocalDate reviewedAt, String reviewReference, String notes) {}
+    /** Body of a document archive submission (ApprovalService action CUSTOMER_DOCUMENT_ARCHIVE). */
+    public record DocumentArchiveInput(long expectedVersion, @NotBlank @Size(max=500) @Pattern(regexp="[^\\p{Cntrl}]+") String reason) {}
+    /** Approval payload for CUSTOMER_DOCUMENT_ARCHIVE. */
+    public record DocumentArchive(long expectedVersion, UUID customerId, UUID documentId, String reason) {}
     public record KycReviewSummary(UUID id,UUID customerId,String riskRating,LocalDate reviewedAt,LocalDate nextReviewDue,String reviewerSubject,String reviewReference,String notes,boolean overdue) {}
     public record Profile(
         @NotBlank @Size(max=160) @Pattern(regexp="[^\\p{Cntrl}]+") String fullName,
