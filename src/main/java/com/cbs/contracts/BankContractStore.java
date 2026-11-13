@@ -50,7 +50,11 @@ public class BankContractStore {
             if(decimal(p.customerMovement()).signum()!=0)try(var s=c.prepareStatement("INSERT INTO bank.contract_entry(event_id,account_id,amount) VALUES (?,?,?)")){s.setObject(1,p.id());s.setObject(2,d.account().id());s.setBigDecimal(3,decimal(p.customerMovement()));s.executeUpdate();}
             c.commit();
         }catch(Exception e){c.rollback();throw e;}}
-        catch(TenantException e){throw e;}catch(Exception e){throw unavailable();}
+        catch(TenantException e){throw e;}catch(Exception e){
+            // Type and SQL state only: never the payload or connection details.
+            org.slf4j.LoggerFactory.getLogger(BankContractStore.class).warn("Contract posting failed for bank {}: {} {}",bank.id(),e.getClass().getSimpleName(),
+                e instanceof java.sql.SQLException sql?sql.getSQLState():"");
+            throw unavailable();}
     }
     private Connection open(Tenant bank){return databases.openOwned(bank.id(),bank.databaseBinding().databaseReference());}
     private static TenantException unavailable(){return new TenantException(503,"CONTRACT_DATABASE_UNAVAILABLE","Contract posting could not be confirmed; retry safely");}

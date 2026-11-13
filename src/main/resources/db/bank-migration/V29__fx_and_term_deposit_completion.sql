@@ -1,6 +1,8 @@
 -- Bank Migration V29: Round 16 FX & Term Deposit Completion
 ALTER TABLE bank.contract_event DROP CONSTRAINT contract_event_kind_check;
-ALTER TABLE bank.contract_event ADD CHECK(kind IN ('OPEN','ACCRUE','REPAY','REDEEM','REVERSE','EARLY_CLOSE','RENEW','PARTIAL_WRITE_OFF','RECOVERY','PARTIAL_CLOSE'));
+-- Every kind from V28 is kept: dropping RESTRUCTURE, IMPAIR, WRITE_OFF and the loan fee kinds would refuse those
+-- postings and fail this migration on any bank that already holds them (fixed before release, P-10 review).
+ALTER TABLE bank.contract_event ADD CHECK(kind IN ('OPEN','ACCRUE','REPAY','REDEEM','REVERSE','EARLY_CLOSE','RENEW','RESTRUCTURE','IMPAIR','WRITE_OFF','FEE_ASSESS','FEE_PAY','FEE_WAIVE','PARTIAL_WRITE_OFF','RECOVERY','PARTIAL_CLOSE'));
 
 -- Allow recording FX valuation reversals on the same open business date
 CREATE TABLE IF NOT EXISTS bank.fx_valuation_reversal (
