@@ -73,6 +73,8 @@ def check(config):
                 metrics['cbs_compliance_overdue_cases'] = int(recovery.query(config,d,"SELECT count(*) FROM platform.compliance_case WHERE status='OPEN' AND due_date<current_date"))
                 # Customer messages that exhausted their retries in the last day, and the oldest message still queued. Counts only.
                 metrics['cbs_notifications_failed_24h'] = int(recovery.query(config,d,"SELECT count(*) FROM platform.notification WHERE status='FAILED' AND last_attempt_at>clock_timestamp()-interval '24 hours'"))
+                # Banks whose scheduled daily cycle is currently blocked (latest scheduler outcome). A count only.
+                metrics['cbs_batch_blocked_banks'] = int(recovery.query(config,d,"SELECT count(*) FROM (SELECT DISTINCT ON (tenant_id) outcome FROM platform.batch_event ORDER BY tenant_id,recorded_at DESC) x WHERE outcome='BLOCKED'"))
                 metrics['cbs_notifications_pending_age_seconds'] = max(0,float(recovery.query(config,d,"SELECT coalesce(max(extract(epoch FROM (clock_timestamp()-created_at))),0) FROM platform.notification WHERE status='PENDING'")))
         except Exception:
             metrics['cbs_database_up{database="'+d['name']+'"}'] = 0

@@ -4,6 +4,15 @@
 
 Use the [Functional Gap & Acceptance Matrix](functional-gap-acceptance-matrix-2026-10-09.md) for the current 34-area functional assessment, 34 proposed acceptance cases, source/test evidence, confirmed limits and prioritized completion work. It reconciles older historical pending lists below. No module has independent bank functional sign-off recorded; existing automated test results do not replace that acceptance.
 
+## P-07: batch scheduling and operations console — 14 November 2026
+
+Production-engineering item P-07 (F21) of the [go-live plan](go-live-plan-2026-11-13.md). Control migration **V52**. See [batch operations](batch-operations.md).
+
+- **Scheduled cycle preparation.** After each enabled bank's local cut-off, a configured service identity submits the servicing run, then the period close if one is due, then the day close. People approve every step. Rejected requests are not resubmitted, and blockers are recorded rather than retried silently.
+- **Operations console.** One page per bank shows cycle status, day-close blockers, pending approvals with their age, every delivery queue with pending and failing counts, exceptions and the scheduler history.
+- **Monitoring.** `cbs_batch_blocked_banks` and the `CbsDailyCycleBlocked` alert.
+- **Verification.** The integration test for the scheduled cycle, 135 UI tests and the ops tests pass.
+
 ## P-09: money-path invariant and property tests — 14 November 2026
 
 Production-engineering item P-09 (gate E13) of the [go-live plan](go-live-plan-2026-11-13.md). Tests only. See [money invariants](money-invariants.md).
