@@ -4,6 +4,17 @@
 
 Use the [Functional Gap & Acceptance Matrix](functional-gap-acceptance-matrix-2026-10-09.md) for the current 34-area functional assessment, 34 proposed acceptance cases, source/test evidence, confirmed limits and prioritized completion work. It reconciles older historical pending lists below. No module has independent bank functional sign-off recorded; existing automated test results do not replace that acceptance.
 
+## Round 19: Data migration and cutover tooling — 14 November 2026
+
+Round 19 of the [go-live plan](go-live-plan-2026-11-13.md) delivers production cutover tooling, staging loaders, deduplication, and trial balance reconciliation (Gate E12). Control migration **V54**. See [cutover runbook](cutover-runbook.md).
+
+- **Staged data loaders.** Batched loaders for legacy customers, deposit accounts, live loan schedules, and term deposits. Deduplicates national IDs, verifies currency enablement, and rejects negative balances.
+- **Atomic opening journals.** Migration opening balance journals post atomically against the migration clearing suspense ledger, preserving balance sheet conservation.
+- **Trial balance reconciliation.** Automated reconciliation comparing migrated subledger positions against legacy closing trial balances, enforcing exact 0.00 variance across all supported currencies.
+- **Batch rollback controls.** Controlled rollback mechanism (`ROLLBACK`) marking uncommitted migration items invalid and safe to re-stage without leaving orphaned records.
+- **Production cutover runbook.** Complete operational runbook from T-7 rehearsal through T-0 freeze, schema migration (`MigrationMain`), ingestion, reconciliation gates, Go/No-Go decision rules, and emergency rollback protocol.
+- **UI and verification.** Added Data Migration & Cutover UI view with batch history, batch rollback, and trial balance reconciliation. Tests: 3 new migration unit tests in `MigrationServiceTest` (100% pass), BankDutyRoutesTest updated for `/migration` duty mapping (100% pass), 138 UI tests pass.
+
 ## Round 16: FX and term-deposit completion — 14 November 2026
 
 Round 16 of the [go-live plan](go-live-plan-2026-11-13.md) completes foreign exchange (FX) and term-deposit servicing (Matrix rows F26, F27, F28; Acceptance cases A26, A27, A28). Control migrations **V53** (platform) and **V29** (bank). See [fx and term-deposit completion](fx-and-term-deposit-completion.md).

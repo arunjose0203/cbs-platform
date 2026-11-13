@@ -68,7 +68,9 @@ public final class BankDutyRoutes {
             duty("/payments", PAYMENTS, PAYMENTS, FINANCE), duty("/statement-imports", PAYMENTS, PAYMENTS, FINANCE),
             duty("/fx", TREASURY, TREASURY, FINANCE), duty("/compliance", COMPLIANCE),
             // Privacy (Round 18): the data protection officer works under the compliance duty.
-            duty("/privacy", COMPLIANCE));
+            duty("/privacy", COMPLIANCE),
+            // Migration (Round 19): cutover tooling operates under configuration and finance duties.
+            duty("/migration", CONFIG, CONFIG, FINANCE));
 
     private static Rule platform(String prefix) { return new Rule(prefix, Kind.PLATFORM, null, Set.of()); }
     private static Rule lending(String prefix) { return new Rule(prefix, Kind.LENDING, null, Set.of()); }
