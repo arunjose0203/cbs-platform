@@ -42,7 +42,7 @@ class CustomerKycReviewTest {
         store = mock(BankCustomerStore.class);
         databases = mock(BankDatabaseProvisioner.class);
         txManager = mock(PlatformTransactionManager.class);
-        service = new CustomerService(jdbc, tenants, store, databases, txManager);
+        service = new CustomerService(jdbc, tenants, store, databases, txManager, new com.cbs.privacy.PersonalDataCipher(""));
         when(tenants.get(eq(bankId), anyBoolean())).thenReturn(activeBank);
     }
 
