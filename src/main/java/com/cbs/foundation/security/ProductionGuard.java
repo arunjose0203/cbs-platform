@@ -38,6 +38,8 @@ public class ProductionGuard {
   String fieldKey=env.getProperty("cbs.privacy.field-key","");
   if(fieldKey.isBlank()||com.cbs.privacy.PersonalDataCipher.developmentKey(fieldKey))problems.add("a personal-data field key from the secret store is required");
   else try{com.cbs.privacy.PersonalDataCipher.decode(fieldKey);}catch(IllegalStateException e){problems.add("the personal-data field key must be Base64 of at least 32 random bytes");}
+  String receipts=env.getProperty("cbs.notifications.callback-secret","");
+  if(!receipts.isBlank()&&receipts.length()<32)problems.add("the notification receipt secret must be at least 32 characters");
   if(!problems.isEmpty())throw new IllegalStateException("Production configuration rejected: "+String.join("; ",problems));
  }
  private static boolean https(String value){try{var uri=URI.create(value);return "https".equals(uri.getScheme())&&uri.getHost()!=null&&uri.getUserInfo()==null&&uri.getFragment()==null&&!Set.of("localhost","127.0.0.1","::1").contains(uri.getHost());}catch(RuntimeException e){return false;}}
