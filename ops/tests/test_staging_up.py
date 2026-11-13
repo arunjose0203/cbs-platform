@@ -51,6 +51,26 @@ class StagingUpTests(unittest.TestCase):
         self.assertFalse(any(' up -d' in c for c in calls))
         self.assertIn('runtime-privileges.sql', result.stderr)
 
+    def test_partial_bank_upgrade_stops_unless_explicitly_allowed(self):
+        self.stub('docker', 'case "$*" in *"run --rm migrate"*) exit 2;; esac; exit 0')
+        result, calls = self.run_up(hook=True)
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn('CBS_ALLOW_PARTIAL_UPGRADE', result.stderr)
+        self.assertFalse(any('grants' in c for c in calls))
+        with self.env.open('a') as f:
+            f.write('CBS_ALLOW_PARTIAL_UPGRADE=yes
+')
+        self.calls.unlink()
+        result, calls = self.run_up()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(any('up -d --wait app edge' in c for c in calls))
+
+    def test_failed_migration_job_stops_the_bring_up(self):
+        self.stub('docker', 'case "$*" in *"run --rm migrate"*) exit 1;; esac; exit 0')
+        result, calls = self.run_up(hook=True)
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertFalse(any(' up -d' in c for c in calls))
+
     def test_full_bring_up_in_order(self):
         result, calls = self.run_up(hook=True)
         self.assertEqual(result.returncode, 0, result.stderr)

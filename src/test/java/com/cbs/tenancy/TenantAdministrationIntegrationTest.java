@@ -3346,6 +3346,54 @@ class TenantAdministrationIntegrationTest {
         assertThatThrownBy(()->jdbc.update("DELETE FROM platform.batch_event WHERE tenant_id=?",b)).hasMessageContaining("append-only");
         mvc.perform(get("/api/v1/admin/tenants/"+b+"/operations-console")).andExpect(status().isUnauthorized());
     }
+    /**
+     * P-08 failed-upgrade drill: two bank databases at an older schema; a canary upgrade of one; a full rolling run
+     * in which the other bank's next migration fails. The failing bank stays exactly at its previous version with its
+     * data intact, the runtime refuses it while serving the upgraded bank, and a re-run after the fix completes it.
+     */
+    @Test void rollingBankUpgradesSurviveAFailedBankAndTheRuntimeRefusesBanksLeftBehind()throws Exception{
+        var dir=java.nio.file.Files.createTempDirectory("cbs-upgrade-drill");
+        java.util.function.Function<String,com.cbs.operations.MigrationMain.Database> db=key->{
+            try{var t=TestDatabases.target(key);var file=dir.resolve(key+".pw");java.nio.file.Files.writeString(file,t.password());
+                return new com.cbs.operations.MigrationMain.Database(t.url(),t.name(),file.toString(),key.equals("control")?null:UUID.nameUUIDFromBytes(key.getBytes(java.nio.charset.StandardCharsets.UTF_8)));}
+            catch(java.io.IOException e){throw new java.io.UncheckedIOException(e);}
+        };
+        var a=db.apply("upgradea");var b=db.apply("upgradeb");
+        // Both banks start at bank schema version 24; bank B has an object that its next migration also creates.
+        for(var key:List.of("upgradea","upgradeb")){var t=TestDatabases.target(key);
+            org.flywaydb.core.Flyway.configure().dataSource(t.url(),t.name(),t.password()).locations("classpath:db/bank-migration").defaultSchema("bank").schemas("bank").createSchemas(true).target("24").load().migrate();}
+        try(var c=TestDatabases.bank("upgradeb");var st=c.createStatement()){st.execute("CREATE TABLE bank.period_close(squatter INTEGER)");st.execute("INSERT INTO bank.period_close VALUES (42)");}
+        var plan=new com.cbs.operations.MigrationMain.Plan(db.apply("control"),Map.of("drill-a",a,"drill-b",b));
+        String latest=com.cbs.tenancy.BankDatabaseProvisioner.expectedBankVersion();
+        // Canary: only bank A.
+        var canary=com.cbs.operations.MigrationMain.run(plan,new com.cbs.operations.MigrationMain.Options(true,java.util.Set.of("drill-a"),false,dir.resolve("canary.json")));
+        assertThat(canary.banks()).singleElement().satisfies(r->{assertThat(r.reference()).isEqualTo("drill-a");assertThat(r.status()).isEqualTo(com.cbs.operations.MigrationMain.Status.UPGRADED);assertThat(r.before()).isEqualTo("24");assertThat(r.after()).isEqualTo(latest);});
+        // Full rolling run: A is current, B fails and stays at 24 with its data; the report says so.
+        var report=com.cbs.operations.MigrationMain.run(plan,new com.cbs.operations.MigrationMain.Options(true,java.util.Set.of(),false,dir.resolve("report.json")));
+        assertThat(report.complete()).isFalse();
+        assertThat(report.banks()).extracting(r->r.reference()+":"+r.status()+":"+r.before()+"->"+r.after())
+            .containsExactly("drill-a:CURRENT:"+latest+"->"+latest,"drill-b:FAILED:24->24");
+        assertThat(java.nio.file.Files.readString(dir.resolve("report.json"))).contains("\"FAILED\"").doesNotContain(TestDatabases.target("upgradeb").password());
+        try(var c=TestDatabases.bank("upgradeb");var st=c.createStatement();var r=st.executeQuery("SELECT (SELECT squatter FROM bank.period_close),(SELECT count(*) FROM bank.flyway_schema_history WHERE NOT success)")){
+            r.next();assertThat(r.getInt(1)).as("data untouched").isEqualTo(42);assertThat(r.getInt(2)).as("no half-applied migration").isZero();}
+        // Mixed versions: the runtime (migrations disabled, as in production) serves A and refuses B.
+        var env=new org.springframework.mock.env.MockEnvironment().withProperty("cbs.banking.migrations-enabled","false");
+        var settings=new com.cbs.tenancy.BankDatabaseProvisioner.Settings(Map.of(
+            "drill-a",new com.cbs.tenancy.BankDatabaseProvisioner.Target(TestDatabases.target("upgradea").url(),TestDatabases.target("upgradea").name(),TestDatabases.target("upgradea").password()),
+            "drill-b",new com.cbs.tenancy.BankDatabaseProvisioner.Target(TestDatabases.target("upgradeb").url(),TestDatabases.target("upgradeb").name(),TestDatabases.target("upgradeb").password())));
+        var runtime=new com.cbs.tenancy.BankDatabaseProvisioner(settings,env);
+        try(var ok=runtime.openOwned(a.tenantId(),"drill-a")){assertThat(ok.isValid(2)).isTrue();}
+        assertCode(()->runtime.openOwned(b.tenantId(),"drill-b").close(),"BANK_SCHEMA_UPGRADE_REQUIRED");
+        assertCode(()->runtime.upgradeOwned(b.tenantId(),"drill-b"),"DATABASE_MIGRATION_REQUIRED");
+        // After the cause is removed, a re-run completes B and leaves A alone.
+        try(var c=TestDatabases.bank("upgradeb");var st=c.createStatement()){st.execute("DROP TABLE bank.period_close");}
+        var rerun=com.cbs.operations.MigrationMain.run(plan,new com.cbs.operations.MigrationMain.Options(true,java.util.Set.of(),false,null));
+        assertThat(rerun.complete()).isTrue();
+        assertThat(rerun.banks()).extracting(r->r.reference()+":"+r.status()).containsExactly("drill-a:CURRENT","drill-b:UPGRADED");
+        try(var ok=runtime.openOwned(b.tenantId(),"drill-b")){assertThat(ok.isValid(2)).isTrue();}
+        // An unknown canary reference is refused before anything runs.
+        assertThatThrownBy(()->com.cbs.operations.MigrationMain.run(plan,new com.cbs.operations.MigrationMain.Options(true,java.util.Set.of("drill-c"),false,null))).isInstanceOf(IllegalArgumentException.class);
+    }
     private UUID onboard(Tenant bank,com.cbs.customers.CustomerModels.Profile profile)throws Exception{
         var r=approvals.customer(ADMIN,UUID.randomUUID(),bank.id(),customerChange(bank,null,profile,""));approveHttp(r.id());customers.deliver(r.id());
         return jdbc.queryForObject("SELECT id FROM platform.customer_registry WHERE tenant_id=? AND request_id=?",UUID.class,bank.id(),r.id());

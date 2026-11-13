@@ -4,6 +4,14 @@
 
 Use the [Functional Gap & Acceptance Matrix](functional-gap-acceptance-matrix-2026-10-09.md) for the current 34-area functional assessment, 34 proposed acceptance cases, source/test evidence, confirmed limits and prioritized completion work. It reconciles older historical pending lists below. No module has independent bank functional sign-off recorded; existing automated test results do not replace that acceptance.
 
+## P-08: tenant upgrade orchestration — 14 November 2026
+
+Production-engineering item P-08 (gate E11) of the [go-live plan](go-live-plan-2026-11-13.md). No migration. See [tenant upgrades](tenant-upgrades.md).
+
+- **Rolling bank upgrades.** The migration job upgrades banks one at a time and continues past a failed bank, unless `--stop-on-failure` is set. It supports canary runs with `--only`, writes a per-bank report (`--report`), and exits with code 2 when any bank is left behind.
+- **Mixed-version safety.** In production, a bank whose schema is behind the build is refused with `BANK_SCHEMA_UPGRADE_REQUIRED` while other banks keep working. `up.sh` continues after a partial upgrade only with `CBS_ALLOW_PARTIAL_UPGRADE=yes`.
+- **Failed-upgrade drill.** An automated drill breaks one bank's migration mid-upgrade. It proves the other bank upgrades, the failed bank keeps its data and previous version, the runtime refuses it, and a re-run completes it. The doc includes the upgrade runbook with the rollback decision point.
+
 ## P-07: batch scheduling and operations console — 14 November 2026
 
 Production-engineering item P-07 (F21) of the [go-live plan](go-live-plan-2026-11-13.md). Control migration **V52**. See [batch operations](batch-operations.md).

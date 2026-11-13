@@ -17,7 +17,7 @@ final class TestDatabases {
         if (DATABASES.isEmpty()) {
             String prefix = "cbs_m01_" + UUID.randomUUID().toString().replace("-", "");
             try (Connection admin = adminConnection()) {
-                for (String suffix : new String[] {"control", "a", "b", "failure", "recovery", "ledger", "ledgerother", "ledgerupgrade", "dayclose", "dayfailure", "dayguards", "customer", "customerother", "customerfail", "account", "accountguards", "accountrecovery", "funding", "fundguards", "closure", "settle", "chunks", "volume", "alerts", "mandates", "periods", "reporting", "screening", "fundrecovery", "fundfailure", "operations", "optransfer", "branchops", "cash", "servicing", "compliance", "payments", "lifecycle", "fx", "fxtrade", "contracts", "corrections", "termservicing", "credit", "arrears", "lendingaccess", "duties", "dutyroutes", "privacy", "notices", "invariants", "batch"}) {
+                for (String suffix : new String[] {"control", "a", "b", "failure", "recovery", "ledger", "ledgerother", "ledgerupgrade", "dayclose", "dayfailure", "dayguards", "customer", "customerother", "customerfail", "account", "accountguards", "accountrecovery", "funding", "fundguards", "closure", "settle", "chunks", "volume", "alerts", "mandates", "periods", "reporting", "screening", "fundrecovery", "fundfailure", "operations", "optransfer", "branchops", "cash", "servicing", "compliance", "payments", "lifecycle", "fx", "fxtrade", "contracts", "corrections", "termservicing", "credit", "arrears", "lendingaccess", "duties", "dutyroutes", "privacy", "notices", "invariants", "batch", "upgradea", "upgradeb"}) {
                     String name = prefix + "_" + suffix;
                     String password = UUID.randomUUID().toString().replace("-", "");
                     try (var statement = admin.createStatement()) {
@@ -67,6 +67,9 @@ final class TestDatabases {
         registry.add(prefix + ".password", target::password);
     }
 
+    /** Name, URL and password of a fixture database, for tests that drive the offline migration job. */
+    static Database target(String key) { return DATABASES.get(key); }
+
     static Connection bank(String key) throws SQLException {
         Database target = DATABASES.get(key);
         return DriverManager.getConnection(target.url(), target.name(), target.password());
@@ -80,7 +83,7 @@ final class TestDatabases {
     static void close() throws SQLException {
         try (Connection admin = adminConnection(); var statement = admin.createStatement()) {
             for (Database target : DATABASES.values()) {
-                if (!target.name().matches("cbs_m01_[0-9a-f]{32}_(control|a|b|failure|recovery|ledger|ledgerother|ledgerupgrade|dayclose|dayfailure|dayguards|customer|customerother|customerfail|account|accountguards|accountrecovery|funding|fundguards|closure|settle|chunks|volume|alerts|mandates|periods|reporting|screening|fundrecovery|fundfailure|operations|optransfer|branchops|cash|servicing|compliance|payments|lifecycle|fx|fxtrade|contracts|corrections|termservicing|credit|arrears|lendingaccess|duties|dutyroutes|privacy|notices|invariants|batch)")) { throw new IllegalStateException("Unsafe fixture name"); }
+                if (!target.name().matches("cbs_m01_[0-9a-f]{32}_(control|a|b|failure|recovery|ledger|ledgerother|ledgerupgrade|dayclose|dayfailure|dayguards|customer|customerother|customerfail|account|accountguards|accountrecovery|funding|fundguards|closure|settle|chunks|volume|alerts|mandates|periods|reporting|screening|fundrecovery|fundfailure|operations|optransfer|branchops|cash|servicing|compliance|payments|lifecycle|fx|fxtrade|contracts|corrections|termservicing|credit|arrears|lendingaccess|duties|dutyroutes|privacy|notices|invariants|batch|upgradea|upgradeb)")) { throw new IllegalStateException("Unsafe fixture name"); }
                 statement.execute("DROP DATABASE IF EXISTS " + target.name() + " WITH (FORCE)");
                 statement.execute("DROP ROLE IF EXISTS " + target.name());
             }
