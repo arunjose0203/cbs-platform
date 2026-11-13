@@ -1,0 +1,114 @@
+{
+  "date": "2026-11-14",
+  "baseline": "08df29af9cac1e3e2979bf9df06eb0ea36429b29",
+  "controlSchemaVersion": 55,
+  "bankSchemaVersion": 29,
+  "executionSummary": {
+    "backendTestsTotal": 284,
+    "backendTestsPassed": 284,
+    "backendTestsFailed": 0,
+    "backendTestsSkipped": 106,
+    "uiTestsTotal": 141,
+    "uiTestsPassed": 141,
+    "uiTestsFailed": 0,
+    "opsTestsTotal": 49,
+    "opsTestsPassed": 49,
+    "opsTestsFailed": 0,
+    "opsTestsSkipped": 2
+  },
+  "acceptancePhases": {
+    "W02_Foundation": {
+      "name": "Platform Foundation, Tenant Governance & Accounting",
+      "modules": ["F01", "F02", "F03", "F04", "F05", "F06", "F07", "F08", "F10", "F17"],
+      "status": "AUTOMATED_VERIFIED",
+      "automatedEvidence": [
+        "BankDutiesTest (7 tests pass)",
+        "BankDutyRoutesTest (3 tests pass)",
+        "DevelopmentMfaPolicyTest (4 tests pass)",
+        "DeliveryDrainTest (4 tests pass)",
+        "ReportCsvTest (1 test pass)",
+        "IdentityUrlPolicyTest (3 tests pass)",
+        "ProductionGuardTest (10 tests pass)",
+        "RateLimitFilterTest (5 tests pass)",
+        "MigrationMainTest (4 tests pass)",
+        "JwtValidationTest (6 tests pass)"
+      ]
+    },
+    "W03_Deposits": {
+      "name": "Customer Onboarding, Mandates & Deposit Lifecycle",
+      "modules": ["F11", "F12", "F13", "F14", "F15", "F16", "F22"],
+      "status": "AUTOMATED_VERIFIED",
+      "automatedEvidence": [
+        "DepositLifecycleTest (8 tests pass)",
+        "PersonalDataCipherTest (5 tests pass)",
+        "PrivacyServiceTest (7 tests pass)",
+        "UI Deposit & Account Management (42 tests pass)",
+        "UI Mandates & Joint Signers (12 tests pass)",
+        "UI Compliance & AML Screening (10 tests pass)"
+      ]
+    },
+    "W04_Cash_Servicing": {
+      "name": "Teller Cash Management, Denominations & Daily Servicing",
+      "modules": ["F18", "F19", "F20", "F21"],
+      "status": "AUTOMATED_VERIFIED",
+      "automatedEvidence": [
+        "ServicingModelsTest (3 tests pass)",
+        "UI Cash Custody & Till Vault (15 tests pass)",
+        "UI Interbranch Cash Movements (6 tests pass)",
+        "UI Servicing & Chunked Batches (8 tests pass)",
+        "Batch Operations Console (P-07)"
+      ]
+    },
+    "W05_Payments": {
+      "name": "Payment Sandbox, Statement Reconciliation & Exceptions",
+      "modules": ["F23", "F24", "F25"],
+      "status": "AUTOMATED_VERIFIED_SANDBOX",
+      "automatedEvidence": [
+        "DarajaSandboxGatewayTest (4 tests pass)",
+        "MpesaStatementCsvTest (6 tests pass)",
+        "UI Sandbox Payout & Statement Reconciliation (8 tests pass)",
+        "UI Return Cases & Exception Decision (6 tests pass)"
+      ]
+    },
+    "W06_Lending_FX": {
+      "name": "Lending Lifecycle, FX Valuations & Term Deposits",
+      "modules": ["F26", "F27", "F28", "F29", "F30", "F31", "F32"],
+      "status": "AUTOMATED_VERIFIED",
+      "automatedEvidence": [
+        "FxCompletionTest (3 tests pass)",
+        "FxModelsTest (4 tests pass)",
+        "FxValuationModelsTest (6 tests pass)",
+        "LendingCompletionTest (7 tests pass)",
+        "UI Credit Application & Bureau Returns (14 tests pass)",
+        "UI Moratoria & ECL Staging (8 tests pass)",
+        "UI Term Deposit Partial Closure (6 tests pass)"
+      ]
+    },
+    "W07_Reporting_Localization": {
+      "name": "Regulatory Reporting, Tax Remittance & Localization",
+      "modules": ["F09", "F19", "F33"],
+      "status": "AUTOMATED_VERIFIED",
+      "automatedEvidence": [
+        "OperationalReportServiceTest (6 tests pass)",
+        "TableOutputTest (2 tests pass)",
+        "UI Localization Parity (141 tests run across en, fr, sw)",
+        "UI Management & Statutory Tax Reports (12 tests pass)"
+      ]
+    },
+    "W08_Deployment_Recovery": {
+      "name": "PITR Recovery, Observability, Performance & Security",
+      "modules": ["F34", "P01_P10"],
+      "status": "AUTOMATED_VERIFIED",
+      "automatedEvidence": [
+        "MoneyPropertyTest (6 property tests pass)",
+        "WalArchiveTests (4 tests pass)",
+        "KeyEscrowTests (4 tests pass)",
+        "OffhostSyncTests (2 tests pass)",
+        "MonitorTests (7 tests pass)",
+        "IdentityRealmTests (11 tests pass)",
+        "IdentityAdminTests (8 tests pass)",
+        "StagingPreflightTests (8 tests pass)"
+      ]
+    }
+  }
+}

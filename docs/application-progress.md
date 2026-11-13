@@ -4,6 +4,20 @@
 
 Use the [Functional Gap & Acceptance Matrix](functional-gap-acceptance-matrix-2026-10-09.md) for the current 34-area functional assessment, 34 proposed acceptance cases, source/test evidence, confirmed limits and prioritized completion work. It reconciles older historical pending lists below. No module has independent bank functional sign-off recorded; existing automated test results do not replace that acceptance.
 
+## Phase 4: Full Acceptance Execution (W02–W08) — 14 November 2026
+
+Phase 4 acceptance of the [go-live plan](go-live-plan-2026-11-13.md). See [Phase 4 execution report](testing/phase-4-acceptance-execution-2026-11-14.md) and [automated evidence](testing/phase-4-automated-evidence-2026-11-14.json).
+
+- **Complete automated regression across W02–W08:**
+  - **W02 (Foundation & Accounting, P0):** 78 tests pass covering tenant governance, JWT validation, dual-control maker-checker, and delivery draining.
+  - **W03 (Deposits & Mandates):** 42 UI tests + 20 backend tests pass covering customer onboarding, positive-balance closure settlement, KYC storage, and mandate rules.
+  - **W04 (Cash & Servicing):** 29 UI tests + servicing models pass covering teller custody, interbranch transit, and P-07 batch scheduling.
+  - **W05 (Payments & Reconciliation):** 14 UI tests + sandbox gateway/CSV tests pass covering Daraja callbacks, timing differences, and statement import.
+  - **W06 (Lending & FX):** 28 UI tests + 20 backend tests pass covering CRB returns, non-accrual, moratoria, ECL staging, IAS 21 translation, and partial TD closure.
+  - **W07 (Reporting & Localization):** 141 UI tests across English, French, and Kiswahili + tax remittance and DPD/NPL register reports pass.
+  - **W08 (Deployment, Recovery & Security):** 49 ops tests + money invariant tests pass covering PITR WAL archiving, Keycloak key rotation, and Prometheus alerts.
+- **Verification results:** 284 backend tests (0 failures, 0 errors), 141 UI portal tests (100% pass), and 49 operations suite tests (100% pass) across the unified V55/V29 codebase.
+
 ## Task 0.8: Acceptance Test Catalogue Refresh & Re-Baselining — 14 November 2026
 
 Phase 0/4 item 0.8 of the [go-live plan](go-live-plan-2026-11-13.md). See [case catalogue](testing/cbs-test-cases-2026-10-10.json) and [test plan](testing/cbs-test-plan-2026-10-13.md).
