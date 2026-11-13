@@ -3394,6 +3394,65 @@ class TenantAdministrationIntegrationTest {
         // An unknown canary reference is refused before anything runs.
         assertThatThrownBy(()->com.cbs.operations.MigrationMain.run(plan,new com.cbs.operations.MigrationMain.Options(true,java.util.Set.of("drill-c"),false,null))).isInstanceOf(IllegalArgumentException.class);
     }
+    /**
+     * P-06 write-path measurement (opt-in: -Dcbs.perf=true, with -Dcbs.perf.accounts and -Dcbs.perf.operations).
+     * Makers submit withdrawals on separate accounts concurrently; every submission carries the bank version, so
+     * concurrent makers contend on it (STALE_VERSION retries measure that serialization). A checker approves each,
+     * the delivery drain posts them, and the books must balance afterwards. Prints a JSON summary.
+     */
+    @Test @org.junit.jupiter.api.condition.EnabledIfSystemProperty(named="cbs.perf",matches="true")
+    void writePathThroughputWithZeroBalanceErrors()throws Exception{
+        int accounts=Integer.getInteger("cbs.perf.accounts",8),perAccount=Integer.getInteger("cbs.perf.operations",5);
+        var f=fundingFixture("money-perf");var bank=f.f().bank();UUID b=bank.id();fund(f,"100000");
+        var ids=new java.util.ArrayList<UUID>(List.of(f.account()));
+        for(int i=1;i<accounts;i++)ids.add(accountFor(f,f.f().customer(),"PERF_"+i,"100000"));
+        var stale=new java.util.concurrent.atomic.AtomicInteger();var submitted=new java.util.concurrent.ConcurrentLinkedQueue<UUID>();var byAccount=new java.util.concurrent.ConcurrentHashMap<UUID,java.util.List<UUID>>();
+        var submitNanos=new java.util.concurrent.ConcurrentLinkedQueue<Long>();
+        long t0=System.nanoTime();
+        try(var pool=Executors.newFixedThreadPool(accounts)){
+            var jobs=new java.util.ArrayList<java.util.concurrent.Callable<Void>>();
+            for(UUID account:ids)jobs.add(()->{
+                for(int n=0;n<perAccount;n++){
+                    while(true){
+                        var change=new com.cbs.accounts.OperationModels.Change(service.get(ADMIN,b).version(),com.cbs.accounts.OperationModels.Kind.HOLD,account,null,null,null,"1",reference.get(ADMIN,b).businessDate(),"PERF-"+UUID.randomUUID(),"Load measurement",null);
+                        long s=System.nanoTime();
+                        try{UUID id=approvals.operation(ADMIN,UUID.randomUUID(),b,change).id();submitted.add(id);byAccount.computeIfAbsent(account,k->java.util.Collections.synchronizedList(new java.util.ArrayList<>())).add(id);submitNanos.add(System.nanoTime()-s);break;}
+                        catch(TenantException e){if(e.code().equals("STALE_VERSION")){stale.incrementAndGet();continue;}if(e.code().equals("ACCOUNT_OPERATION_PENDING"))break;throw e;}
+                    }
+                }
+                return null;
+            });
+            for(var x:pool.invokeAll(jobs))x.get();
+        }
+        long t1=System.nanoTime();
+        // Every approval bumps the bank version, so requests submitted against an older version become STALE when approved.
+        long a=System.nanoTime();int approved=0,staleAtApproval=0;
+        for(UUID id:submitted){var r=approvals.decide(CHECKER,id,com.cbs.approvals.ApprovalModels.Decision.APPROVE,"Load measurement");if(r.status()==com.cbs.approvals.ApprovalModels.Status.APPROVED)approved++;else staleAtApproval++;}
+        long t2=System.nanoTime();
+        int posted=com.cbs.accounting.LedgerDeliveryWorker.drain(600_000,operations::pending,operations::deliver,"Perf");
+        long t3=System.nanoTime();
+        assertThat(posted).as("only approved requests post").isEqualTo(approved);
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM platform.account_operation WHERE tenant_id=? AND completed AND failure_code IS NULL",Integer.class,b)).isEqualTo(approved);
+        assertBooksBalance("perf",b,ids);
+        // The sustainable rate per bank: one full maker-checker-posting cycle after another.
+        var cycles=new java.util.ArrayList<Double>();long c0=System.nanoTime();
+        for(int i=0;i<accounts*perAccount;i++){
+            UUID account=ids.get(i%ids.size());long c=System.nanoTime();
+            var r=approvals.operation(ADMIN,UUID.randomUUID(),b,new com.cbs.accounts.OperationModels.Change(service.get(ADMIN,b).version(),com.cbs.accounts.OperationModels.Kind.HOLD,account,null,null,null,"1",reference.get(ADMIN,b).businessDate(),"SEQ-"+UUID.randomUUID(),"Load measurement",null));
+            assertThat(approvals.decide(CHECKER,r.id(),com.cbs.approvals.ApprovalModels.Decision.APPROVE,"Load measurement").status()).isEqualTo(com.cbs.approvals.ApprovalModels.Status.APPROVED);
+            operations.deliver(r.id());cycles.add((System.nanoTime()-c)/1e6);
+        }
+        long c1=System.nanoTime();
+        assertBooksBalance("perf",b,ids);
+        var lat=submitNanos.stream().map(n->n/1_000_000.0).sorted().toList();var cyc=cycles.stream().sorted().toList();
+        var summary=new java.util.LinkedHashMap<String,Object>();
+        summary.put("accounts",accounts);summary.put("concurrentSubmissions",submitted.size());summary.put("staleVersionRetriesAtSubmit",stale.get());
+        summary.put("approved",approved);summary.put("staleAtApproval",staleAtApproval);summary.put("posted",posted);
+        summary.put("submitPerSecond",submitted.size()/((t1-t0)/1e9));summary.put("submitP95Ms",lat.isEmpty()?null:lat.get((int)Math.round(0.95*(lat.size()-1))));
+        summary.put("approvePerSecond",submitted.size()/((t2-a)/1e9));summary.put("drainSeconds",(t3-t2)/1e9);
+        summary.put("sequentialCycles",cyc.size());summary.put("sequentialCyclesPerSecond",cyc.size()/((c1-c0)/1e9));summary.put("sequentialCycleP95Ms",cyc.get((int)Math.round(0.95*(cyc.size()-1))));
+        System.out.println("CBS_PERF "+json.writeValueAsString(summary));
+    }
     private UUID onboard(Tenant bank,com.cbs.customers.CustomerModels.Profile profile)throws Exception{
         var r=approvals.customer(ADMIN,UUID.randomUUID(),bank.id(),customerChange(bank,null,profile,""));approveHttp(r.id());customers.deliver(r.id());
         return jdbc.queryForObject("SELECT id FROM platform.customer_registry WHERE tenant_id=? AND request_id=?",UUID.class,bank.id(),r.id());

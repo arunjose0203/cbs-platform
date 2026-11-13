@@ -46,6 +46,11 @@ cbs:
       maturity-days: 7          # term-deposit maturity notice lead time
       loan-due-days: 3          # loan instalment reminder lead time
       arrears-days: 1,30,60,90  # days past due at which an arrears notice is sent
+  delivery:
+    # P-06: how often approved work is posted to bank databases, and how long one pass may drain a money queue.
+    # 30 s is the historical default; 5 s shortens the time from approval to posting. See docs/write-path-performance.md.
+    interval-ms: ${CBS_DELIVERY_INTERVAL_MS:30000}
+    drain-ms: ${CBS_DELIVERY_DRAIN_MS:20000}
   batch:
     # P-07: banks whose daily cycle is prepared automatically, after this local time in the bank's timezone.
     # The service identity submits; people approve. It must be an active staff identity (and hold FINANCE when duties are enforced).
