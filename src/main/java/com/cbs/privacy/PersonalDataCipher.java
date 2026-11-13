@@ -81,6 +81,12 @@ public class PersonalDataCipher {
         } catch (GeneralSecurityException | IllegalArgumentException e) { throw unavailable(); }
     }
 
+    /**
+     * AES-256 key for one bank's KYC document payloads (P-10). Derived from the platform field key with its own
+     * purpose label, so it never equals the field-sealing key, and a database or backup copy alone cannot decrypt.
+     */
+    public SecretKeySpec documentKey(UUID bank) { return new SecretKeySpec(derive(bank, "kyc-document"), "AES"); }
+
     /** Keyed blind index of an already normalized value, scoped to one bank. */
     public String index(UUID bank, String normalized) {
         return INDEX + HexFormat.of().formatHex(mac(derive(bank, "index"), normalized.getBytes(StandardCharsets.UTF_8)));

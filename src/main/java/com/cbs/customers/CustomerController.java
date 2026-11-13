@@ -53,21 +53,27 @@ public class CustomerController {
     org.springframework.http.ResponseEntity<byte[]> downloadDocument(JwtAuthenticationToken jwt,@PathVariable UUID bankId,@PathVariable UUID id,@PathVariable UUID documentId){
         var doc = documents.download(actor(jwt),bankId,id,documentId);
         return org.springframework.http.ResponseEntity.ok()
-            .header(org.springframework.http.HttpHeaders.CONTENT_DISPOSITION,"attachment; filename=\""+doc.fileName()+"\"")
-            .contentType(org.springframework.http.MediaType.parseMediaType(doc.contentType()))
+            .header(org.springframework.http.HttpHeaders.CONTENT_DISPOSITION,org.springframework.http.ContentDisposition.attachment()
+                .filename(doc.fileName(),java.nio.charset.StandardCharsets.UTF_8).build().toString())
+            .header("X-Content-Type-Options","nosniff")
+            .contentType(CustomerDocumentService.CONTENT_TYPES.contains(doc.contentType())?org.springframework.http.MediaType.parseMediaType(doc.contentType()):org.springframework.http.MediaType.APPLICATION_OCTET_STREAM)
             .body(doc.data());
     }
 
+    /** P-10: archiving evidence needs an independent checker (ApprovalService action CUSTOMER_DOCUMENT_ARCHIVE). */
     @PostMapping("/{id}/documents/{documentId}/archive")
-    @ResponseStatus(HttpStatus.NO_CONTENT)
-    void archiveDocument(JwtAuthenticationToken jwt,@PathVariable UUID bankId,@PathVariable UUID id,@PathVariable UUID documentId){
-        documents.archive(actor(jwt),bankId,id,documentId);
+    @ResponseStatus(HttpStatus.ACCEPTED)
+    ApprovalModels.Request archiveDocument(JwtAuthenticationToken jwt,@PathVariable UUID bankId,@PathVariable UUID id,@PathVariable UUID documentId,
+            @RequestHeader("Idempotency-Key") UUID key,@Valid @RequestBody DocumentArchiveInput input){
+        return approvals.documentArchive(actor(jwt),key,bankId,new DocumentArchive(input.expectedVersion(),id,documentId,input.reason()));
     }
 
+    /** P-10: a KYC review sets the risk rating and next due date, so it needs an independent checker (action KYC_REVIEW). */
     @PostMapping("/{id}/kyc-reviews")
-    @ResponseStatus(HttpStatus.CREATED)
-    KycReviewSummary recordKycReview(JwtAuthenticationToken jwt,@PathVariable UUID bankId,@PathVariable UUID id,@Valid @RequestBody KycReviewInput input){
-        return customers.recordReview(actor(jwt),bankId,id,input);
+    @ResponseStatus(HttpStatus.ACCEPTED)
+    ApprovalModels.Request recordKycReview(JwtAuthenticationToken jwt,@PathVariable UUID bankId,@PathVariable UUID id,
+            @RequestHeader("Idempotency-Key") UUID key,@Valid @RequestBody KycReviewInput input){
+        return approvals.kycReview(actor(jwt),key,bankId,CustomerService.reviewChange(id,input));
     }
 
     @GetMapping("/{id}/kyc-reviews")

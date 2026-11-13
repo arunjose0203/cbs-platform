@@ -59,14 +59,16 @@ export function createCustomerUi({api,form,field,refresh}){
       const reviews=await api(`/admin/tenants/${target}/customers/${id}/kyc-reviews`);if(epoch!==generation||!current())return;
       const reviewRows=reviews.map(r=>`<tr><td><strong>${e(r.riskRating)}</strong></td><td>${e(r.reviewedAt)}</td><td>${e(r.nextReviewDue)} ${r.overdue?`<small class="danger">${e(t('OVERDUE'))}</small>`:''}</td><td>${e(r.reviewReference)}</td></tr>`).join('');
       const reviewTable=`<div class="table-wrap"><table><thead><tr><th>${e(t('Risk rating'))}</th><th>${e(t('Reviewed'))}</th><th>${e(t('Next due'))}</th><th>${e(t('Reference'))}</th></tr></thead><tbody>${reviewRows||`<tr><td colspan="4" class="empty">${e(t('No KYC reviews recorded.'))}</td></tr>`}</tbody></table></div>`;
+      let key=crypto.randomUUID(),previous='';
       form('Periodic KYC reviews',note('Schedule periodic reviews driven by customer risk rating: High (1 year), Medium (2 years), Low (3 years).')+reviewTable+
         field('riskRating','Risk rating','MEDIUM',{choices:[['LOW','Low (3 years)'],['MEDIUM','Medium (2 years)'],['HIGH','High (1 year)']].map(([value,label])=>({value,label:t(label)}))})+
         field('reviewedAt','Review date',new Date().toISOString().slice(0,10),{type:'date'})+
         field('reviewReference','Review reference','',{max:160})+
         field('notes','Review notes','',{full:true,max:1000,required:false}),async d=>{
-          await api(`/admin/tenants/${target}/customers/${id}/kyc-reviews`,{method:'POST',body:{riskRating:d.riskRating,reviewedAt:d.reviewedAt,reviewReference:d.reviewReference,notes:d.notes||null}});
-          await refresh();
-        },'Record review');return;
+          // P-10: a review changes the risk rating and next due date, so it goes to another administrator for approval.
+          const body={expectedVersion:version,riskRating:d.riskRating,reviewedAt:d.reviewedAt,reviewReference:d.reviewReference,notes:d.notes||null};const payload=JSON.stringify(body);if(previous&&previous!==payload)key=crypto.randomUUID();previous=payload;
+          return api(`/admin/tenants/${target}/customers/${id}/kyc-reviews`,{method:'POST',headers:{'Idempotency-Key':key},body});
+        },'Submit for approval');return;
     }
     if(name==='privacy'){
       const [erasure,views]=await Promise.all([

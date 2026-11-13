@@ -46,39 +46,46 @@ class CustomerKycReviewTest {
         when(tenants.get(eq(bankId), anyBoolean())).thenReturn(activeBank);
     }
 
-    @Test
-    void riskRatingDeterminesReviewInterval() {
-        when(jdbc.queryForObject(anyString(), eq(Boolean.class), eq(bankId), eq(customerId))).thenReturn(true);
-        LocalDate reviewDate = LocalDate.now(ZoneOffset.UTC).minusDays(10);
-
-        // HIGH risk: 1 year interval
-        KycReviewInput highInput = new KycReviewInput("HIGH", reviewDate, "REV-HIGH-01", "High risk annual review");
-        KycReviewSummary highSummary = service.recordReview(adminActor, bankId, customerId, highInput);
-        assertThat(highSummary.nextReviewDue()).isEqualTo(reviewDate.plusYears(1));
-        assertThat(highSummary.riskRating()).isEqualTo("HIGH");
-
-        // MEDIUM risk: 2 years interval
-        KycReviewInput medInput = new KycReviewInput("MEDIUM", reviewDate, "REV-MED-01", "Medium risk biennial review");
-        KycReviewSummary medSummary = service.recordReview(adminActor, bankId, customerId, medInput);
-        assertThat(medSummary.nextReviewDue()).isEqualTo(reviewDate.plusYears(2));
-        assertThat(medSummary.riskRating()).isEqualTo("MEDIUM");
-
-        // LOW risk: 3 years interval
-        KycReviewInput lowInput = new KycReviewInput("LOW", reviewDate, "REV-LOW-01", "Low risk triennial review");
-        KycReviewSummary lowSummary = service.recordReview(adminActor, bankId, customerId, lowInput);
-        assertThat(lowSummary.nextReviewDue()).isEqualTo(reviewDate.plusYears(3));
-        assertThat(lowSummary.riskRating()).isEqualTo("LOW");
+    private KycReviewChange review(String rating, LocalDate date) {
+        return CustomerService.reviewChange(customerId, new KycReviewInput(1L, rating, date, " REV-" + rating + " ", "Periodic review"));
     }
 
     @Test
-    void futureReviewDateIsRejected() {
-        when(jdbc.queryForObject(anyString(), eq(Boolean.class), eq(bankId), eq(customerId))).thenReturn(true);
-        LocalDate tomorrow = LocalDate.now(ZoneOffset.UTC).plusDays(1);
-        KycReviewInput input = new KycReviewInput("HIGH", tomorrow, "REV-01", "Future review");
+    void riskRatingDeterminesReviewInterval() {
+        LocalDate reviewDate = LocalDate.now(ZoneOffset.UTC).minusDays(10);
+        assertThat(service.reviewValues(review("HIGH", reviewDate))).containsEntry("nextReviewDue", reviewDate.plusYears(1).toString());
+        assertThat(service.reviewValues(review("MEDIUM", reviewDate))).containsEntry("nextReviewDue", reviewDate.plusYears(2).toString());
+        assertThat(service.reviewValues(review("LOW", reviewDate))).containsEntry("nextReviewDue", reviewDate.plusYears(3).toString())
+                .containsEntry("reviewReference", "REV-LOW");
+    }
 
-        assertThatThrownBy(() -> service.recordReview(adminActor, bankId, customerId, input))
-                .isInstanceOf(TenantException.class)
+    @Test
+    void futureOrBackdatedReviewDatesAreRejected() {
+        when(jdbc.queryForObject(anyString(), eq(Boolean.class), eq(bankId), eq(customerId))).thenReturn(true);
+        LocalDate today = LocalDate.now(ZoneOffset.UTC);
+        assertThatThrownBy(() -> service.validateReview(activeBank, review("HIGH", today.plusDays(1))))
                 .satisfies(e -> assertThat(((TenantException) e).code()).isEqualTo("REVIEW_DATE_FUTURE"));
+        // P-10: a backdated review would shorten the next due date and hide an overdue review.
+        assertThatThrownBy(() -> service.validateReview(activeBank, review("LOW", today.minusDays(31))))
+                .satisfies(e -> assertThat(((TenantException) e).code()).isEqualTo("REVIEW_DATE_TOO_OLD"));
+        service.validateReview(activeBank, review("LOW", today.minusDays(30)));
+    }
+
+    @Test
+    void aReviewNeedsTheCurrentBankVersion() {
+        var stale = new KycReviewChange(0L, customerId, "LOW", LocalDate.now(ZoneOffset.UTC), "REV", null);
+        assertThatThrownBy(() -> service.validateReview(activeBank, stale))
+                .satisfies(e -> assertThat(((TenantException) e).code()).isEqualTo("STALE_VERSION"));
+    }
+
+    @Test
+    void theApprovedReviewRecordsTheMakerAsReviewer() {
+        when(jdbc.queryForObject(anyString(), eq(Boolean.class), eq(bankId), eq(customerId))).thenReturn(true);
+        var checker = new Actor("test-issuer", "checker-user", true, UUID.randomUUID());
+        UUID approval = UUID.randomUUID();
+        service.applyReview(checker, bankId, review("HIGH", LocalDate.now(ZoneOffset.UTC)), "maker-user", approval);
+        verify(jdbc).update(startsWith("INSERT INTO platform.customer_kyc_review"), any(), eq(bankId), eq(customerId), eq("HIGH"), any(), any(), eq("maker-user"), eq("REV-HIGH"), eq("Periodic review"));
+        verify(tenants).change(eq(activeBank), any(), any(), any());
     }
 
     @Test

@@ -168,18 +168,41 @@ public class CustomerService {
         jdbc.update("UPDATE platform.customer_delivery SET completed=true,completed_at=clock_timestamp() WHERE request_id=?",id);jdbc.update("UPDATE platform.customer_registry SET delivery='APPLIED' WHERE id=? AND request_id=?",job.definition().id(),id);
         tenants.audit(new Actor(job.reviewerIssuer(),job.reviewerSubject(),true,job.correlationId()),bank.id(),"CUSTOMER_CHANGE_DELIVERED",bank.version(),bank.status(),bank.status(),"Delivered approved request "+id,null,null,Map.of("customerId",job.definition().id(),"requestId",id));
     });}
-    public KycReviewSummary recordReview(Actor actor,UUID bankId,UUID customerId,KycReviewInput input){
-        AccessService.admin(actor);var bank=tenants.get(bankId,false);
-        if(!jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM platform.customer_registry WHERE tenant_id=? AND id=?)",Boolean.class,bankId,customerId))throw error(404,"CUSTOMER_NOT_FOUND");
+    // ---- Periodic KYC reviews (P-10: maker-checker through ApprovalService action KYC_REVIEW) ----
+
+    /** How far back a review date may be recorded; older dates would shorten the next due date and hide overdue reviews. */
+    static final int REVIEW_BACKDATE_DAYS=30;
+    public static KycReviewChange reviewChange(UUID customerId,KycReviewInput input){
+        return new KycReviewChange(input.expectedVersion(),customerId,input.riskRating(),input.reviewedAt(),input.reviewReference().trim(),input.notes());
+    }
+    public void validateReview(TenantModels.Tenant bank,KycReviewChange change){
+        if(bank.version()!=change.expectedVersion())throw new TenantException(409,"STALE_VERSION","The bank changed; reload and try again");
+        if(bank.status()!=TenantModels.Status.ACTIVE)throw error(409,"CUSTOMER_BANK_NOT_ACTIVE");
+        if(!jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM platform.customer_registry WHERE tenant_id=? AND id=?)",Boolean.class,bank.id(),change.customerId()))throw error(404,"CUSTOMER_NOT_FOUND");
+        if(change.riskRating()==null||!change.riskRating().matches("LOW|MEDIUM|HIGH")||change.reviewedAt()==null||change.reviewReference()==null||change.reviewReference().isBlank())throw error(400,"KYC_REVIEW_INVALID");
         LocalDate today=LocalDate.now(java.time.ZoneOffset.UTC);
-        if(input.reviewedAt().isAfter(today))throw error(400,"REVIEW_DATE_FUTURE");
-        int years=switch(input.riskRating()){case "HIGH"->1;case "MEDIUM"->2;case "LOW"->3;default->2;};
-        LocalDate nextDue=input.reviewedAt().plusYears(years);
-        UUID id=UUID.randomUUID();
+        if(change.reviewedAt().isAfter(today))throw error(400,"REVIEW_DATE_FUTURE");
+        if(change.reviewedAt().isBefore(today.minusDays(REVIEW_BACKDATE_DAYS)))throw error(400,"REVIEW_DATE_TOO_OLD");
+    }
+    static LocalDate nextReviewDue(String rating,LocalDate reviewedAt){return reviewedAt.plusYears(switch(rating){case "HIGH"->1;case "MEDIUM"->2;default->3;});}
+    public Map<String,Object> reviewBefore(UUID bankId,UUID customerId){
+        var rows=jdbc.queryForList("SELECT risk_rating,next_review_due FROM platform.customer_kyc_review WHERE tenant_id=? AND customer_id=? ORDER BY reviewed_at DESC,id LIMIT 1",bankId,customerId);
+        return rows.isEmpty()?Map.of("riskRating","none"):Map.of("riskRating",rows.getFirst().get("risk_rating"),"nextReviewDue",rows.getFirst().get("next_review_due").toString());
+    }
+    public Map<String,Object> reviewValues(KycReviewChange change){
+        var m=new LinkedHashMap<String,Object>();m.put("customerId",change.customerId());m.put("riskRating",change.riskRating());m.put("reviewedAt",change.reviewedAt().toString());
+        m.put("nextReviewDue",nextReviewDue(change.riskRating(),change.reviewedAt()).toString());m.put("reviewReference",change.reviewReference());if(change.notes()!=null)m.put("notes",change.notes());return m;
+    }
+    /** Records the approved review. The maker is the reviewer of record; the checker is in the approval history. */
+    public UUID applyReview(Actor checker,UUID bankId,KycReviewChange change,String makerSubject,UUID approvalId){
+        AccessService.admin(checker);var bank=tenants.get(bankId,true);validateReview(bank,change);
+        LocalDate nextDue=nextReviewDue(change.riskRating(),change.reviewedAt());UUID id=UUID.randomUUID();
         jdbc.update("INSERT INTO platform.customer_kyc_review(id,tenant_id,customer_id,risk_rating,reviewed_at,next_review_due,reviewer_subject,review_reference,notes) VALUES (?,?,?,?,?,?,?,?,?)",
-                id,bankId,customerId,input.riskRating(),input.reviewedAt(),nextDue,actor.subject(),input.reviewReference().trim(),input.notes());
-        tenants.audit(actor,bankId,"CUSTOMER_KYC_REVIEWED",bank.version(),bank.status(),bank.status(),"KYC review recorded ("+input.riskRating()+")",null,null,Map.of("customerId",customerId,"reviewId",id,"riskRating",input.riskRating(),"nextReviewDue",nextDue));
-        return new KycReviewSummary(id,customerId,input.riskRating(),input.reviewedAt(),nextDue,actor.subject(),input.reviewReference().trim(),input.notes(),nextDue.isBefore(today));
+                id,bankId,change.customerId(),change.riskRating(),change.reviewedAt(),nextDue,makerSubject,change.reviewReference(),change.notes());
+        tenants.change(bank,bank.status(),bank.displayName(),bank.defaultLanguage());
+        tenants.audit(checker,bankId,"CUSTOMER_KYC_REVIEWED",bank.version()+1,bank.status(),bank.status(),"Approved request "+approvalId,null,null,
+                Map.of("customerId",change.customerId(),"reviewId",id,"riskRating",change.riskRating(),"nextReviewDue",nextDue,"requestId",approvalId));
+        return id;
     }
     public List<KycReviewSummary> listReviews(Actor actor,UUID bankId,UUID customerId){
         AccessService.admin(actor);LocalDate today=LocalDate.now(java.time.ZoneOffset.UTC);

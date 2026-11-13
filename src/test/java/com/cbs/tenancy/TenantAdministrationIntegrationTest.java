@@ -410,7 +410,7 @@ class TenantAdministrationIntegrationTest {
         b = provision(b);
         assertThat(a.status()).isEqualTo(Status.ACTIVE);
         assertThat(b.status()).isEqualTo(Status.ACTIVE);
-        assertThat(a.databaseBinding().schemaVersion()).isEqualTo("27");
+        assertThat(a.databaseBinding().schemaVersion()).isEqualTo("29");
         bankGet(a.id(), "operator-a", true).andExpect(status().isOk())
                 .andExpect(jsonPath("$.tenantId").value(a.id().toString())).andExpect(jsonPath("$.databaseBinding").doesNotExist());
         mvc.perform(get("/api/v1/banks/" + b.id() + "/operational-context")
@@ -1079,7 +1079,7 @@ class TenantAdministrationIntegrationTest {
         ledger.initialize(ADMIN,bank.id(),new ChangeRequest(0L,"Prepare ledgers"));
         assertThat(ledger.list(ADMIN,bank.id(),"",null,null,25,0).storageReady()).isTrue();
         ledger.initialize(ADMIN,bank.id(),new ChangeRequest(service.get(ADMIN,bank.id()).version(),"Recheck upgrade"));
-        assertThat(service.get(ADMIN,bank.id()).databaseBinding().schemaVersion()).isEqualTo("27");
+        assertThat(service.get(ADMIN,bank.id()).databaseBinding().schemaVersion()).isEqualTo("29");
     }
 
     private List<com.cbs.accounting.LedgerModels.Definition> journalLedgers(Tenant bank) throws Exception {
@@ -2112,8 +2112,10 @@ class TenantAdministrationIntegrationTest {
         org.mockito.Mockito.verify(mpesa,org.mockito.Mockito.times(1)).transfer(org.mockito.ArgumentMatchers.eq(bank.id()),org.mockito.ArgumentMatchers.eq(request.id()),org.mockito.ArgumentMatchers.any(),org.mockito.ArgumentMatchers.anyString());
         String callback="{\"Result\":{\"ResultCode\":0,\"ConversationID\":\"conversation-1\",\"OriginatorConversationID\":\"originator-1\",\"TransactionID\":\"TESTRECEIPT1\",\"ResultParameters\":{\"ResultParameter\":[{\"Key\":\"TransactionAmount\",\"Value\":100}]}}}";
         assertCode(()->payments.callback(request.id(),"0".repeat(64),callback),"PAYMENT_CALLBACK_INVALID");
+        long versionBeforeCallbacks=service.get(ADMIN,bank.id()).version();
         mvc.perform(post("/api/v1/payments/mpesa/callback/"+request.id()+"/"+callbackToken.get()).contentType("application/json").content(callback)).andExpect(status().isOk());
         payments.callback(request.id(),callbackToken.get(),callback);
+        assertThat(service.get(ADMIN,bank.id()).version()).as("P-10: public callbacks never make pending maker requests stale").isEqualTo(versionBeforeCallbacks);
         assertThat(payments.detail(ADMIN,bank.id(),request.id()).get("state")).isEqualTo("SUBMITTED");
         assertThat(jdbc.queryForObject("SELECT count(*) FROM platform.payment_observation WHERE payment_id=?",Integer.class,request.id())).isEqualTo(1);
         assertCode(()->approvals.operation(ADMIN,UUID.randomUUID(),bank.id(),operationChange(f,com.cbs.accounts.OperationModels.Kind.WITHDRAWAL_REVERSAL,"100",null,request.id())),"PAYMENT_MANAGED");
@@ -3393,6 +3395,60 @@ class TenantAdministrationIntegrationTest {
         try(var ok=runtime.openOwned(b.tenantId(),"drill-b")){assertThat(ok.isValid(2)).isTrue();}
         // An unknown canary reference is refused before anything runs.
         assertThatThrownBy(()->com.cbs.operations.MigrationMain.run(plan,new com.cbs.operations.MigrationMain.Options(true,java.util.Set.of("drill-c"),false,null))).isInstanceOf(IllegalArgumentException.class);
+    }
+    @Autowired com.cbs.customers.CustomerDocumentService kycDocuments;
+    /**
+     * P-10: KYC documents are encrypted under a key derived from the configured field key and bound to their customer;
+     * documents written under the earlier source-derived key are re-encrypted; and KYC evidence cannot be rewritten.
+     */
+    @Test void kycDocumentsUseTheFieldKeyAndKycEvidenceIsImmutable()throws Exception{
+        var f=accountFixture("kyc-evidence");UUID b=f.bank().id(),customer=f.customer();
+        byte[] scan="%PDF-1.4 fictional identity scan".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        var doc=kycDocuments.upload(ADMIN,b,customer,new com.cbs.customers.CustomerModels.DocumentUpload(com.cbs.customers.CustomerModels.DocumentType.NATIONAL_ID,
+            "id.pdf","application/pdf",null,java.util.Base64.getEncoder().encodeToString(scan)));
+        assertThat(jdbc.queryForObject("SELECT key_id FROM platform.customer_document WHERE id=?",String.class,doc.id())).isEqualTo("pd1-doc");
+        assertThat(kycDocuments.download(ADMIN,b,customer,doc.id()).data()).isEqualTo(scan);
+        assertCode(()->kycDocuments.download(ADMIN,b,UUID.randomUUID(),doc.id()),"DOCUMENT_NOT_FOUND");
+        // Evidence cannot be rewritten, deleted or moved back to the legacy key.
+        assertThatThrownBy(()->jdbc.update("UPDATE platform.customer_document SET file_name='forged.pdf' WHERE id=?",doc.id())).hasMessageContaining("append-only");
+        assertThatThrownBy(()->jdbc.update("DELETE FROM platform.customer_document WHERE id=?",doc.id())).hasMessageContaining("append-only");
+        assertThatThrownBy(()->jdbc.update("UPDATE platform.customer_document SET key_id='master-v1' WHERE id=?",doc.id())).hasMessageContaining("legacy key");
+        // A document written as Round 12 did (source-derived key, retention already over) is migrated and stays readable.
+        byte[] old="Round 12 era scan".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        var mac=javax.crypto.Mac.getInstance("HmacSHA256");
+        mac.init(new javax.crypto.spec.SecretKeySpec("cbs-kyc-aes-gcm-master-salt-2026".getBytes(java.nio.charset.StandardCharsets.UTF_8),"HmacSHA256"));
+        var legacyKey=new javax.crypto.spec.SecretKeySpec(mac.doFinal(b.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8)),"AES");
+        byte[] iv=new byte[12];new java.security.SecureRandom().nextBytes(iv);
+        var cipher=javax.crypto.Cipher.getInstance("AES/GCM/NoPadding");cipher.init(javax.crypto.Cipher.ENCRYPT_MODE,legacyKey,new javax.crypto.spec.GCMParameterSpec(128,iv));
+        UUID legacy=UUID.randomUUID();
+        jdbc.update("INSERT INTO platform.customer_document(id,tenant_id,customer_id,document_type,file_name,content_type,file_size,sha256,ciphertext,iv,key_id,retention_until,uploaded_by,archived) VALUES (?,?,?,'PASSPORT','old.pdf','application/pdf',?,?,?,?,'master-v1',?,'round-12',false)",
+            legacy,b,customer,old.length,java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(old)),cipher.doFinal(old),iv,java.sql.Date.valueOf(java.time.LocalDate.now(java.time.ZoneOffset.UTC).minusDays(1)));
+        assertThat(kycDocuments.reencryptLegacy()).isGreaterThanOrEqualTo(1);
+        assertThat(jdbc.queryForObject("SELECT key_id FROM platform.customer_document WHERE id=?",String.class,legacy)).isEqualTo("pd1-doc");
+        assertThat(kycDocuments.download(ADMIN,b,customer,legacy).data()).isEqualTo(old);
+        // Archiving needs an independent checker, and is one-way.
+        assertCode(()->approvals.documentArchive(ADMIN,UUID.randomUUID(),b,new com.cbs.customers.CustomerModels.DocumentArchive(service.get(ADMIN,b).version(),customer,doc.id(),"Too early")),"DOCUMENT_RETENTION_ACTIVE");
+        var archive=approvals.documentArchive(ADMIN,UUID.randomUUID(),b,new com.cbs.customers.CustomerModels.DocumentArchive(service.get(ADMIN,b).version(),customer,legacy,"Retention ended"));
+        assertThat(jdbc.queryForObject("SELECT archived FROM platform.customer_document WHERE id=?",Boolean.class,legacy)).as("nothing changes before approval").isFalse();
+        assertCode(()->approvals.decide(ADMIN,archive.id(),com.cbs.approvals.ApprovalModels.Decision.APPROVE,"Own request"),"SELF_APPROVAL_FORBIDDEN");
+        assertThat(approvals.decide(CHECKER,archive.id(),com.cbs.approvals.ApprovalModels.Decision.APPROVE,"Retention verified").status()).isEqualTo(com.cbs.approvals.ApprovalModels.Status.APPROVED);
+        assertThat(jdbc.queryForObject("SELECT archived FROM platform.customer_document WHERE id=?",Boolean.class,legacy)).isTrue();
+        assertThatThrownBy(()->jdbc.update("UPDATE platform.customer_document SET archived=false WHERE id=?",legacy)).hasMessageContaining("cannot be restored");
+        // A KYC review sets the risk rating and the next due date: maker submits, an independent checker approves.
+        var today=java.time.LocalDate.now(java.time.ZoneOffset.UTC);
+        assertCode(()->approvals.kycReview(ADMIN,UUID.randomUUID(),b,new com.cbs.customers.CustomerModels.KycReviewChange(service.get(ADMIN,b).version(),customer,"LOW",today.minusDays(400),"KYC-OLD",null)),"REVIEW_DATE_TOO_OLD");
+        var reviewRequest=approvals.kycReview(ADMIN,UUID.randomUUID(),b,new com.cbs.customers.CustomerModels.KycReviewChange(service.get(ADMIN,b).version(),customer,"HIGH",today,"KYC-2026-1",null));
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM platform.customer_kyc_review WHERE customer_id=?",Integer.class,customer)).isZero();
+        assertCode(()->approvals.decide(ADMIN,reviewRequest.id(),com.cbs.approvals.ApprovalModels.Decision.APPROVE,"Own request"),"SELF_APPROVAL_FORBIDDEN");
+        approvals.decide(CHECKER,reviewRequest.id(),com.cbs.approvals.ApprovalModels.Decision.APPROVE,"Evidence checked");
+        UUID review=jdbc.queryForObject("SELECT id FROM platform.customer_kyc_review WHERE customer_id=? AND reviewer_subject=? AND risk_rating='HIGH' AND next_review_due=?",UUID.class,customer,ADMIN.subject(),java.sql.Date.valueOf(today.plusYears(1)));
+        // The direct route no longer applies anything: it submits for approval.
+        mvc.perform(admin(post("/api/v1/admin/tenants/"+b+"/customers/"+customer+"/kyc-reviews")).header("Idempotency-Key",UUID.randomUUID().toString()).contentType("application/json")
+                .content("{\"expectedVersion\":"+service.get(ADMIN,b).version()+",\"riskRating\":\"LOW\",\"reviewedAt\":\""+today+"\",\"reviewReference\":\"KYC-HTTP\"}"))
+            .andExpect(status().isAccepted()).andExpect(jsonPath("$.action").value("KYC_REVIEW")).andExpect(jsonPath("$.status").value("PENDING"));
+        // Periodic reviews are append-only.
+        assertThatThrownBy(()->jdbc.update("UPDATE platform.customer_kyc_review SET risk_rating='LOW' WHERE id=?",review)).hasMessageContaining("append-only");
+        assertThatThrownBy(()->jdbc.update("DELETE FROM platform.customer_kyc_review WHERE id=?",review)).hasMessageContaining("append-only");
     }
     /**
      * P-03: production forbids the runtime bootstrap subject, so the offline migration job registers the first
