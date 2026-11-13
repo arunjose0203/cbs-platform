@@ -2606,6 +2606,10 @@ class TenantAdministrationIntegrationTest {
         as.apply(get(base+"/settings"),customerOps).andExpect(r->assertThat(r.getResponse().getStatus()).isNotEqualTo(403));
         as.apply(get(base),financeChecker).andExpect(r->assertThat(r.getResponse().getStatus()).isNotEqualTo(403));
         as.apply(get(base),outsider).andExpect(status().isForbidden()).andExpect(jsonPath("$.code").value("BANK_DUTY_REQUIRED"));
+        // The bank is read as Spring binds it: a percent-encoded identifier reaches the same bank and the same check.
+        String encoded="/api/v1/admin/tenants/%"+Integer.toHexString(bid.toString().charAt(0))+bid.toString().substring(1)+"/journals";
+        as.apply(get(java.net.URI.create(encoded)),outsider).andExpect(status().isForbidden()).andExpect(jsonPath("$.code").value("BANK_DUTY_REQUIRED"));
+        as.apply(get(java.net.URI.create(encoded)),financeMaker).andExpect(r->assertThat(r.getResponse().getStatus()).isNotEqualTo(403));
         // Direct writes (here a preview) need the submit duty; approving and auditing do not prepare work.
         String preview=json.writeValueAsString(Map.of("businessDate",reference.get(ADMIN,bid).businessDate().toString()));
         for(DutyUser approver:List.of(financeChecker,auditor))

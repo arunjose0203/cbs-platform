@@ -104,6 +104,8 @@ Some records are read across duties. Customers and accounts can be read by custo
 
 **Fail closed.** A route without a rule is refused while duties are enforced (`BANK_DUTY_ROUTE_UNCLASSIFIED`). `BankDutyRoutesTest` scans every controller and fails the build if a bank route has no rule.
 
+**The bank is read as the controller sees it.** The interceptor takes the bank identifier from the decoded path variable Spring binds, never from the raw URI, so an encoded identifier cannot skip the check. A missing or malformed identifier is refused.
+
 **Lockout recovery** still works: while a bank is locked out, any administrator can read reference data and use the bank duties page to switch enforcement off.
 
 **Workspaces are unchanged.** Branch, lending and payment staff use `/api/v1/banks/…` with their own grants. On the administrator path, loan contract reads, corrections and term servicing need customer operations; loan work should use the lending workspace.
@@ -116,6 +118,7 @@ An approved request is posted to the bank database by a background delivery, som
 - It covers journal, ledger account, deposit account, customer, funding, account-operation, cash, contract, FX trade, FX valuation, day-close, period-close and daily-servicing deliveries, plus M-Pesa payout dispatch.
 - Daily servicing checks each chunk, like the existing customer-eligibility check.
 - The same classification decides the maker recheck at approval, so the two cannot drift apart.
+- **Payment-workspace requests** made by an administrator recheck the maker's payments duty. The checker is not rechecked for these, because a payment operator may have approved them without needing a bank duty.
 
 ## Not covered yet
 

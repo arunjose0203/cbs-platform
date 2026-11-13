@@ -22,7 +22,8 @@ import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 @Configuration(proxyBeanMethods = false)
 @ConditionalOnProperty(name="cbs.tenancy.enabled",havingValue="true",matchIfMissing=true)
 public class BankDutyInterceptor implements HandlerInterceptor, WebMvcConfigurer {
-    private static final java.util.regex.Pattern BANK = java.util.regex.Pattern.compile("^/api/v1/admin/tenants/([^/]+)");
+    /** Name of the bank path variable in a matched route pattern, e.g. {bankId}. */
+    private static final java.util.regex.Pattern BANK = java.util.regex.Pattern.compile("^/api/v1/admin/tenants/\\{([^}/]+)}");
     private final BankDuties duties;
 
     public BankDutyInterceptor(BankDuties duties) { this.duties = duties; }
@@ -33,12 +34,20 @@ public class BankDutyInterceptor implements HandlerInterceptor, WebMvcConfigurer
 
     @Override public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) {
         if (!(request.getAttribute(HandlerMapping.BEST_MATCHING_PATTERN_ATTRIBUTE) instanceof String pattern)) return true;
-        if (!(SecurityContextHolder.getContext().getAuthentication() instanceof JwtAuthenticationToken token)) return true;
-        var match = BANK.matcher(request.getRequestURI());
-        if (!match.find()) return true;
+        var match = BANK.matcher(pattern);
+        if (!match.find()) return true; // not a bank-scoped route
+        // Fail closed from here: read the bank exactly as Spring binds it for the controller (decoded), never from
+        // the raw URI, so an encoded or decorated identifier cannot skip the check.
+        if (!(SecurityContextHolder.getContext().getAuthentication() instanceof JwtAuthenticationToken token))
+            throw new TenantException(403, "ACCESS_DENIED", "Platform administrator access is required");
         UUID bank;
-        try { bank = UUID.fromString(match.group(1)); }
-        catch (IllegalArgumentException invalid) { return true; } // the controller rejects the malformed identifier
+        try {
+            @SuppressWarnings("unchecked")
+            var variables = (java.util.Map<String, String>) request.getAttribute(HandlerMapping.URI_TEMPLATE_VARIABLES_ATTRIBUTE);
+            bank = UUID.fromString(variables.get(match.group(1)));
+        } catch (RuntimeException invalid) {
+            throw new TenantException(400, "INVALID_REQUEST", "Request fields or required headers are invalid");
+        }
         BankDutyRoutes.Rule rule;
         try { rule = BankDutyRoutes.rule(pattern); }
         catch (IllegalStateException unclassified) {

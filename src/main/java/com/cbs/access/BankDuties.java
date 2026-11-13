@@ -181,12 +181,17 @@ public class BankDuties {
         var row=rows.getFirst();
         UUID bank=(UUID)row.get("bank_id");
         if(!enforced(bank)) return;
-        Duty duty=storedDuty(request);
-        // Break-glass recovery is approved without duties; it has nothing to deliver to a bank database.
-        if(duty==null) return;
+        // Same maker classification as the approval-time recheck, including administrator-made payment-workspace requests.
+        Duty makerDuty=makerDuty(request);
+        if(makerDuty==null) return;
+        // The checker of a payment-workspace request may be a payment operator, who never needs a bank duty; the
+        // delivery cannot tell which path they approved on, so only the maker is rechecked for those requests.
+        Duty checkerDuty=storedDuty(request);
         String issuer=(String)row.get("issuer");
-        Grant makerGrant=current(bank,issuer,(String)row.get("maker_subject")), checkerGrant=current(bank,issuer,(String)row.get("reviewer_subject"));
-        if(makerGrant==null || !makerGrant.submit().contains(duty) || checkerGrant==null || !checkerGrant.approve().contains(duty))
+        Grant makerGrant=current(bank,issuer,(String)row.get("maker_subject"));
+        Grant checkerGrant=checkerDuty==null?null:current(bank,issuer,(String)row.get("reviewer_subject"));
+        if(makerGrant==null || !makerGrant.submit().contains(makerDuty)
+                || (checkerDuty!=null && (checkerGrant==null || !checkerGrant.approve().contains(checkerDuty))))
             throw new TenantException(409,"BANK_DUTY_REVOKED_BEFORE_DELIVERY","An approval participant no longer holds the duty for this request");
     }
 
