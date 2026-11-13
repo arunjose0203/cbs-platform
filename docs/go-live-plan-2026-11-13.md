@@ -355,7 +355,8 @@ These are estimates for one developer working with Claude, assuming decisions D0
 
 - **Phase 0:**
   - 0.1 is partly done. Git for Windows is installed, line endings and file modes are pinned for this repo, and the baseline commit `bd91c56` is on `cbs-rounds-1-8`.
-  - **Finding:** GitHub has only `master` (`7486d03`). Rounds 1–8, Phase 0 and Round 9 exist only on this machine until they are pushed.
+  - **Finding:** GitHub had only `master` (`7486d03`), and the earlier `w03-closure-settlement` branch no longer existed there. Rounds 1–8, Phase 0 and Round 9 reached GitHub when `round-09-bank-duties` was pushed later the same day.
+  - Open from this step: merge into `master` through a PR, and remove `claude-setup.zip`, which was committed in `89c04cb` (no secrets found in it).
   - Local integration testing works with a dedicated non-superuser `cbs_test` login (see `CLAUDE.md`).
   - A local-only test failure in `RuntimeDatabaseGuardIntegrationTest` (it assumed a superuser login) is fixed.
   - A duplicate UI message key is fixed.
