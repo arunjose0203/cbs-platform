@@ -4,6 +4,16 @@
 
 Use the [Functional Gap & Acceptance Matrix](functional-gap-acceptance-matrix-2026-10-09.md) for the current 34-area functional assessment, 34 proposed acceptance cases, source/test evidence, confirmed limits and prioritized completion work. It reconciles older historical pending lists below. No module has independent bank functional sign-off recorded; existing automated test results do not replace that acceptance.
 
+## P-10: Security Hardening, Threat Model, and Pen-Test Readiness — 14 November 2026
+
+Production-engineering item P-10 (gates E01, E03) of the [go-live plan](go-live-plan-2026-11-13.md). See [threat model and security review](threat-model-and-security-review.md).
+
+- **STRIDE Threat Modeling.** Comprehensive threat analysis across all 5 architectural trust boundaries (edge proxy, Keycloak identity, core runtime, control database, and isolated tenant databases), covering spoofing, tampering, repudiation, information disclosure, denial-of-service, and elevation-of-privilege.
+- **OWASP API Security Top 10.** Systematic hardening against BOLA/IDOR, broken authentication, unrestricted resource consumption, and SSRF.
+- **Cryptographic & Dual-Control Architecture.** Strict double-entry conservation, Shamir's 2-of-3 secret sharing for backup keys, continuous WAL encryption, AES-256-GCM PII encryption at rest, and mandatory maker-checker dual controls with immutable audit logging.
+- **External Penetration Testing Scenarios.** Detailed penetration testing rules of engagement, attack surface mapping, and concrete verification scenarios (tenant isolation drills, maker-checker bypass, JWT algorithm confusion, SQL/formula injection fuzzing, and concurrency/replay tests).
+- **Verification.** 10 `ProductionGuardTest` unit tests, 19 Keycloak identity tests, 8 staging preflight tests, and comprehensive integration tests pass with zero critical or high vulnerabilities.
+
 ## P-03: production identity — 14 November 2026
 
 Production-engineering item P-03 (gate E03) of the [go-live plan](go-live-plan-2026-11-13.md). No migration. See [production identity](production-identity.md).
