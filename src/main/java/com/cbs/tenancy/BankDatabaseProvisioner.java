@@ -58,12 +58,37 @@ public class BankDatabaseProvisioner {
             try(var statement=connection.createStatement();var rows=statement.executeQuery("SELECT singleton FROM bank.installation WHERE singleton")) {
                 if(!rows.next())throw failure("DATABASE_NOT_READY");
             }
+            // P-08: where the runtime never migrates (production), a bank left behind by a failed or partial
+            // rolling upgrade is refused instead of meeting SQL written for a newer schema.
+            if(!migrationsEnabled)requireCurrentSchema(connection,reference);
             return connection;
         } catch(Exception exception) {
             if(connection!=null)try{connection.close();}catch(SQLException ignored){}
             if(exception instanceof TenantException problem)throw problem;
             throw failure("DATABASE_UNAVAILABLE");
         }
+    }
+
+    /** Highest bank migration version shipped in this build. */
+    public static String expectedBankVersion(){return EXPECTED;}
+    private static final String EXPECTED=latestBankMigration();
+    private static String latestBankMigration(){
+        try{
+            int max=0;
+            for(var r:new org.springframework.core.io.support.PathMatchingResourcePatternResolver().getResources("classpath*:db/bank-migration/V*__*.sql")){
+                var m=java.util.regex.Pattern.compile("V([0-9]+)__.*").matcher(java.util.Objects.requireNonNull(r.getFilename()));if(m.matches())max=Math.max(max,Integer.parseInt(m.group(1)));
+            }
+            return Integer.toString(max);
+        }catch(java.io.IOException e){throw new IllegalStateException("Bank migrations unreadable",e);}
+    }
+    /** Banks confirmed at the expected version; a bank found behind is checked again on every connection. */
+    private final java.util.Map<String,Long> current=new java.util.concurrent.ConcurrentHashMap<>();
+    private void requireCurrentSchema(Connection connection,String reference)throws SQLException{
+        Long until=current.get(reference);if(until!=null&&until>System.currentTimeMillis())return;
+        try(var statement=connection.createStatement();var rows=statement.executeQuery("SELECT version FROM bank.flyway_schema_history WHERE success AND version IS NOT NULL ORDER BY installed_rank DESC LIMIT 1")){
+            if(!rows.next()||!EXPECTED.equals(rows.getString(1))){current.remove(reference);throw failure("BANK_SCHEMA_UPGRADE_REQUIRED");}
+        }
+        current.put(reference,System.currentTimeMillis()+60_000);
     }
 
     public String upgradeOwned(UUID tenantId,String reference) {

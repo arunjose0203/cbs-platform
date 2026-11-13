@@ -35,7 +35,16 @@ echo "1/5 Preflight checks"
 if [ "$migrate" = yes ]; then
     echo "2/5 Stopping writers and applying migrations"
     compose stop app >/dev/null 2>&1 || true
-    compose --profile tools run --rm migrate
+    # P-08: banks are upgraded one at a time. Exit 2 means the control database and some banks are current,
+    # but at least one bank failed and stays at its previous version; the runtime refuses that bank
+    # (BANK_SCHEMA_UPGRADE_REQUIRED) until a re-run upgrades it. Continue only on an explicit decision.
+    status=0; compose --profile tools run --rm migrate || status=$?
+    if [ "$status" = 2 ] && [ "${CBS_ALLOW_PARTIAL_UPGRADE:-no}" = yes ]; then
+        echo "Some banks were not upgraded (see the job output); continuing because CBS_ALLOW_PARTIAL_UPGRADE=yes." >&2
+    elif [ "$status" != 0 ]; then
+        echo "Migration job exited with $status. Fix the failed banks and rerun, or set CBS_ALLOW_PARTIAL_UPGRADE=yes to start with them refused." >&2
+        exit "$status"
+    fi
     echo "3/5 Reapplying runtime grants"
     if [ -z "${CBS_PRIVILEGES_HOOK:-}" ]; then
         echo "Migrations applied. Reapply ops/runtime-privileges.sql as the owner, then rerun with --skip-migrations." >&2

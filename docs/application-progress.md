@@ -53,6 +53,40 @@ Round 14 of the [go-live plan](go-live-plan-2026-11-13.md) delivers comprehensiv
 - **Multi-format export.** Integrated into `TableOutput` supporting formatted JSON, sanitized CSV (formula injection neutralized), and A4 PDF.
 - **UI and verification.** Added Operational reports dialog to management reports UI supporting report selection and downloads. Tests: 6 new backend unit tests in `OperationalReportServiceTest` (100% pass), 129 UI tests pass.
 
+## P-06: write-path performance and delivery drain — 14 November 2026
+
+Production-engineering item P-06 (gate E08) of the [go-live plan](go-live-plan-2026-11-13.md). See [write-path performance](write-path-performance.md).
+
+- **Delivery queue drain.** `LedgerDeliveryWorker.drain` delivers money queues in batches within a time budget (`cbs.delivery.drain-ms`, default 20s), instead of delivering only 20 items per 30-second interval. Failed items move to the back of the queue; if an item has already been attempted in the current pass, the pass terminates without spinning.
+- **Configurable delivery interval.** `cbs.delivery.interval-ms` (default 30s) controls delivery worker polling frequency.
+- **Load driver.** `ops/perf/write_load.py` exercises concurrent maker-checker cycles (`HOLD` and `RELEASE`) over HTTPS against staging, measuring latency and verifying zero balance drift and zero funds left held.
+- **Verification.** `DeliveryDrainTest` (4 unit tests, 100% pass) and `test_write_load.py`.
+
+## P-01: release pipeline — 14 November 2026
+
+Production-engineering item P-01 (gate E05) of the [go-live plan](go-live-plan-2026-11-13.md). See [release pipeline](release-pipeline.md).
+
+- **Release candidates.** An `rc` tag runs the full verification, then builds the image from the verified JAR on a digest-pinned base. The job produces CycloneDX and SPDX SBOMs, fails on fixable high or critical Trivy findings, pushes to GHCR, signs keylessly with cosign, attaches provenance and SBOM attestations, and publishes a pre-release with checksummed evidence.
+- **Promotion.** A manually started workflow runs in the reviewer-protected `production` environment, so the approval is recorded. It verifies the signature and provenance, then tags the same digest as final, without rebuilding.
+- **Still open.** The repository owner must set `JAVA_RUNTIME_IMAGE`, the `production` environment reviewers and tag protection. The first real candidate tag is the end-to-end proof. `ops/tests/test_release_workflow.py` guards the gate order.
+
+## P-08: tenant upgrade orchestration — 14 November 2026
+
+Production-engineering item P-08 (gate E11) of the [go-live plan](go-live-plan-2026-11-13.md). No migration. See [tenant upgrades](tenant-upgrades.md).
+
+- **Rolling bank upgrades.** The migration job upgrades banks one at a time and continues past a failed bank, unless `--stop-on-failure` is set. It supports canary runs with `--only`, writes a per-bank report (`--report`), and exits with code 2 when any bank is left behind.
+- **Mixed-version safety.** In production, a bank whose schema is behind the build is refused with `BANK_SCHEMA_UPGRADE_REQUIRED` while other banks keep working. `up.sh` continues after a partial upgrade only with `CBS_ALLOW_PARTIAL_UPGRADE=yes`.
+- **Failed-upgrade drill.** An automated drill breaks one bank's migration mid-upgrade. It proves the other bank upgrades, the failed bank keeps its data and previous version, the runtime refuses it, and a re-run completes it. The doc includes the upgrade runbook with the rollback decision point.
+
+## P-07: batch scheduling and operations console — 14 November 2026
+
+Production-engineering item P-07 (F21) of the [go-live plan](go-live-plan-2026-11-13.md). Control migration **V55**. See [batch operations](batch-operations.md).
+
+- **Scheduled cycle preparation.** After each enabled bank's local cut-off, a configured service identity submits the servicing run, then the period close if one is due, then the day close. People approve every step. Rejected requests are not resubmitted, and blockers are recorded rather than retried silently.
+- **Operations console.** One page per bank shows cycle status, day-close blockers, pending approvals with their age, every delivery queue with pending and failing counts, exceptions and the scheduler history.
+- **Monitoring.** `cbs_batch_blocked_banks` and the `CbsDailyCycleBlocked` alert.
+- **Verification.** The integration test for the scheduled cycle, 138 UI tests and the ops tests pass.
+
 ## Round 10: Customer notifications go-live — 13 November 2026
 
 Round 10 of the [go-live plan](go-live-plan-2026-11-13.md) makes customer alerts ready for a provider: verified destinations, approved wording, scheduled notices, opt-outs and signed delivery receipts. Control migration **V51** (V50 is reserved for Round 14). See [notifications go-live](notifications-go-live.md).
@@ -72,7 +106,6 @@ Production-engineering item P-09 (gate E13) of the [go-live plan](go-live-plan-2
 - **Property tests.** Seeded, reproducible generators check six areas: accrual rounding carries conserve value exactly, leap days count, loan schedules repay exactly the principal on monthly dates, daily servicing nets exactly without losing rounding, FX rounding stays within one unit and the spread never pays the customer, and limits never let a total exceed the limit. A deliberate carry mutation is caught.
 - **Book invariants.** A generated 30-step sequence of postings and refusals checks after every step that journals and the trial balance balance and that ledgers and account positions agree. It then checks that replaying every delivery changes nothing, and that racing submissions, approvals and deliveries of two overdrawing withdrawals post exactly one.
 - **CI.** Both suites run on every push. A nightly workflow explores the properties with a new seed and 20,000 cases each.
-
 ## Round 18: Privacy and data protection — 13 November 2026
 
 Round 18 of the [go-live plan](go-live-plan-2026-11-13.md) completes privacy, field-level data protection, legal holds, data-subject request registers, and the statutory retention matrix (Kenya Data Protection Act 2019, POCAMLA s.46, Gate E04). Control migration **V49**. See [privacy and data protection](privacy-and-data-protection.md).

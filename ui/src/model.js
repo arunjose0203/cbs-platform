@@ -99,6 +99,7 @@ export function errorMessage(code) {
     COMPLIANCE_ALERT_STALE:'This alert was already decided or changed. Reload it.',
     MONITORING_POLICY_INVALID:'Fill in every field of a monitoring rule, or leave the whole rule empty. Amounts must be positive.',
     MONITORING_POLICY_EMPTY:'Turn on at least one monitoring rule.',
+    BATCH_REQUEST_REJECTED:'A checker rejected today’s scheduled request. Staff decide the next step; the scheduler will not resubmit it.',
     NOTIFICATION_EVENTS_INVALID:'Choose alerts and notices only; verification codes are sent automatically.',
     NOTIFICATION_CODE_INVALID:'That code is not correct. Ask the customer to read it again.',
     NOTIFICATION_CODE_EXPIRED:'The code has expired. Send a new code.',

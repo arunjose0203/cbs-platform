@@ -32,6 +32,10 @@ public class DayCloseService {
     /** True on the last working day of a calendar month. */
     public boolean periodEnd(Tenant bank){var s=reference.read(bank);return !s.businessDate().withDayOfMonth(1).equals(next(bank).withDayOfMonth(1));}
     public void requireReadyForPeriodClose(Tenant bank,UUID request){var problems=blockers(bank,request).stream().filter(x->!x.equals("PERIOD_CLOSE_REQUIRED")).toList();if(!problems.isEmpty())throw error(409,problems.getFirst());}
+    /** Next working day after the bank's business date (P-07 scheduler and console). */
+    public LocalDate nextBusinessDate(Tenant bank){return next(bank);}
+    /** Everything that stops the current business day from closing now. */
+    public List<String> readiness(Tenant bank){return blockers(bank,null);}
     private LocalDate next(Tenant bank){var s=reference.read(bank);return ReferenceDataService.nextWorkingDay(s.businessDate(),s.weekendDays(),s.holidays());}
     private List<String> blockers(Tenant bank,UUID ownRequest){
         List<String> result=new ArrayList<>();

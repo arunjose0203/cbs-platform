@@ -1,0 +1,142 @@
+name: Release candidate
+# P-01: a tagged release candidate (vX.Y.Z-rc.N) is verified, built into an image from that verified JAR, described
+# by SBOMs, scanned, signed and attested, then published as a GitHub pre-release. Promotion to a final release is a
+# separate, approved step (promote.yml). See docs/release-pipeline.md.
+on:
+  push:
+    tags: ['v[0-9]+.[0-9]+.[0-9]+-rc.[0-9]+']
+permissions:
+  contents: read
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  release-candidate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    permissions:
+      contents: write        # GitHub pre-release with the evidence files
+      packages: write        # push to GHCR
+      id-token: write        # keyless signing and attestations
+      attestations: write
+    services:
+      postgres:
+        image: postgres:18.3
+        env:
+          POSTGRES_DB: cbs_control
+          POSTGRES_USER: cbs_control
+          POSTGRES_PASSWORD: ci-ephemeral-only
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U cbs_control -d cbs_control"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 12
+    env:
+      CBS_DB_URL: jdbc:postgresql://localhost:5432/cbs_control
+      CBS_DB_USER: cbs_control
+      CBS_DB_PASSWORD: ci-ephemeral-only
+      CBS_INTEGRATION_TESTS: 'true'
+      TZ: UTC
+      IMAGE: ghcr.io/${{ github.repository }}
+      # A reviewed Java 21 runtime pinned by digest, set as a repository variable (Settings → Variables).
+      JAVA_RUNTIME_IMAGE: ${{ vars.JAVA_RUNTIME_IMAGE }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Refuse an unpinned runtime image
+        run: |
+          case "$JAVA_RUNTIME_IMAGE" in
+            *@sha256:[0-9a-f]*) echo "Runtime image pinned by digest" ;;
+            *) echo "Set the repository variable JAVA_RUNTIME_IMAGE to an image pinned by @sha256 digest" >&2; exit 1 ;;
+          esac
+      # Same gates as every push: ops tests, UI tests, unit, HTTP and database integration tests.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -r ops/requirements.txt
+      - run: python -m unittest discover -s ops/tests -v
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+      - run: npm ci --prefix ui --ignore-scripts
+      - run: npm test --prefix ui
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+      - run: mvn --batch-mode --no-transfer-progress verify
+      - name: Application SBOM (CycloneDX, from the resolved Maven tree)
+        run: mvn --batch-mode --no-transfer-progress org.cyclonedx:cyclonedx-maven-plugin:2.9.1:makeAggregateBom -DoutputFormat=json -DoutputName=cbs-application.cdx
+      - name: Build the image from the verified JAR
+        run: |
+          docker build --build-arg JAVA_RUNTIME_IMAGE="$JAVA_RUNTIME_IMAGE" \
+            --label org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }} \
+            --label org.opencontainers.image.revision=${{ github.sha }} \
+            --label org.opencontainers.image.version=${{ github.ref_name }} \
+            -t "$IMAGE:${{ github.ref_name }}" .
+      - name: Image SBOM (SPDX)
+        uses: anchore/sbom-action@v0
+        with:
+          image: ${{ env.IMAGE }}:${{ github.ref_name }}
+          format: spdx-json
+          output-file: cbs-image.spdx.json
+          upload-artifact: false
+      - name: Scan the image (fails on fixable high or critical vulnerabilities)
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ${{ env.IMAGE }}:${{ github.ref_name }}
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: '1'
+          format: table
+          output: cbs-image-scan.txt
+      - name: Keep the scan report when the scan fails
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-scan
+          path: cbs-image-scan.txt
+          retention-days: 30
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Push and record the digest
+        id: push
+        run: |
+          docker push "$IMAGE:${{ github.ref_name }}"
+          digest=$(docker inspect --format '{{index .RepoDigests 0}}' "$IMAGE:${{ github.ref_name }}" | cut -d@ -f2)
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+          echo "$IMAGE@$digest" > cbs-image.digest
+      - uses: sigstore/cosign-installer@v3
+      - name: Sign the image (keyless, recorded in the public transparency log)
+        run: cosign sign --yes "$IMAGE@${{ steps.push.outputs.digest }}"
+      - name: Build provenance attestation
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-name: ${{ env.IMAGE }}
+          subject-digest: ${{ steps.push.outputs.digest }}
+          push-to-registry: true
+      - name: SBOM attestation
+        uses: actions/attest-sbom@v2
+        with:
+          subject-name: ${{ env.IMAGE }}
+          subject-digest: ${{ steps.push.outputs.digest }}
+          sbom-path: cbs-image.spdx.json
+          push-to-registry: true
+      - name: Publish the release candidate with its evidence
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cp target/cbs-platform-0.1.0-SNAPSHOT.jar cbs-platform.jar
+          cp target/cbs-application.cdx.json .
+          sha256sum cbs-platform.jar cbs-application.cdx.json cbs-image.spdx.json cbs-image-scan.txt cbs-image.digest > SHA256SUMS
+          gh release create "${{ github.ref_name }}" --prerelease --verify-tag \
+            --title "Release candidate ${{ github.ref_name }}" \
+            --notes "Image: $(cat cbs-image.digest). Verified commit ${{ github.sha }}. Promote with the 'Promote release' workflow; it needs an approved production-environment review." \
+            cbs-platform.jar cbs-application.cdx.json cbs-image.spdx.json cbs-image-scan.txt cbs-image.digest SHA256SUMS

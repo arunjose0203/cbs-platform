@@ -42,7 +42,8 @@ import tools.jackson.databind.ObjectMapper;
         "cbs.ledger.delivery-enabled=false", "cbs.security.enabled=true", "cbs.security.issuer=https://identity.cbs.test",
         "cbs.security.jwk-set-uri=https://identity.cbs.test/jwks", "cbs.security.audience=cbs-api",
         "cbs.servicing.chunk-size=2", "cbs.notifications.sender=test", "cbs.rate-limit.enabled=false",
-        "cbs.notifications.callback-secret=integration-receipt-secret-0123456789"
+        "cbs.notifications.callback-secret=integration-receipt-secret-0123456789",
+        "cbs.batch.service-issuer=https://identity.cbs.test", "cbs.batch.service-subject=batch-service"
 })
 @AutoConfigureMockMvc
 @Import(TestIdentity.Configuration.class)
@@ -3298,6 +3299,159 @@ class TenantAdministrationIntegrationTest {
         assertThat(new java.math.BigDecimal(operations.dashboard(ADMIN,b,f.account(),25,0).position().posted())).isNotNegative();
         assertBooksBalance("invariants",b,accounts);
         assertThat(K).isNotNull();assertThat(refused).isNotNegative();
+    }
+    @Autowired com.cbs.batch.BatchService batch;
+    @Test void dailyCycleIsPreparedOnScheduleByTheServiceIdentityAndApprovedOnlyByPeople()throws Exception{
+        access.bootstrap(TestIdentity.ISSUER,"batch-service");
+        var f=fundingFixture("batch-cycle");var bank=f.f().bank();UUID b=bank.id();fund(f,"1000");
+        var robot=new Actor(TestIdentity.ISSUER,"batch-service",true,UUID.randomUUID());
+        var date=reference.get(ADMIN,b).businessDate();var zone=java.time.ZoneId.of(reference.get(ADMIN,b).businessTimezone());
+        java.util.function.Function<java.time.LocalDate,java.time.Instant> after=d->d.atTime(19,0).atZone(zone).toInstant();
+        // Before the cut-off nothing happens.
+        assertThat(batch.prepare(b,date.atTime(17,59).atZone(zone).toInstant())).isNull();
+        // A pending account operation blocks the day close: the scheduler records why and submits nothing.
+        var blocking=approvals.operation(ADMIN,UUID.randomUUID(),b,operationChange(f,com.cbs.accounts.OperationModels.Kind.HOLD,"1",null,null));
+        var blocked=batch.prepare(b,after.apply(date));
+        assertThat(blocked.step()).isEqualTo(com.cbs.batch.BatchService.Step.DAY_CLOSE);assertThat(blocked.outcome()).isEqualTo("BLOCKED");assertThat(blocked.code()).isNotBlank();
+        assertThat(batch.prepare(b,after.apply(date)).outcome()).isEqualTo("BLOCKED");
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM platform.batch_event WHERE tenant_id=?",Integer.class,b)).as("an unchanged outcome is recorded once").isEqualTo(1);
+        approvals.decide(CHECKER,blocking.id(),com.cbs.approvals.ApprovalModels.Decision.REJECT,"Not needed");
+        // Servicing policy configured: servicing comes first, then the day close.
+        UUID expense=adjustmentLedger(bank,"BATCH_EXP",com.cbs.accounting.ChartModels.Category.EXPENSE),payable=adjustmentLedger(bank,"BATCH_PAY",com.cbs.accounting.ChartModels.Category.LIABILITY),
+            income=adjustmentLedger(bank,"BATCH_FEE",com.cbs.accounting.ChartModels.Category.INCOME),tax=adjustmentLedger(bank,"BATCH_TAX",com.cbs.accounting.ChartModels.Category.LIABILITY);
+        approveHttp(approvals.servicingPolicy(ADMIN,UUID.randomUUID(),b,new com.cbs.servicing.ServicingModels.Policy(service.get(ADMIN,b).version(),f.f().product().id(),f.f().product().revision(),bank.legalEntities().getFirst().id(),date,"0",365,"0","0","0","HALF_EVEN",expense,payable,income,tax,"Fictional zero-rate servicing")).id());
+        var run=batch.prepare(b,after.apply(date));
+        assertThat(run.step()).isEqualTo(com.cbs.batch.BatchService.Step.SERVICING);assertThat(run.outcome()).as("code %s",run.code()).isEqualTo("SUBMITTED");
+        var request=jdbc.queryForMap("SELECT maker_subject,action,status FROM platform.approval_request WHERE id=?",run.requestId());
+        assertThat(request).containsEntry("maker_subject","batch-service").containsEntry("action","SERVICING_RUN").containsEntry("status","PENDING");
+        assertThat(batch.prepare(b,after.apply(date)).outcome()).isEqualTo("WAITING_APPROVAL");
+        assertCode(()->approvals.decide(robot,run.requestId(),com.cbs.approvals.ApprovalModels.Decision.APPROVE,"Own"),"SELF_APPROVAL_FORBIDDEN");
+        long version=service.get(ADMIN,b).version();
+        approveHttp(run.requestId());
+        assertThat(batch.prepare(b,after.apply(date)).outcome()).isEqualTo("WAITING_DELIVERY");
+        servicing.deliver(run.requestId());
+        var close=batch.prepare(b,after.apply(date));
+        assertThat(close.step()).isEqualTo(com.cbs.batch.BatchService.Step.DAY_CLOSE);assertThat(close.outcome()).as("code %s",close.code()).isEqualTo("SUBMITTED");
+        // The console shows the cycle, the waiting approval and the scheduler's history; the scheduler never bumps the bank version itself.
+        mvc.perform(admin(get("/api/v1/admin/tenants/"+b+"/operations-console"))).andExpect(status().isOk())
+            .andExpect(jsonPath("$.cycle[?(@.step=='SERVICING')].status").value(org.hamcrest.Matchers.contains("DONE")))
+            .andExpect(jsonPath("$.cycle[?(@.step=='DAY_CLOSE')].status").value(org.hamcrest.Matchers.contains("WAITING_APPROVAL")))
+            .andExpect(jsonPath("$.approvals[0].action").value("DAY_CLOSE")).andExpect(jsonPath("$.events[0].step").value("DAY_CLOSE"));
+        // A checker rejects today's close: the scheduler does not resubmit it.
+        approvals.decide(CHECKER,close.requestId(),com.cbs.approvals.ApprovalModels.Decision.REJECT,"Cash count not signed");
+        var rejected=batch.prepare(b,after.apply(date));
+        assertThat(rejected.outcome()).isEqualTo("BLOCKED");assertThat(rejected.code()).isEqualTo("BATCH_REQUEST_REJECTED");
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM platform.approval_request WHERE bank_id=? AND action='DAY_CLOSE'",Integer.class,b)).isEqualTo(1);
+        assertThat(service.get(ADMIN,b).version()).as("only approvals changed the version").isGreaterThan(version);
+        assertThatThrownBy(()->jdbc.update("DELETE FROM platform.batch_event WHERE tenant_id=?",b)).hasMessageContaining("append-only");
+        mvc.perform(get("/api/v1/admin/tenants/"+b+"/operations-console")).andExpect(status().isUnauthorized());
+    }
+    /**
+     * P-08 failed-upgrade drill: two bank databases at an older schema; a canary upgrade of one; a full rolling run
+     * in which the other bank's next migration fails. The failing bank stays exactly at its previous version with its
+     * data intact, the runtime refuses it while serving the upgraded bank, and a re-run after the fix completes it.
+     */
+    @Test void rollingBankUpgradesSurviveAFailedBankAndTheRuntimeRefusesBanksLeftBehind()throws Exception{
+        var dir=java.nio.file.Files.createTempDirectory("cbs-upgrade-drill");
+        java.util.function.Function<String,com.cbs.operations.MigrationMain.Database> db=key->{
+            try{var t=TestDatabases.target(key);var file=dir.resolve(key+".pw");java.nio.file.Files.writeString(file,t.password());
+                return new com.cbs.operations.MigrationMain.Database(t.url(),t.name(),file.toString(),key.equals("control")?null:UUID.nameUUIDFromBytes(key.getBytes(java.nio.charset.StandardCharsets.UTF_8)));}
+            catch(java.io.IOException e){throw new java.io.UncheckedIOException(e);}
+        };
+        var a=db.apply("upgradea");var b=db.apply("upgradeb");
+        // Both banks start at bank schema version 24; bank B has an object that its next migration also creates.
+        for(var key:List.of("upgradea","upgradeb")){var t=TestDatabases.target(key);
+            org.flywaydb.core.Flyway.configure().dataSource(t.url(),t.name(),t.password()).locations("classpath:db/bank-migration").defaultSchema("bank").schemas("bank").createSchemas(true).target("24").load().migrate();}
+        try(var c=TestDatabases.bank("upgradeb");var st=c.createStatement()){st.execute("CREATE TABLE bank.period_close(squatter INTEGER)");st.execute("INSERT INTO bank.period_close VALUES (42)");}
+        var plan=new com.cbs.operations.MigrationMain.Plan(db.apply("control"),Map.of("drill-a",a,"drill-b",b));
+        String latest=com.cbs.tenancy.BankDatabaseProvisioner.expectedBankVersion();
+        // Canary: only bank A.
+        var canary=com.cbs.operations.MigrationMain.run(plan,new com.cbs.operations.MigrationMain.Options(true,java.util.Set.of("drill-a"),false,dir.resolve("canary.json")));
+        assertThat(canary.banks()).singleElement().satisfies(r->{assertThat(r.reference()).isEqualTo("drill-a");assertThat(r.status()).isEqualTo(com.cbs.operations.MigrationMain.Status.UPGRADED);assertThat(r.before()).isEqualTo("24");assertThat(r.after()).isEqualTo(latest);});
+        // Full rolling run: A is current, B fails and stays at 24 with its data; the report says so.
+        var report=com.cbs.operations.MigrationMain.run(plan,new com.cbs.operations.MigrationMain.Options(true,java.util.Set.of(),false,dir.resolve("report.json")));
+        assertThat(report.complete()).isFalse();
+        assertThat(report.banks()).extracting(r->r.reference()+":"+r.status()+":"+r.before()+"->"+r.after())
+            .containsExactly("drill-a:CURRENT:"+latest+"->"+latest,"drill-b:FAILED:24->24");
+        assertThat(java.nio.file.Files.readString(dir.resolve("report.json"))).contains("\"FAILED\"").doesNotContain(TestDatabases.target("upgradeb").password());
+        try(var c=TestDatabases.bank("upgradeb");var st=c.createStatement();var r=st.executeQuery("SELECT (SELECT squatter FROM bank.period_close),(SELECT count(*) FROM bank.flyway_schema_history WHERE NOT success)")){
+            r.next();assertThat(r.getInt(1)).as("data untouched").isEqualTo(42);assertThat(r.getInt(2)).as("no half-applied migration").isZero();}
+        // Mixed versions: the runtime (migrations disabled, as in production) serves A and refuses B.
+        var env=new org.springframework.mock.env.MockEnvironment().withProperty("cbs.banking.migrations-enabled","false");
+        var settings=new com.cbs.tenancy.BankDatabaseProvisioner.Settings(Map.of(
+            "drill-a",new com.cbs.tenancy.BankDatabaseProvisioner.Target(TestDatabases.target("upgradea").url(),TestDatabases.target("upgradea").name(),TestDatabases.target("upgradea").password()),
+            "drill-b",new com.cbs.tenancy.BankDatabaseProvisioner.Target(TestDatabases.target("upgradeb").url(),TestDatabases.target("upgradeb").name(),TestDatabases.target("upgradeb").password())));
+        var runtime=new com.cbs.tenancy.BankDatabaseProvisioner(settings,env);
+        try(var ok=runtime.openOwned(a.tenantId(),"drill-a")){assertThat(ok.isValid(2)).isTrue();}
+        assertCode(()->runtime.openOwned(b.tenantId(),"drill-b").close(),"BANK_SCHEMA_UPGRADE_REQUIRED");
+        assertCode(()->runtime.upgradeOwned(b.tenantId(),"drill-b"),"DATABASE_MIGRATION_REQUIRED");
+        // After the cause is removed, a re-run completes B and leaves A alone.
+        try(var c=TestDatabases.bank("upgradeb");var st=c.createStatement()){st.execute("DROP TABLE bank.period_close");}
+        var rerun=com.cbs.operations.MigrationMain.run(plan,new com.cbs.operations.MigrationMain.Options(true,java.util.Set.of(),false,null));
+        assertThat(rerun.complete()).isTrue();
+        assertThat(rerun.banks()).extracting(r->r.reference()+":"+r.status()).containsExactly("drill-a:CURRENT","drill-b:UPGRADED");
+        try(var ok=runtime.openOwned(b.tenantId(),"drill-b")){assertThat(ok.isValid(2)).isTrue();}
+        // An unknown canary reference is refused before anything runs.
+        assertThatThrownBy(()->com.cbs.operations.MigrationMain.run(plan,new com.cbs.operations.MigrationMain.Options(true,java.util.Set.of("drill-c"),false,null))).isInstanceOf(IllegalArgumentException.class);
+    }
+    /**
+     * P-06 write-path measurement (opt-in: -Dcbs.perf=true, with -Dcbs.perf.accounts and -Dcbs.perf.operations).
+     * Makers submit withdrawals on separate accounts concurrently; every submission carries the bank version, so
+     * concurrent makers contend on it (STALE_VERSION retries measure that serialization). A checker approves each,
+     * the delivery drain posts them, and the books must balance afterwards. Prints a JSON summary.
+     */
+    @Test @org.junit.jupiter.api.condition.EnabledIfSystemProperty(named="cbs.perf",matches="true")
+    void writePathThroughputWithZeroBalanceErrors()throws Exception{
+        int accounts=Integer.getInteger("cbs.perf.accounts",8),perAccount=Integer.getInteger("cbs.perf.operations",5);
+        var f=fundingFixture("money-perf");var bank=f.f().bank();UUID b=bank.id();fund(f,"100000");
+        var ids=new java.util.ArrayList<UUID>(List.of(f.account()));
+        for(int i=1;i<accounts;i++)ids.add(accountFor(f,f.f().customer(),"PERF_"+i,"100000"));
+        var stale=new java.util.concurrent.atomic.AtomicInteger();var submitted=new java.util.concurrent.ConcurrentLinkedQueue<UUID>();var byAccount=new java.util.concurrent.ConcurrentHashMap<UUID,java.util.List<UUID>>();
+        var submitNanos=new java.util.concurrent.ConcurrentLinkedQueue<Long>();
+        long t0=System.nanoTime();
+        try(var pool=Executors.newFixedThreadPool(accounts)){
+            var jobs=new java.util.ArrayList<java.util.concurrent.Callable<Void>>();
+            for(UUID account:ids)jobs.add(()->{
+                for(int n=0;n<perAccount;n++){
+                    while(true){
+                        var change=new com.cbs.accounts.OperationModels.Change(service.get(ADMIN,b).version(),com.cbs.accounts.OperationModels.Kind.HOLD,account,null,null,null,"1",reference.get(ADMIN,b).businessDate(),"PERF-"+UUID.randomUUID(),"Load measurement",null);
+                        long s=System.nanoTime();
+                        try{UUID id=approvals.operation(ADMIN,UUID.randomUUID(),b,change).id();submitted.add(id);byAccount.computeIfAbsent(account,k->java.util.Collections.synchronizedList(new java.util.ArrayList<>())).add(id);submitNanos.add(System.nanoTime()-s);break;}
+                        catch(TenantException e){if(e.code().equals("STALE_VERSION")){stale.incrementAndGet();continue;}if(e.code().equals("ACCOUNT_OPERATION_PENDING"))break;throw e;}
+                    }
+                }
+                return null;
+            });
+            for(var x:pool.invokeAll(jobs))x.get();
+        }
+        long t1=System.nanoTime();
+        // Every approval bumps the bank version, so requests submitted against an older version become STALE when approved.
+        long a=System.nanoTime();int approved=0,staleAtApproval=0;
+        for(UUID id:submitted){var r=approvals.decide(CHECKER,id,com.cbs.approvals.ApprovalModels.Decision.APPROVE,"Load measurement");if(r.status()==com.cbs.approvals.ApprovalModels.Status.APPROVED)approved++;else staleAtApproval++;}
+        long t2=System.nanoTime();
+        int posted=com.cbs.accounting.LedgerDeliveryWorker.drain(600_000,operations::pending,operations::deliver,"Perf");
+        long t3=System.nanoTime();
+        assertThat(posted).as("only approved requests post").isEqualTo(approved);
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM platform.account_operation WHERE tenant_id=? AND completed AND failure_code IS NULL",Integer.class,b)).isEqualTo(approved);
+        assertBooksBalance("perf",b,ids);
+        // The sustainable rate per bank: one full maker-checker-posting cycle after another.
+        var cycles=new java.util.ArrayList<Double>();long c0=System.nanoTime();
+        for(int i=0;i<accounts*perAccount;i++){
+            UUID account=ids.get(i%ids.size());long c=System.nanoTime();
+            var r=approvals.operation(ADMIN,UUID.randomUUID(),b,new com.cbs.accounts.OperationModels.Change(service.get(ADMIN,b).version(),com.cbs.accounts.OperationModels.Kind.HOLD,account,null,null,null,"1",reference.get(ADMIN,b).businessDate(),"SEQ-"+UUID.randomUUID(),"Load measurement",null));
+            assertThat(approvals.decide(CHECKER,r.id(),com.cbs.approvals.ApprovalModels.Decision.APPROVE,"Load measurement").status()).isEqualTo(com.cbs.approvals.ApprovalModels.Status.APPROVED);
+            operations.deliver(r.id());cycles.add((System.nanoTime()-c)/1e6);
+        }
+        long c1=System.nanoTime();
+        assertBooksBalance("perf",b,ids);
+        var lat=submitNanos.stream().map(n->n/1_000_000.0).sorted().toList();var cyc=cycles.stream().sorted().toList();
+        var summary=new java.util.LinkedHashMap<String,Object>();
+        summary.put("accounts",accounts);summary.put("concurrentSubmissions",submitted.size());summary.put("staleVersionRetriesAtSubmit",stale.get());
+        summary.put("approved",approved);summary.put("staleAtApproval",staleAtApproval);summary.put("posted",posted);
+        summary.put("submitPerSecond",submitted.size()/((t1-t0)/1e9));summary.put("submitP95Ms",lat.isEmpty()?null:lat.get((int)Math.round(0.95*(lat.size()-1))));
+        summary.put("approvePerSecond",submitted.size()/((t2-a)/1e9));summary.put("drainSeconds",(t3-t2)/1e9);
+        summary.put("sequentialCycles",cyc.size());summary.put("sequentialCyclesPerSecond",cyc.size()/((c1-c0)/1e9));summary.put("sequentialCycleP95Ms",cyc.get((int)Math.round(0.95*(cyc.size()-1))));
+        System.out.println("CBS_PERF "+json.writeValueAsString(summary));
     }
     private UUID onboard(Tenant bank,com.cbs.customers.CustomerModels.Profile profile)throws Exception{
         var r=approvals.customer(ADMIN,UUID.randomUUID(),bank.id(),customerChange(bank,null,profile,""));approveHttp(r.id());customers.deliver(r.id());

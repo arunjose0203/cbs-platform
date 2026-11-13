@@ -52,7 +52,7 @@ public class AccountClosureService {
         // Contract recovery: only active/unclosed contracts block closure
         if(jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM platform.contract WHERE account_id=? AND status<>'CLOSED')",Boolean.class,account.id()))blockers.add("ACCOUNT_CLOSURE_CONTRACT_REVIEW");
         // Payment review: only in-flight payments or open investigations block closure
-        if(jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM platform.payment_order WHERE account_id=? AND state NOT IN ('SETTLED','REFUNDED')) OR EXISTS(SELECT 1 FROM platform.payment_case c JOIN platform.payment_order o ON o.id=c.payment_id WHERE o.account_id=? AND c.status='OPEN')",Boolean.class,account.id(),account.id()))blockers.add("ACCOUNT_CLOSURE_PAYMENT_REVIEW");
+        if(jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM platform.payment_order WHERE account_id=? AND state NOT IN ('SETTLED','REFUNDED','RETURNED')) OR EXISTS(SELECT 1 FROM platform.payment_case c JOIN platform.payment_order o ON o.id=c.payment_id WHERE o.account_id=? AND c.state NOT IN ('RESOLVED','CANCELLED'))",Boolean.class,account.id(),account.id()))blockers.add("ACCOUNT_CLOSURE_PAYMENT_REVIEW");
         if(jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM platform.servicing_run WHERE tenant_id=? AND NOT completed)",Boolean.class,bank.id()))blockers.add("ACCOUNT_CLOSURE_SERVICING_REQUIRED");
         return new Check(bank.version(),account.id(),posted,held,ledger,carry,settled,List.copyOf(new LinkedHashSet<>(blockers)));
     }
