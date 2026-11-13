@@ -4,6 +4,18 @@
 
 Use the [Functional Gap & Acceptance Matrix](functional-gap-acceptance-matrix-2026-10-09.md) for the current 34-area functional assessment, 34 proposed acceptance cases, source/test evidence, confirmed limits and prioritized completion work. It reconciles older historical pending lists below. No module has independent bank functional sign-off recorded; existing automated test results do not replace that acceptance.
 
+## P-05: Observability, Prometheus/Grafana Dashboards, and On-Call Runbooks — 14 November 2026
+
+Production-engineering item P-05 (gate E07) of the [go-live plan](go-live-plan-2026-11-13.md). See [on-call runbook](on-call-runbook.md).
+
+- **Prometheus alert rules.** Extended `deploy/staging/alerts.yml` with alerts for reconciliation differences (`CbsReconciliationDifference`), delivery failure spikes (`CbsDeliveryFailures`), and stuck delivery queues (`CbsDeliveryQueueStuck`).
+- **Production metric instrumentation.** `ops/monitor.py` exports `cbs_reconciliation_difference_detected` (migration & subledger trial balance discrepancies) and `cbs_delivery_failures_24h` (failed bank delivery queue attempts in 24h).
+- **Grafana dashboards.** Created production dashboards in `deploy/observability/dashboards/`:
+  - `core-banking-overview.json`: Readiness, alert status, blocked cycles, reconciliation differences, and queue latency heatmaps.
+  - `operations-and-daily-cycle.json`: Compliance SLA overdues, delivery failure rates, backup/restore freshness, and database connectivity.
+- **On-call runbook.** `docs/on-call-runbook.md` provides operational procedures for triage, impact analysis, resolution steps, escalation paths, and fault injection verification drills for all platform alerts.
+- **Verification.** 7 ops monitor unit tests pass (100%), 141 UI tests pass, and alerts syntax validated.
+
 ## Round 19: Data migration and cutover tooling — 14 November 2026
 
 Round 19 of the [go-live plan](go-live-plan-2026-11-13.md) delivers production cutover tooling, staging loaders, deduplication, and trial balance reconciliation (Gate E12). Control migration **V54**. See [cutover runbook](cutover-runbook.md).

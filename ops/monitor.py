@@ -76,6 +76,8 @@ def check(config):
                 # Banks whose scheduled daily cycle is currently blocked (latest scheduler outcome). A count only.
                 metrics['cbs_batch_blocked_banks'] = int(recovery.query(config,d,"SELECT count(*) FROM (SELECT DISTINCT ON (tenant_id) outcome FROM platform.batch_event ORDER BY tenant_id,recorded_at DESC) x WHERE outcome='BLOCKED'"))
                 metrics['cbs_notifications_pending_age_seconds'] = max(0,float(recovery.query(config,d,"SELECT coalesce(max(extract(epoch FROM (clock_timestamp()-created_at))),0) FROM platform.notification WHERE status='PENDING'")))
+                metrics['cbs_reconciliation_difference_detected'] = int(recovery.query(config,d,"SELECT count(*) FROM platform.migration_reconciliation WHERE difference <> 0"))
+                metrics['cbs_delivery_failures_24h'] = int(recovery.query(config,d,"SELECT count(*) FROM platform.journal_delivery WHERE completed AND NOT success AND delivered_at > clock_timestamp()-interval '24 hours'"))
         except Exception:
             metrics['cbs_database_up{database="'+d['name']+'"}'] = 0
             alerts.append('DATABASE_CHECK_FAILED:'+d['name'])

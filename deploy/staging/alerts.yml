@@ -31,6 +31,21 @@ groups:
         for: 30m
         labels: {severity: warning}
         annotations: {summary: "A bank's scheduled daily cycle is blocked; open the Operations console to see why"}
+      - alert: CbsReconciliationDifference
+        expr: cbs_reconciliation_difference_detected > 0
+        for: 5m
+        labels: {severity: critical}
+        annotations: {summary: "Trial balance or subledger reconciliation difference detected; balances must be investigated"}
+      - alert: CbsDeliveryFailures
+        expr: cbs_delivery_failures_24h > 0
+        for: 15m
+        labels: {severity: warning}
+        annotations: {summary: "Bank delivery failures detected in the last 24h; review delivery queues in the Ops console"}
+      - alert: CbsDeliveryQueueStuck
+        expr: cbs_pending_age_seconds > 600
+        for: 10m
+        labels: {severity: critical}
+        annotations: {summary: "Delivery queue has pending entries older than 10 minutes"}
       - alert: CbsMonitorMissing
         expr: absent(cbs_monitor_last_run_seconds) or (time() - cbs_monitor_last_run_seconds > 180)
         for: 2m

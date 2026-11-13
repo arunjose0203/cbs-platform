@@ -42,6 +42,7 @@ class MonitorTests(unittest.TestCase):
     def test_notification_failures_and_queue_age_are_reported(self):
         metrics=self.check(pending=4)['metrics']
         self.assertEqual(metrics['cbs_notifications_failed_24h'],4);self.assertEqual(metrics['cbs_batch_blocked_banks'],4);self.assertEqual(metrics['cbs_notifications_pending_age_seconds'],4.0)
+        self.assertEqual(metrics['cbs_reconciliation_difference_detected'],4);self.assertEqual(metrics['cbs_delivery_failures_24h'],4)
     def test_database_failure(self):self.assertIn('DATABASE_CHECK_FAILED:control',self.check(db_error=True)['alerts'])
 
 if __name__=='__main__':unittest.main()
