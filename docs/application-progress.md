@@ -16,6 +16,16 @@ Round 18 of the [go-live plan](go-live-plan-2026-11-13.md) completes privacy, fi
 - **Customer view audit log.** Every staff view of customer data is audited (`CUSTOMER_PROFILE_VIEWED`, `CUSTOMER_VIEW_LOG_READ`).
 - **UI and verification.** Added Privacy & data protection portal view with tabs for subject requests, legal holds, and retention rules; added customer privacy dialog. Tests: 236 backend tests pass (12 privacy tests), 125 UI tests pass.
 
+## Round 17: Localization and accessibility — 13 November 2026
+
+Round 17 of the [go-live plan](go-live-plan-2026-11-13.md) delivers complete localization for the reference Kenyan pilot configuration (English and Kiswahili, plus French) and verifies accessibility compliance (Gate E14, Matrix row F33). See [localization and accessibility](localization-and-accessibility.md).
+
+- **Full Kiswahili and French coverage.** Expanded `ui/src/i18n.js` with 100% parity across all 32 navigation views and operational modules, covering over 710 distinct translated phrases per language.
+- **Module journeys.** Localized Privacy & data protection, KYC document management, periodic reviews, account dormancy, deceased customer statuses, branch operations, teller & vault custody, cash counts & shortages, loan arrears, collections, FX books, and payment cases.
+- **Statutory error translations.** Localized key regulatory error messages for fail-closed states (`ACCOUNT_DORMANT`, `CUSTOMER_DECEASED`, `BANK_DUTY_REQUIRED`, `HOLD_NOT_ACTIVE`, `INSUFFICIENT_AVAILABLE_BALANCE`).
+- **Automated completeness tests.** Added tests in `ui/test/i18n.test.mjs` verifying 100% key parity between English, French, and Kiswahili with zero missing translations, non-empty text, and robust display formatting.
+- **Accessibility verification.** Confirmed WCAG 2.1 AA landmarks, skip-link navigation, ARIA live regions for notices, alert roles for form validation, table header scopes, and keyboard modal focus traps. Tests: 129 UI tests pass.
+
 ## Round 12: Deposit lifecycle completion — 13 November 2026
 
 Round 12 of the [go-live plan](go-live-plan-2026-11-13.md) completes KYC document object storage, risk-based periodic reviews, account dormancy, deceased-customer workflows, contract/payment-aware account closure, and closure settlement reversal. Control migration **V48**, bank migration **V27**. See [deposit lifecycle completion](deposit-lifecycle-completion.md).
