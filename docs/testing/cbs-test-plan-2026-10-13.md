@@ -1,6 +1,6 @@
 # CBS functional and production acceptance test plan
 
-Prepared 13 October 2026; re-baselined 14 November 2026 (Task 0.8). Baseline: `b36dc7e0b068ddc14aa15f5ee2c94ede2ff21bfd` (Control V56, Bank V29).
+Prepared 13 October 2026; re-baselined 14 November 2026 (Task 0.8). Baseline: `d6724282ba0625234d44656929179136bc67fd80` (Control V56, Bank V29).
 
 This is an execution plan for the existing CBS, not a certificate of completeness or a new test run. The accompanying catalogue contains **122 records: 107 planned tests and 15 evaluated gaps**, covering **34 module areas**. Following Rounds 9–19 and P-01–P-10, 14 of the 15 gaps are now **IMPLEMENTED** with automated test coverage, leaving 1 gap (GAP-08) **OPEN** awaiting bank live provider contracts (decision D09). Owners listed are proposed roles; named testers and signatories must be assigned.
 

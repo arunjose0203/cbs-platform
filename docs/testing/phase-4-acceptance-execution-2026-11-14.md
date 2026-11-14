@@ -1,10 +1,10 @@
 # Phase 4 Acceptance Execution Report — 14 November 2026
 
-Baseline Release SHA: `b36dc7e0b068ddc14aa15f5ee2c94ede2ff21bfd`  
+Baseline Release SHA: `d6724282ba0625234d44656929179136bc67fd80`  
 Control Schema: **V56** (`V56__kyc_evidence_immutability.sql`)  
 Bank Schema: **V29** (`V29__partial_term_closures.sql`)  
 Packaged Artifact: `cbs-platform-0.1.0-SNAPSHOT.jar`  
-Artifact SHA-256: `64e465d0bbbc061af31302ca380fae0ac6557ceeee99fc97f2b4e82b7cef0a11`
+Artifact SHA-256: `288dcb9fd1de580a44c78829412eed258c4d4729edbcc8fcd0c817c0bd9737fb`
 
 ---
 
