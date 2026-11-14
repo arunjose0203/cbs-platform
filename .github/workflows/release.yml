@@ -96,7 +96,7 @@ jobs:
           output: cbs-image-scan.txt
       - name: Keep the scan report when the scan fails
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: release-scan
           path: cbs-image-scan.txt
