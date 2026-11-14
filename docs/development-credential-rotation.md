@@ -36,7 +36,7 @@ This policy establishes strict separation between ephemeral local development fi
    - All secret templates (`runtime.example.yml`, `cbs-production-realm.json`) use placeholder syntax (`CHANGE_ME`, `REPLACE_WITH_*`).
 2. **Ignored Local Paths (`.gitignore`):**
    - The `.gitignore` policy strictly excludes `.local/`, `.tools/`, `*.log`, `*.dump`, and `credentials.json`.
-   - Temporary setup files (`claude-setup.zip`, inspected and confirmed clean of credentials) are flagged for permanent removal on master branch consolidation.
+   - Temporary setup files (`claude-setup.zip`, inspected and confirmed clean of credentials) have been permanently removed from the repository.
 3. **Automated CI Secret Scanning:**
    - GitHub Actions `security.yml` runs OSV-Scanner, trufflehog / secret linting, and dependency vulnerability scans on every pull request and weekly schedule.
 
