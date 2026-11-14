@@ -58,8 +58,9 @@ export function createContractsUi({api,form,field,refresh,type,isAdmin=()=>true}
   }
   if(!term&&name==='moratorium'){
    form('Grant loan moratorium',`<p class="field full">${e(item.definition.terms.agreementReference)}. Moratorium suspends contractual arrears ageing during the granted period.</p>`+field('type','Moratorium type','FULL_PAYMENT_HOLIDAY',{choices:[{value:'FULL_PAYMENT_HOLIDAY',label:'Full payment holiday (principal + interest)'},{value:'INTEREST_ONLY',label:'Interest only (freeze principal)'}]})+field('startDate','Moratorium start date',date,{type:'date'})+field('endDate','Moratorium end date','',{type:'date'})+field('reason','Moratorium justification and evidence','',{full:true,max:500}),async v=>{
-    await post(route+'/moratoria',{contractId:id,type:v.type,startDate:v.startDate,endDate:v.endDate,reason:v.reason});await refresh();
-   },'Grant moratorium');return;
+    // P-10: submitted for approval by a credit approver.
+    await post(route+'/moratoria',{expectedVersion:version,businessDate:date,contractId:id,type:v.type,startDate:v.startDate,endDate:v.endDate,reason:v.reason});await refresh();
+   },'Submit for approval');return;
   }
   if(!term&&['restructure','impair','writeoff'].includes(name)){
    const restructuring=name==='restructure',writeoff=name==='writeoff',risk=item.riskBook?.[0];

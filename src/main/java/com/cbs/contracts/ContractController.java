@@ -56,9 +56,12 @@ public class ContractController {
     @PostMapping("/events") public ApprovalModels.Request event(JwtAuthenticationToken jwt,@PathVariable UUID bank,@RequestHeader("Idempotency-Key") UUID key,@Valid @RequestBody ContractModels.Event input){return approvals.contractEvent(actor(jwt),key,bank,input);}
     @PostMapping("/events/{id}/retry") public void retry(JwtAuthenticationToken jwt,@PathVariable UUID bank,@PathVariable UUID id){service.retry(actor(jwt),bank,id);}
 
+    /** P-10: a moratorium is a maker-checker request (credit officer submits, credit approver approves). */
     @PostMapping("/moratoria")
-    public LoanMoratoriumModels.MoratoriumRecord grantMoratorium(JwtAuthenticationToken jwt, @PathVariable UUID bank, @Valid @RequestBody LoanMoratoriumModels.MoratoriumGrant input) {
-        return moratoria.grant(actor(jwt), bank, input);
+    @org.springframework.web.bind.annotation.ResponseStatus(org.springframework.http.HttpStatus.ACCEPTED)
+    public ApprovalModels.Request grantMoratorium(JwtAuthenticationToken jwt, @PathVariable UUID bank,
+            @RequestHeader("Idempotency-Key") UUID key, @Valid @RequestBody LoanMoratoriumModels.MoratoriumGrant input) {
+        return approvals.moratorium(actor(jwt), key, bank, input);
     }
 
     @GetMapping("/{id}/moratoria")

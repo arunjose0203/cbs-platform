@@ -1726,6 +1726,18 @@ class TenantAdministrationIntegrationTest {
         mvc.perform(get("/api/v1/admin/tenants/"+bank.id()+"/credit").header("Authorization","Bearer "+TestIdentity.token("operator",false))).andExpect(status().isForbidden());
         assertThatThrownBy(()->jdbc.update("UPDATE platform.credit_event SET kind='TAMPERED' WHERE application_id=?",app)).isInstanceOf(org.springframework.dao.DataAccessException.class);
         assertThat(((List<?>)credit.detail(ADMIN,bank.id(),app).get("events")).size()).isGreaterThanOrEqualTo(3);
+        // P-10 (S-13): a moratorium changes arrears ageing and due notices, so a second credit approver must approve it.
+        var today=reference.get(ADMIN,bank.id()).businessDate();
+        var holiday=new com.cbs.contracts.LoanMoratoriumModels.MoratoriumGrant(service.get(ADMIN,bank.id()).version(),today,loan.id(),
+            com.cbs.contracts.LoanMoratoriumModels.MoratoriumType.FULL_PAYMENT_HOLIDAY,today.plusMonths(6),today.plusMonths(7),"Fictional flood relief");
+        var moratorium=approvals.moratorium(ADMIN,UUID.randomUUID(),bank.id(),holiday);
+        assertThat(moratorium.action()).isEqualTo(com.cbs.approvals.ApprovalModels.Action.LOAN_MORATORIUM);
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM platform.loan_moratorium WHERE contract_id=?",Integer.class,loan.id())).as("nothing before approval").isZero();
+        assertCode(()->approvals.decide(ADMIN,moratorium.id(),com.cbs.approvals.ApprovalModels.Decision.APPROVE,"Own request"),"SELF_APPROVAL_FORBIDDEN");
+        approvals.decide(CHECKER,moratorium.id(),com.cbs.approvals.ApprovalModels.Decision.APPROVE,"Hardship evidence verified");
+        assertThat(jdbc.queryForObject("SELECT created_by FROM platform.loan_moratorium WHERE contract_id=?",String.class,loan.id())).isEqualTo(ADMIN.subject());
+        assertCode(()->approvals.moratorium(ADMIN,UUID.randomUUID(),bank.id(),new com.cbs.contracts.LoanMoratoriumModels.MoratoriumGrant(service.get(ADMIN,bank.id()).version(),today,loan.id(),
+            com.cbs.contracts.LoanMoratoriumModels.MoratoriumType.INTEREST_ONLY,today.minusMonths(2),today.minusMonths(1),"Backdated")),"MORATORIUM_EXPIRED");
         var closing=days.dashboard(ADMIN,bank.id(),25,0);assertThat(closing.blockers()).isEmpty();var closeRequest=approvals.closeDay(ADMIN,UUID.randomUUID(),bank.id(),new com.cbs.accounting.DayCloseModels.Change(closing.version(),closing.businessDate(),closing.nextBusinessDate(),"Validated complete fictional lending lifecycle"));approveHttp(closeRequest.id());days.deliver(closeRequest.id());assertThat(reference.get(ADMIN,bank.id()).businessDate()).isEqualTo(closing.nextBusinessDate());
     }
     @Autowired com.cbs.contracts.LoanCollectionsService collections;

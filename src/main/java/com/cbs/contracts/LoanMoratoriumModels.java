@@ -12,7 +12,13 @@ public final class LoanMoratoriumModels {
         INTEREST_ONLY, FULL_PAYMENT_HOLIDAY
     }
 
+    /**
+     * A moratorium changes what the customer owes and when (arrears ageing and due notices), so it is a maker-checker
+     * request (P-10: ApprovalService action LOAN_MORATORIUM, governed by lending grants like a restructure).
+     */
     public record MoratoriumGrant(
+            @Min(0) long expectedVersion,
+            @NotNull LocalDate businessDate,
             @NotNull UUID contractId,
             @NotNull MoratoriumType type,
             @NotNull LocalDate startDate,

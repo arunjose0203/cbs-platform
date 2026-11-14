@@ -42,35 +42,41 @@ public class LoanMoratoriumService {
         return new TenantException(409, code, msg);
     }
 
-    public MoratoriumRecord grant(Actor actor, UUID bankId, MoratoriumGrant input) {
-        return tx.execute(status -> {
-            var bank = tenants.get(bankId, true);
-            if (bank.status() != Status.ACTIVE) throw error("ACCOUNT_BANK_NOT_ACTIVE", "Bank is not active");
+    // ---- Maker-checker (P-10: ApprovalService action LOAN_MORATORIUM; lending grants decide who may submit and approve) ----
 
-            var d = contracts.definition(bankId, input.contractId());
-            if (d.terms().type() != ContractModels.Type.LOAN) throw error("LOAN_REQUIRED", "Contract must be a loan");
+    public void validate(com.cbs.tenancy.TenantModels.Tenant bank, MoratoriumGrant input) {
+        if (bank.version() != input.expectedVersion()) throw error("STALE_VERSION", "The bank changed; reload and try again");
+        if (bank.status() != Status.ACTIVE) throw error("ACCOUNT_BANK_NOT_ACTIVE", "Bank is not active");
+        var d = contracts.definition(bank.id(), input.contractId());
+        if (d.terms().type() != ContractModels.Type.LOAN) throw error("LOAN_REQUIRED", "Contract must be a loan");
+        LocalDate today = reference.read(bank).businessDate();
+        if (!input.businessDate().equals(today)) throw error("BUSINESS_DATE_MISMATCH", "Use the bank's current business date");
+        if (input.endDate().isBefore(input.startDate())) {
+            throw error("MORATORIUM_DATES_INVALID", "Moratorium end date cannot be before start date");
+        }
+        if (input.endDate().isBefore(today)) {
+            throw error("MORATORIUM_EXPIRED", "Moratorium end date cannot be in the past");
+        }
+    }
 
-            LocalDate today = reference.read(bank).businessDate();
-            if (input.endDate().isBefore(input.startDate())) {
-                throw error("MORATORIUM_DATES_INVALID", "Moratorium end date cannot be before start date");
-            }
-            if (input.endDate().isBefore(today)) {
-                throw error("MORATORIUM_EXPIRED", "Moratorium end date cannot be in the past");
-            }
+    public Map<String, Object> values(MoratoriumGrant input) {
+        return Map.of("contractId", input.contractId(), "type", input.type().name(), "startDate", input.startDate().toString(),
+                "endDate", input.endDate().toString(), "reason", input.reason().trim());
+    }
 
-            lending.role(actor, bankId, d.account().id(), LendingAccess.Role.CREDIT_APPROVER);
-
-            UUID id = UUID.randomUUID();
-            Instant now = Instant.now();
-            jdbc.update("INSERT INTO platform.loan_moratorium(id,tenant_id,contract_id,moratorium_type,start_date,end_date,reason,created_by,created_at) VALUES (?,?,?,?,?,?,?,?,?)",
-                    id, bankId, input.contractId(), input.type().name(), input.startDate(), input.endDate(), input.reason().trim(), actor.subject(), Timestamp.from(now));
-
-            tenants.audit(actor, bankId, "LOAN_MORATORIUM_GRANTED", bank.version(), bank.status(), bank.status(),
-                    "Moratorium granted: " + input.type() + " from " + input.startDate() + " to " + input.endDate(), null, null,
-                    Map.of("contractId", input.contractId(), "moratoriumId", id, "type", input.type().name(), "startDate", input.startDate().toString(), "endDate", input.endDate().toString()));
-
-            return new MoratoriumRecord(id, input.contractId(), input.type(), input.startDate(), input.endDate(), input.reason(), actor.subject(), now);
-        });
+    /** Records the approved moratorium; the maker stays on record as its author. */
+    public UUID apply(Actor checker, UUID bankId, MoratoriumGrant input, String makerSubject, UUID approvalId) {
+        var bank = tenants.get(bankId, true);
+        validate(bank, input);
+        UUID id = UUID.randomUUID();
+        jdbc.update("INSERT INTO platform.loan_moratorium(id,tenant_id,contract_id,moratorium_type,start_date,end_date,reason,created_by,created_at) VALUES (?,?,?,?,?,?,?,?,?)",
+                id, bankId, input.contractId(), input.type().name(), input.startDate(), input.endDate(), input.reason().trim(), makerSubject, Timestamp.from(Instant.now()));
+        tenants.change(bank, bank.status(), bank.displayName(), bank.defaultLanguage());
+        tenants.audit(checker, bankId, "LOAN_MORATORIUM_GRANTED", bank.version() + 1, bank.status(), bank.status(),
+                "Approved request " + approvalId, null, null,
+                Map.of("contractId", input.contractId(), "moratoriumId", id, "type", input.type().name(), "startDate", input.startDate().toString(),
+                        "endDate", input.endDate().toString(), "requestId", approvalId));
+        return id;
     }
 
     public List<MoratoriumRecord> list(Actor actor, UUID bankId, UUID contractId) {
