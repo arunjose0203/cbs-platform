@@ -46,7 +46,7 @@ jobs:
           cache-dependency-path: ui/package-lock.json
       - run: npm ci --prefix ui --ignore-scripts
       - run: npm test --prefix ui
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '21'
