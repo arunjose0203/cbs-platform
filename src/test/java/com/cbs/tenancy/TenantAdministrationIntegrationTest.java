@@ -3421,8 +3421,14 @@ class TenantAdministrationIntegrationTest {
         byte[] iv=new byte[12];new java.security.SecureRandom().nextBytes(iv);
         var cipher=javax.crypto.Cipher.getInstance("AES/GCM/NoPadding");cipher.init(javax.crypto.Cipher.ENCRYPT_MODE,legacyKey,new javax.crypto.spec.GCMParameterSpec(128,iv));
         UUID legacy=UUID.randomUUID();
-        jdbc.update("INSERT INTO platform.customer_document(id,tenant_id,customer_id,document_type,file_name,content_type,file_size,sha256,ciphertext,iv,key_id,retention_until,uploaded_by,archived) VALUES (?,?,?,'PASSPORT','old.pdf','application/pdf',?,?,?,?,'master-v1',?,'round-12',false)",
-            legacy,b,customer,old.length,java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(old)),cipher.doFinal(old),iv,java.sql.Date.valueOf(java.time.LocalDate.now(java.time.ZoneOffset.UTC).minusDays(1)));
+        // New rows under the legacy key are refused; the test stands in for a row written before P-10 by lifting that
+        // insert check for one statement (the test login owns the database).
+        assertThatThrownBy(()->jdbc.update("INSERT INTO platform.customer_document(id,tenant_id,customer_id,document_type,file_name,content_type,file_size,sha256,ciphertext,iv,key_id,retention_until,uploaded_by) VALUES (?,?,?,'PASSPORT','f.pdf','application/pdf',1,'x',?,?,'master-v1',current_date,'forger')",
+            UUID.randomUUID(),b,customer,new byte[17],new byte[12])).hasMessageContaining("current document key");
+        jdbc.execute("ALTER TABLE platform.customer_document DISABLE TRIGGER customer_document_current_key");
+        try{jdbc.update("INSERT INTO platform.customer_document(id,tenant_id,customer_id,document_type,file_name,content_type,file_size,sha256,ciphertext,iv,key_id,retention_until,uploaded_by,archived) VALUES (?,?,?,'PASSPORT','old.pdf','application/pdf',?,?,?,?,'master-v1',?,'round-12',false)",
+            legacy,b,customer,old.length,java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(old)),cipher.doFinal(old),iv,java.sql.Date.valueOf(java.time.LocalDate.now(java.time.ZoneOffset.UTC).minusDays(1)));}
+        finally{jdbc.execute("ALTER TABLE platform.customer_document ENABLE TRIGGER customer_document_current_key");}
         assertThat(kycDocuments.reencryptLegacy()).isGreaterThanOrEqualTo(1);
         assertThat(jdbc.queryForObject("SELECT key_id FROM platform.customer_document WHERE id=?",String.class,legacy)).isEqualTo("pd1-doc");
         assertThat(kycDocuments.download(ADMIN,b,customer,legacy).data()).isEqualTo(old);
