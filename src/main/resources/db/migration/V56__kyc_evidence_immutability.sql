@@ -31,6 +31,18 @@ END $$;
 CREATE TRIGGER customer_document_guard BEFORE UPDATE OR DELETE ON platform.customer_document
 FOR EACH ROW EXECUTE FUNCTION platform.guard_customer_document();
 
+-- The legacy key is migration-only: a new row under it (for example one forged by someone holding the source and
+-- database write access) would otherwise be served and silently upgraded.
+CREATE FUNCTION platform.require_current_document_key() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF NEW.key_id <> 'pd1-doc' THEN
+        RAISE EXCEPTION 'New customer documents must use the current document key';
+    END IF;
+    RETURN NEW;
+END $$;
+CREATE TRIGGER customer_document_current_key BEFORE INSERT ON platform.customer_document
+FOR EACH ROW EXECUTE FUNCTION platform.require_current_document_key();
+
 -- P-10 approval actions for KYC reviews and document archiving (every earlier action kept).
 ALTER TABLE platform.approval_request DROP CONSTRAINT approval_request_action_check;
 ALTER TABLE platform.approval_request ADD CONSTRAINT approval_request_action_check CHECK(action IN
