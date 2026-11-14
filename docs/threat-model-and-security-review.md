@@ -120,11 +120,12 @@ The Core Banking System (CBS) processes multi-currency financial accounting, cus
 
 ## 6. Cryptographic Implementation and Key Management
 
-- **Symmetric Data Encryption:** AES-256-GCM authenticated encryption with 96-bit random IVs and 128-bit authentication tags for KYC documents and PII (`PersonalDataCipher`).
+- **Field encryption (identity numbers):** `PersonalDataCipher` seals with AES-256-GCM under a per-bank key derived from `cbs.privacy.field-key`. The IV is an HMAC of the value, so sealing is deterministic on purpose (byte-identical payload checks), and a keyed blind index serves duplicate checks.
+- **KYC documents:** AES-256-GCM with a random 96-bit IV, under a per-bank key derived from the same field key with its own purpose label (`PersonalDataCipher.documentKey`). Bank, customer and document are bound as associated data. Before P-10 the key was derived from a constant in the source code (finding S-01); those rows are re-encrypted, and new rows under the old key are refused by V56.
 - **Secret Sharing & Escrow:** Shamir's threshold secret sharing ($k=2, n=3$) over Galois Field $GF(p)$ with prime $p = 2^{256} + 297$ (`ops/key_escrow.py`).
 - **WAL Archive Encryption:** AES-256-GCM continuous WAL streaming encryption with HMAC-SHA256 segment envelopes (`ops/wal_archive.py`).
 - **Token Signing & Verification:** RSA-3072 / RS256 asymmetric keys managed in Keycloak, with scheduled rotation and grace-period retirement via `ops/identity_admin.py`.
-- **Transport Security:** TLS 1.3 enforced for all external ingress and internal database connections (`sslmode=verify-full`).
+- **Transport Security:** HTTPS at the Caddy edge, and certificate-verified database connections (`sslmode=verify-full`, enforced by `ProductionGuard` and the staging preflight). The minimum TLS version is not pinned in configuration; record the negotiated version on the staging host and pin it if the bank requires it.
 
 ---
 
@@ -162,7 +163,65 @@ The external penetration testing firm engaged for Gate E01/E03 must execute agai
   - `ProductionGuardTest` (10 tests, 100% pass) validates rejection of insecure configurations.
   - `ops/tests/test_staging_preflight.py` (8 tests, 100% pass) validates staging isolation.
   - `ops/tests/test_identity_realm.py` & `test_identity_admin.py` (19 tests, 100% pass) validate Keycloak hardening.
-  - `TenantAdministrationIntegrationTest` validates tenant isolation, maker-checker, and MFA enforcement.
+  - `TenantAdministrationIntegrationTest` validates tenant isolation, maker-checker, and MFA enforcement. Note: from Round 15 until the P-10 repairs, this suite could not run (the Spring context failed to start), so it did not protect Rounds 15 to 19; see section 9.
 - **Pre-Penetration Review Sign-Off:**
   - Architecture and controls reviewed against CBK Prudential Guidelines, GDPR/Data Protection Act statutory retention, and OWASP API Security Top 10.
-  - Zero known critical or high severity vulnerabilities in runtime dependencies.
+  - Runtime dependencies: no Maven dependency scan has run yet (Phase 0.7), so no claim about dependency vulnerabilities is made.
+  - Application code: the internal review in section 9 found three high-severity issues and several medium ones. All high findings are fixed on `p10-security`; see the table for status.
+
+---
+
+## 9. Internal code review (14 November 2026)
+
+Line-by-line review of the security boundaries against `round-12-deposit-lifecycle` (Rounds 1-19, P-01 to P-09, P-03). It covered:
+- the public callbacks
+- the maker-checker coverage of every write endpoint
+- the encryption of KYC data
+- evidence immutability
+- SQL construction
+- CSV export
+- bank-duty enforcement
+- the newer modules from Rounds 12, 15, 16 and 19
+
+Fixes are on branch `p10-security`, each with unit and integration tests.
+
+| ID | Severity | Finding | Status |
+| --- | --- | --- | --- |
+| S-01 | High | KYC document key derived from a constant in the source code plus the bank ID: a database or backup copy alone exposed every document. | Fixed: key derived from the field key, ciphertext bound to bank, customer and document; legacy rows re-encrypted; new legacy-key rows refused (V56). |
+| S-09 | High | Data-migration "commit customers" wrote ACTIVE customers straight into the registry. There was no approval, no screening, no audit and no delivery to the bank database, and identity numbers were stored in plaintext. | Fixed (fails closed): commit refused until a batch path submits each customer through onboarding approval. Staged copies sealed. |
+| S-10 | High | Cutover reconciliation compared the legacy total with the staged import file itself, summed across currencies, and recorded the result as immutable evidence, so it could never find a difference. | Fixed: one currency at a time, against posted balances in the bank's own ledger. |
+| S-02 | Medium | KYC reviews (risk rating, next due date) and document archiving applied directly; review dates could be backdated without limit. | Fixed: approval actions `KYC_REVIEW` and `CUSTOMER_DOCUMENT_ARCHIVE`; at most 30 days back. |
+| S-07 | Medium | Every valid public M-Pesa callback bumped the bank version, making all pending maker requests for that bank stale. | Fixed: callbacks no longer bump it. |
+| S-08 | Medium | KYC reviews and documents had no immutability triggers. | Fixed (V56). |
+| S-12 | Medium (latent) | Term-deposit maturity instructions: one administrator, any target account, any renewal rate, no audit. Nothing executes them yet. | Fixed: approval action `TERM_STANDING_INSTRUCTION`; proceeds only to the depositor's own account in the same currency; bounded renewals; append-only. |
+| S-13 | Medium | Loan moratoria (which suspend arrears ageing and due notices) granted by one person. | Fixed: approval action `LOAN_MORATORIUM`, governed like a restructure (credit officer submits, a different credit approver approves within limits). |
+| S-03 | Low | KYC download served the stored, user-supplied content type and an unescaped file name. | Fixed: PDF/PNG/JPEG/TIFF only, sanitised names, RFC 6266 header, `nosniff`. |
+| S-04 | Low | Document errors echoed exception messages. | Fixed. |
+| S-14 | Low | FX rate feed approval has its own maker-checker that compares the subject but not the issuer, and bypasses the approval inbox and audit trail. | Open: production trusts one issuer, so not exploitable today; move to an approval action before a second identity provider is trusted. |
+| S-15 | Low | KYC documents are stored in the control database, not in the bank's own database. | Open (design decision for the bank: isolation and data residency). |
+| S-16 | Low | The portal's KYC download is a plain link, so it carries no bearer token and fails with 401. | Open (functional): download through the API client. |
+
+Defects found during the review (functional, not security) and fixed on the same branch:
+- The application context failed to start from Round 15 onwards, because `LoanServicingService` had two constructors and neither was marked `@Autowired`. Every database integration test failed, so the regressions below went undetected.
+- Bank migration V29 dropped `RESTRUCTURE`, `IMPAIR`, `WRITE_OFF` and the loan fee kinds from the contract event constraint. Those postings were refused, and V29 would fail on any bank that already holds them. It was corrected in place, since it had not been released.
+- The credit application detail query was missing a parameter, so every view failed.
+- Data-migration account staging queried a table that does not exist.
+- A second standing instruction for a deposit always failed, because the service updated a row that an immutability trigger protects.
+- Payment statements were bounded by today in UTC, so East African banks could not record same-day evidence from 00:00 to 03:00 local time, or over weekends.
+
+Checked with no finding:
+- **Notification receipt webhook:** HMAC-SHA256 over the timestamp and body, constant-time comparison, a 5-minute window, and 404 when no secret is set.
+- **M-Pesa callback:** a 64-hex token compared by hash in constant time, body and observation caps, and strict parsing.
+- **Concatenated SQL:** constant fragments with bound values (about 30 sites sampled).
+- **CSV exports:** formula injection is neutralised.
+- **Bank duties:** default-deny for unmapped routes, checked by `BankDutyRoutesTest`.
+- **Notification codes:** stored hashed, with expiry and a 5-attempt lockout.
+
+What the external penetration test should focus on:
+- the maker-checker side paths (bulk import, lending, KYC)
+- cross-bank and cross-customer IDs in URLs
+- callback replay and forgery
+- active content in uploads
+- expired, revoked or non-MFA tokens
+- edge exposure of the Keycloak admin console, the master realm, the actuator and metrics
+- body-size and rate limits
