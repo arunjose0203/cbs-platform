@@ -13,7 +13,9 @@ public final class TermStandingInstructionModels {
         TRANSFER_TO_ACCOUNT_AT_MATURITY
     }
 
+    /** Maturity instruction for a term deposit (P-10: maker-checker, ApprovalService action TERM_STANDING_INSTRUCTION). */
     public record InstructionRequest(
+            @Min(0) long expectedVersion,
             @NotNull UUID contractId,
             @NotNull InstructionType type,
             UUID targetAccountId,

@@ -1685,6 +1685,19 @@ class TenantAdministrationIntegrationTest {
         assertCode(()->approvals.contractEvent(ADMIN,UUID.randomUUID(),bank.id(),new com.cbs.contracts.ContractModels.Event(service.get(ADMIN,bank.id()).version(),loan.id(),com.cbs.contracts.ContractModels.Kind.REPAY,maturity,"1","Duplicate payoff")),"CONTRACT_CLOSED");
         mvc.perform(get("/api/v1/admin/tenants/"+bank.id()+"/contracts").param("type","LOAN").header("Authorization","Bearer "+TestIdentity.token("administrator",true))).andExpect(status().isOk()).andExpect(jsonPath("$.items[0].status").value("CLOSED"));
         mvc.perform(get("/api/v1/admin/tenants/"+bank.id()+"/contracts").param("type","LOAN").header("Authorization","Bearer "+TestIdentity.token("operator",false))).andExpect(status().isForbidden());
+        // P-10 (S-12): maturity instructions need an independent checker, and proceeds go only to the depositor's account.
+        java.util.function.Function<UUID,com.cbs.contracts.TermStandingInstructionModels.InstructionRequest> redeemTo=target->new com.cbs.contracts.TermStandingInstructionModels.InstructionRequest(
+            service.get(ADMIN,bank.id()).version(),td.id(),com.cbs.contracts.TermStandingInstructionModels.InstructionType.TRANSFER_TO_ACCOUNT_AT_MATURITY,target,null,null,"Signed customer mandate");
+        assertCode(()->approvals.standingInstruction(ADMIN,UUID.randomUUID(),bank.id(),redeemTo.apply(UUID.randomUUID())),"ACCOUNT_NOT_FOUND");
+        assertCode(()->approvals.standingInstruction(ADMIN,UUID.randomUUID(),bank.id(),new com.cbs.contracts.TermStandingInstructionModels.InstructionRequest(
+            service.get(ADMIN,bank.id()).version(),td.id(),com.cbs.contracts.TermStandingInstructionModels.InstructionType.AUTOMATIC_RENEWAL_PAYOUT,null,0,null,"No term")),"RENEWAL_PERIOD_REQUIRED");
+        for(int round=0;round<2;round++){ // a second instruction supersedes the first (append-only history)
+            var instruction=approvals.standingInstruction(ADMIN,UUID.randomUUID(),bank.id(),redeemTo.apply(f.account()));
+            assertCode(()->approvals.decide(ADMIN,instruction.id(),com.cbs.approvals.ApprovalModels.Decision.APPROVE,"Own request"),"SELF_APPROVAL_FORBIDDEN");
+            approvals.decide(CHECKER,instruction.id(),com.cbs.approvals.ApprovalModels.Decision.APPROVE,"Mandate verified");
+        }
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM platform.term_standing_instruction WHERE contract_id=? AND created_by=? AND target_account_id=?",Integer.class,td.id(),ADMIN.subject(),f.account())).isEqualTo(2);
+        assertThatThrownBy(()->jdbc.update("UPDATE platform.term_standing_instruction SET target_account_id=? WHERE contract_id=?",UUID.randomUUID(),td.id())).isInstanceOf(org.springframework.dao.DataAccessException.class);
     }
     @Autowired com.cbs.fx.FxTradeService fxTrades;
     @Autowired com.cbs.fx.BankFxStore bankFx;

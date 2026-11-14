@@ -74,11 +74,13 @@ public class ContractController {
         return ecl.evaluate(actor(jwt), bank, asOf);
     }
 
+    /** P-10: a maturity instruction decides where the depositor's money goes, so it needs an independent checker. */
     @PostMapping("/standing-instructions")
-    public TermStandingInstructionModels.StandingInstruction registerStandingInstruction(
-            JwtAuthenticationToken jwt, @PathVariable UUID bank,
+    @org.springframework.web.bind.annotation.ResponseStatus(org.springframework.http.HttpStatus.ACCEPTED)
+    public ApprovalModels.Request registerStandingInstruction(
+            JwtAuthenticationToken jwt, @PathVariable UUID bank, @RequestHeader("Idempotency-Key") UUID key,
             @Valid @RequestBody TermStandingInstructionModels.InstructionRequest input) {
-        return standingInstructions.register(actor(jwt), bank, input);
+        return approvals.standingInstruction(actor(jwt), key, bank, input);
     }
 
     @GetMapping("/{id}/standing-instruction")

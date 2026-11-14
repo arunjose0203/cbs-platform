@@ -84,7 +84,7 @@ class TermDepositCompletionTest {
         UUID targetAccountId = UUID.randomUUID();
 
         var req = new TermStandingInstructionModels.InstructionRequest(
-                contractId,
+                3L, contractId,
                 TermStandingInstructionModels.InstructionType.AUTOMATIC_RENEWAL_CAPITALIZE,
                 targetAccountId, 12, "11.5", "Mandate from customer"
         );

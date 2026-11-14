@@ -40,5 +40,5 @@ test('term deposit standing instruction submits renewal rule',async()=>{
  const f=fixture('TERM_DEPOSIT');await f.ui.render({innerHTML:''},()=>true);await f.ui.action('standing','contract');
  assert.equal(f.fields.find(x=>x.name==='type').value,'AUTOMATIC_RENEWAL_CAPITALIZE');
  await f.submit({type:'AUTOMATIC_RENEWAL_PAYOUT',renewalPeriodMonths:'6',renewalRatePercent:'10.5',reason:'Client agreement'});
- const call=f.calls.at(-1);assert.equal(call.path,'/admin/tenants/bank/contracts/standing-instructions');assert.equal(call.body.type,'AUTOMATIC_RENEWAL_PAYOUT');assert.equal(call.body.renewalPeriodMonths,6);
+ const call=f.calls.at(-1);assert.equal(call.path,'/admin/tenants/bank/contracts/standing-instructions');assert.equal(call.body.type,'AUTOMATIC_RENEWAL_PAYOUT');assert.equal(call.body.renewalPeriodMonths,6);assert.equal(call.body.expectedVersion,4);assert.equal(call.body.targetAccountId,null);assert.ok(call.headers['Idempotency-Key']);
 });

@@ -136,6 +136,9 @@ public class ApprovalService {
     private com.cbs.contracts.LoanMoratoriumService moratoria;
     @org.springframework.beans.factory.annotation.Autowired void moratoria(com.cbs.contracts.LoanMoratoriumService moratoria){this.moratoria=moratoria;}
     public Request moratorium(Actor actor,UUID key,UUID bankId,com.cbs.contracts.LoanMoratoriumModels.MoratoriumGrant input){return submit(actor,key,bankId,Action.LOAN_MORATORIUM,input.expectedVersion(),input.reason(),input);}
+    private com.cbs.contracts.TermStandingInstructionService standingInstructions;
+    @org.springframework.beans.factory.annotation.Autowired void standingInstructions(com.cbs.contracts.TermStandingInstructionService s){this.standingInstructions=s;}
+    public Request standingInstruction(Actor actor,UUID key,UUID bankId,com.cbs.contracts.TermStandingInstructionModels.InstructionRequest input){return submit(actor,key,bankId,Action.TERM_STANDING_INSTRUCTION,input.expectedVersion(),input.reason(),input);}
     public Request documentArchive(Actor actor,UUID key,UUID bankId,com.cbs.customers.CustomerModels.DocumentArchive input){return submit(actor,key,bankId,Action.CUSTOMER_DOCUMENT_ARCHIVE,input.expectedVersion(),input.reason(),input);}
     public Request notificationTemplate(Actor actor,UUID key,UUID bankId,com.cbs.notifications.NotificationModels.Template input){return submit(actor,key,bankId,Action.NOTIFICATION_TEMPLATE,input.expectedVersion(),input.reason(),input);}
     public Request bankDutyPolicy(Actor actor,UUID key,UUID bankId,com.cbs.access.BankDuties.Policy input){return submit(actor,key,bankId,Action.BANK_DUTY_POLICY,input.expectedVersion(),input.reason(),input);}
@@ -313,6 +316,9 @@ public class ApprovalService {
             } else if(action==Action.COMPLIANCE_ALERT_DISMISS) {
                 var bank=tenantRepository.get(id,true);var change=(com.cbs.compliance.AutomationModels.Dismiss)input;complianceDecisions.validate(bank,change);
                 before=complianceDecisions.before(bank,change);after=complianceDecisions.values(change);label=switch(change.type()){case SCREENING_HIT->"Dismiss screening match";case MONITORING_ALERT->"Dismiss monitoring alert";case BENEFICIARY_HIT->"Dismiss beneficiary screening match";};bankId=id;
+            } else if(action==Action.TERM_STANDING_INSTRUCTION) {
+                var bank=tenantRepository.get(id,true);var change=(com.cbs.contracts.TermStandingInstructionModels.InstructionRequest)input;standingInstructions.validate(bank,change);
+                before=standingInstructions.before(id,change.contractId());after=standingInstructions.values(change);label="Term deposit maturity instruction";bankId=id;
             } else if(action==Action.LOAN_MORATORIUM) {
                 var bank=tenantRepository.get(id,true);var change=(com.cbs.contracts.LoanMoratoriumModels.MoratoriumGrant)input;moratoria.validate(bank,change);
                 before=Map.of();after=moratoria.values(change);label="Loan moratorium "+change.type();bankId=id;
@@ -545,6 +551,7 @@ public class ApprovalService {
                         case SCREENING_LIST -> screening.apply(actor,request.targetId(),JSON.readValue(jdbc.queryForObject("SELECT payload::text FROM platform.approval_request WHERE id=?",String.class,id),com.cbs.compliance.AutomationModels.Activation.class),id);
                         case MONITORING_POLICY -> monitoring.apply(actor,request.targetId(),JSON.readValue(jdbc.queryForObject("SELECT payload::text FROM platform.approval_request WHERE id=?",String.class,id),com.cbs.compliance.AutomationModels.Policy.class),id);
                         case COMPLIANCE_ALERT_DISMISS -> complianceDecisions.apply(actor,request.targetId(),JSON.readValue(jdbc.queryForObject("SELECT payload::text FROM platform.approval_request WHERE id=?",String.class,id),com.cbs.compliance.AutomationModels.Dismiss.class),request.makerSubject(),id);
+                        case TERM_STANDING_INSTRUCTION -> standingInstructions.apply(actor,request.targetId(),JSON.readValue(jdbc.queryForObject("SELECT payload::text FROM platform.approval_request WHERE id=?",String.class,id),com.cbs.contracts.TermStandingInstructionModels.InstructionRequest.class),request.makerSubject(),id);
                         case LOAN_MORATORIUM -> moratoria.apply(actor,request.targetId(),JSON.readValue(jdbc.queryForObject("SELECT payload::text FROM platform.approval_request WHERE id=?",String.class,id),com.cbs.contracts.LoanMoratoriumModels.MoratoriumGrant.class),request.makerSubject(),id);
                         case KYC_REVIEW -> customers.applyReview(actor,request.targetId(),JSON.readValue(jdbc.queryForObject("SELECT payload::text FROM platform.approval_request WHERE id=?",String.class,id),com.cbs.customers.CustomerModels.KycReviewChange.class),request.makerSubject(),id);
                         case CUSTOMER_DOCUMENT_ARCHIVE -> documents.applyArchive(actor,request.targetId(),JSON.readValue(jdbc.queryForObject("SELECT payload::text FROM platform.approval_request WHERE id=?",String.class,id),com.cbs.customers.CustomerModels.DocumentArchive.class),id);
