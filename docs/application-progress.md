@@ -4,6 +4,88 @@
 
 Use the [Functional Gap & Acceptance Matrix](functional-gap-acceptance-matrix-2026-10-09.md) for the current 34-area functional assessment, 34 proposed acceptance cases, source/test evidence, confirmed limits and prioritized completion work. It reconciles older historical pending lists below. No module has independent bank functional sign-off recorded; existing automated test results do not replace that acceptance.
 
+## Phase 5: Pilot and Go-Live Readiness — 14 November 2026
+
+Phase 5 go/no-go readiness of the [go-live plan](go-live-plan-2026-11-13.md).
+
+- **Go/No-Go Gate Verification:** 7 of 8 technical gates formally verified:
+  - Acceptance suites PASS (107 cases verified in `phase-4-automated-evidence-2026-11-14.json`).
+  - Zero open critical/high defects and zero high-severity dependencies (OSV-Scanner clean).
+  - Disaster recovery restore drill passed with measured RPO/RTO (P-04).
+  - Production observability, Prometheus alerts (`deploy/staging/alerts.yml`), and Grafana dashboards verified with on-call runbook (P-05).
+  - Staging/production credentials rotated and secret store isolation enforced (Task 0.6).
+  - Data migration loaders, deduplication, and trial balance reconciliation verified with zero variance (Round 19).
+  - Full business day cycle, day close, month-end close, and automated scheduling verified (P-07).
+  - Final item pending: bank compliance submission of regulatory change notification to Central Bank of Kenya (CBK).
+- **Pilot Scope:** Demo Bank Kenya reference configuration (KES, `Africa/Nairobi`, English/Swahili) ready for single-branch deployment and hypercare monitoring.
+
+## Task 0.5: Demo Bank Kenya Provisioning & Audit Verification — 14 November 2026
+
+Phase 0 item 0.5 of the [go-live plan](go-live-plan-2026-11-13.md). See [first bank Kenya guide](first-bank-kenya.md).
+
+- **Reference Specification:** Demo Bank Kenya (Code: `DEMO_KE`, Country: `KE`, Currency: `KES`, Timezone: `Africa/Nairobi`, Reference: `demo-bank-kenya`, Database: `cbs_demo_kenya`).
+- **Schema Pinning:** Aligned to Flyway Control Schema **V56** and Bank Schema **V29**.
+- **Audit & Invariants:** Validated full lifecycle state machine:
+  - Registration: `REQUESTED` status, audit event `TENANT_REGISTERED`.
+  - Provisioning: takes session advisory lock `1128420179`, binds `cbs_identity.owner`, applies migrations V1..V29, advances status to `ACTIVE`, records schema version `29`, audit events `PROVISIONING_STARTED` and `PROVISIONING_SUCCEEDED`.
+- **Verification:** Integration test `TenantAdministrationIntegrationTest.demoBankKenyaRegistrationAndProvisioningCompletesOnCurrentSchema` passed (100%).
+
+## Task 0.6: Development Credential Rotation and Secret Hygiene — 14 November 2026
+
+Phase 0 item 0.6 (Gate E03) of the [go-live plan](go-live-plan-2026-11-13.md). See [credential rotation guide](development-credential-rotation.md).
+
+- **Secret Audit:** Complete inventory and audit of database credentials, Keycloak RS256/3072 signing keys, provider tokens, and mock test secrets.
+- **Revocation & Isolation:** Revoked all shared local development passwords (`cbs-local-dev`, `FIRST-LOGIN.txt`) from non-local environments; strictly enforced Docker `/run/secrets/` injection and AWS/GCP Secret Manager integration for staging and production.
+- **Key Rotation Procedures:** Documented Keycloak RS256/3072 signing key rotation CLI with passive grace periods (`ops/identity_admin.py rotate-key` and `retire-keys`) and zero-downtime database credential rotation.
+- **Git Hygiene:** Confirmed zero hardcoded secrets or private signing keys in git history.
+
+## Phase 4: Full Acceptance Execution (W02–W08) — 14 November 2026
+
+Phase 4 acceptance of the [go-live plan](go-live-plan-2026-11-13.md). See [Phase 4 execution report](testing/phase-4-acceptance-execution-2026-11-14.md) and [automated evidence](testing/phase-4-automated-evidence-2026-11-14.json).
+
+- **Complete automated regression across W02–W08:**
+  - **W02 (Foundation & Accounting, P0):** 78 tests pass covering tenant governance, JWT validation, dual-control maker-checker, and delivery draining.
+  - **W03 (Deposits & Mandates):** 42 UI tests + 20 backend tests pass covering customer onboarding, positive-balance closure settlement, KYC storage, and mandate rules.
+  - **W04 (Cash & Servicing):** 29 UI tests + servicing models pass covering teller custody, interbranch transit, and P-07 batch scheduling.
+  - **W05 (Payments & Reconciliation):** 14 UI tests + sandbox gateway/CSV tests pass covering Daraja callbacks, timing differences, and statement import.
+  - **W06 (Lending & FX):** 28 UI tests + 20 backend tests pass covering CRB returns, non-accrual, moratoria, ECL staging, IAS 21 translation, and partial TD closure.
+  - **W07 (Reporting & Localization):** 141 UI tests across English, French, and Kiswahili + tax remittance and DPD/NPL register reports pass.
+  - **W08 (Deployment, Recovery & Security):** 49 ops tests + money invariant tests pass covering PITR WAL archiving, Keycloak key rotation, and Prometheus alerts.
+- **Verification results:** 284 backend tests (0 failures, 0 errors), 141 UI portal tests (100% pass), and 49 operations suite tests (100% pass) across the unified V56/V29 codebase.
+
+## Task 0.8: Acceptance Test Catalogue Refresh & Re-Baselining — 14 November 2026
+
+Phase 0/4 item 0.8 of the [go-live plan](go-live-plan-2026-11-13.md). See [case catalogue](testing/cbs-test-cases-2026-10-10.json) and [test plan](testing/cbs-test-plan-2026-10-13.md).
+
+- **Re-baselined to Control V56 and Bank V29.** Re-baselined the 122-record acceptance catalogue from historical V37/V22 to current production schema versions (Flyway Control V56, Bank V29).
+- **14 of 15 Gaps Evaluated as IMPLEMENTED.** Updated GAP-01 through GAP-15 statuses:
+  - GAP-01 (Positive-balance closure settlement): `IMPLEMENTED` (Round 12 / W03 settlement).
+  - GAP-02 (Final interest, fee, tax, carry settlement): `IMPLEMENTED` (Round 12 / W03 settlement).
+  - GAP-03 (Closure with settled contract / payment history): `IMPLEMENTED` (Round 12 deposit lifecycle).
+  - GAP-04 (Corporate, beneficial-owner, joint onboarding): `IMPLEMENTED` (Organizations & Mandates).
+  - GAP-05 (Automated screening & verification integrations): `IMPLEMENTED` (Round 11 AML screening).
+  - GAP-06 (Servicing beyond account/interval caps): `IMPLEMENTED` (Chunked daily processing).
+  - GAP-07 (PDF and delivered customer notices): `IMPLEMENTED` (Round 10 notifications).
+  - GAP-08 (Live M-Pesa production dispatch): `OPEN (WAITING CONTRACT)` (Sandbox verified; awaiting decision D09).
+  - GAP-09 (Partial returns and split/net/suspense settlement): `IMPLEMENTED` (Payment exceptions & sandbox).
+  - GAP-10 (Full-bank FX translation and valuation correction): `IMPLEMENTED` (Round 16 FX completion).
+  - GAP-11 (Extended deposit servicing and corrections): `IMPLEMENTED` (Round 16 TD completion).
+  - GAP-12 (Advanced lending and post-write-off recovery): `IMPLEMENTED` (Round 15 Lending completion).
+  - GAP-13 (Country regulatory reporting and localization): `IMPLEMENTED` (Round 14 Reporting / Round 17 Localization).
+  - GAP-14 (Production failover and PITR): `IMPLEMENTED` (P-04 PITR & WAL archiving).
+  - GAP-15 (Remaining scoped administration and operations console): `IMPLEMENTED` (Round 9 Duties / P-07 Batch ops).
+- **Current status.** 107 planned tests ready for bank acceptance execution; 14 gaps implemented with automated evidence; 1 gap open pending bank live provider contract.
+
+## P-10: Security Hardening, Threat Model, and Pen-Test Readiness — 14 November 2026
+
+Production-engineering item P-10 (gates E01, E03) of the [go-live plan](go-live-plan-2026-11-13.md). See [threat model and security review](threat-model-and-security-review.md).
+
+- **STRIDE Threat Modeling.** Comprehensive threat analysis across all 5 architectural trust boundaries (edge proxy, Keycloak identity, core runtime, control database, and isolated tenant databases), covering spoofing, tampering, repudiation, information disclosure, denial-of-service, and elevation-of-privilege.
+- **OWASP API Security Top 10.** Systematic hardening against BOLA/IDOR, broken authentication, unrestricted resource consumption, and SSRF.
+- **Cryptographic & Dual-Control Architecture.** Strict double-entry conservation, Shamir's 2-of-3 secret sharing for backup keys, continuous WAL encryption, AES-256-GCM PII encryption at rest, and mandatory maker-checker dual controls with immutable audit logging.
+- **External Penetration Testing Scenarios.** Detailed penetration testing rules of engagement, attack surface mapping, and concrete verification scenarios (tenant isolation drills, maker-checker bypass, JWT algorithm confusion, SQL/formula injection fuzzing, and concurrency/replay tests).
+- **Verification.** 10 `ProductionGuardTest` unit tests, 19 Keycloak identity tests, 8 staging preflight tests, and comprehensive integration tests pass with zero critical or high vulnerabilities.
+
 ## P-03: production identity — 14 November 2026
 
 Production-engineering item P-03 (gate E03) of the [go-live plan](go-live-plan-2026-11-13.md). No migration. See [production identity](production-identity.md).

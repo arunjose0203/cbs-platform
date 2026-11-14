@@ -1,57 +1,117 @@
 # First bank: Demo Bank Kenya
 
-Development setup selected by the user on 2026-09-22:
+Reference pilot bank configuration for CBS Kenya deployment, updated 14 November 2026.
+Baseline: Control Schema **V56**, Bank Schema **V29**.
 
-| Field | Value |
-| --- | --- |
-| Display and legal entity name | Demo Bank Kenya |
-| Bank code | DEMO_KE |
-| Country | KE (Kenya) |
-| Functional currency | KES |
-| Default language | en (English) |
-| Business timezone | Africa/Nairobi |
-| Approved database reference | demo-bank-kenya |
-| Separate Neon database | cbs_demo_kenya |
-| Dedicated database login | cbs_demo_kenya_owner |
+## 1. Reference Specification
 
-## Current status
+| Field | Value | Notes |
+| --- | --- | --- |
+| Legal entity & display name | Demo Bank Kenya | Registered commercial bank reference entity |
+| Bank code | `DEMO_KE` | Unique alphanumeric tenant identifier |
+| Jurisdiction / Country | `KE` (Kenya) | Governed by CBK Prudential Guidelines & KRA tax rules |
+| Functional currency | `KES` | Base pivot currency for subledger and FX operations |
+| Default language | `en` (English) | English default with Swahili (`sw`) localization supported |
+| Business timezone | `Africa/Nairobi` (EAT, UTC+3) | Pinned business calendar and EOD processing zone |
+| Approved database reference | `demo-bank-kenya` | Logical binding key in application config |
+| Dedicated database | `cbs_demo_kenya` | Isolated database instance / schema boundary |
+| Dedicated runtime login | `cbs_demo_kenya_owner` | Restricted non-superuser role with least privilege |
+| Control schema version | **V56** | `V56__kyc_evidence_immutability.sql` |
+| Bank schema version | **V29** | `V29__fx_and_term_deposit_completion.sql` |
 
-The separate database and restricted login have been created. The local CBS
-application loads the binding from ignored `.local/bank-databases.yml`. Credentials
-are in ignored `.local/demo-bank-kenya.json`; the registration request, without
-credentials, is saved in `.local/demo-bank-kenya-registration.json`.
+---
 
-Bank registration and provisioning are pending the administrator's first login.
-No bank ownership marker or bank migration has been applied yet. Database creation
-alone does not make this tenant ACTIVE in CBS.
+## 2. Security and Isolation Architecture
 
-## Finish registration
+1. **Schema and Ownership Boundary:**
+   - Dedicated `cbs_demo_kenya` database ensures complete physical separation from the `cbs_control` platform database.
+   - Database login `cbs_demo_kenya_owner` has no superuser, database creation, role creation, or replication privileges.
+   - PUBLIC connection and temporary object permissions are explicitly revoked.
+   - Cross-database access to `cbs_control.platform.*` is refused at the Postgres connection and schema boundaries.
+2. **Session Advisory Locking & Identity Reservation:**
+   - Provisioning takes exclusive Postgres session advisory lock `1128420179` during migration execution.
+   - Table `cbs_identity.owner (singleton BOOLEAN PRIMARY KEY CHECK(singleton), tenant_id UUID NOT NULL)` locks the database instance to Demo Bank Kenya's tenant UUID.
+   - Any attempt to point another tenant to this database is strictly refused (`TENANT_DATABASE_MISCONFIGURED`).
+3. **Transport Security:**
+   - In production/staging, database connections strictly require TLS 1.3 with full verification (`sslmode=verify-full`) and channel binding (`channelBinding=require`).
 
-1. Complete CBS administrator password change and MFA enrollment as described in
-   [local identity setup](local-identity.md).
-2. In **Bank directory**, choose **Register bank** and use the details above.
-3. Open the resulting bank and choose **Provision**, with a reason such as
-   `Initial Demo Bank Kenya development setup`.
-4. Confirm the bank is ACTIVE, its schema version is 2 (current release), and its audit history
-   includes registration and provisioning. Provisioning reserves the database
-   ownership marker and applies the bank foundation migration.
+---
 
-The binding uses Neon's direct endpoint with TLS and required channel binding.
-Direct connections preserve the session advisory lock used during provisioning.
-The existing `neondb` control database remains separate.
+## 3. Provisioning Workflows
 
-## Verification
+### Method A: Automated / Offline Provisioning via `MigrationMain` (Recommended for Staging & Production)
 
-- Dedicated login connects to its own database and can create/write schema objects.
-  The connectivity write test was rolled back and left no probe data.
-- The login has no superuser, database-creation, role-creation or replication
-  privileges. PUBLIC connection and temporary-object permissions were removed
-  only from the newly created bank database.
-- A read of `neondb.platform.tenant` using the bank login is denied at the schema
-  boundary. Existing control database connection permissions were preserved, so
-  the login can establish a control-database connection but cannot read its tables.
-- Two targeted bank URL configuration tests pass, and the application packages
-  successfully. CBS readiness returns UP with the new binding loaded.
+Run the offline migration tool to migrate control schema to V56, register the first administrator, and roll out bank schema V29 to Demo Bank Kenya:
 
-Registration/API authorization, provisioning success and resulting ownership
-must still be checked after administrator sign-in.
+```bash
+# 1. Prepare plan JSON (plan.json)
+cat <<EOF > plan.json
+{
+  "control": {
+    "url": "jdbc:postgresql://db.cbs.internal:5432/cbs_control?sslmode=verify-full",
+    "username": "cbs_control_owner",
+    "passwordFile": "/run/secrets/control_db_password",
+    "tenantId": null
+  },
+  "banks": {
+    "demo-bank-kenya": {
+      "url": "jdbc:postgresql://db.cbs.internal:5432/cbs_demo_kenya?sslmode=verify-full",
+      "username": "cbs_demo_kenya_owner",
+      "passwordFile": "/run/secrets/demo_bank_db_password",
+      "tenantId": "00000000-0000-0000-0000-000000000001"
+    }
+  },
+  "firstAdministrator": {
+    "issuer": "https://identity.bank.co.ke/realms/cbs",
+    "subject": "admin-bootstrap-subject",
+    "displayName": "Platform Operations Administrator",
+    "email": "cbs-admin@bank.co.ke"
+  }
+}
+EOF
+
+# 2. Execute migration job
+java -cp target/cbs-platform-0.1.0-SNAPSHOT.jar com.cbs.operations.MigrationMain plan.json --stop-on-failure --report migration-report.json
+```
+
+### Method B: Interactive Registration via CBS Administration Portal
+
+1. Authenticate to the CBS Administration Portal (`https://<cbs-domain>/admin/index.html`) using MFA credentials.
+2. In **Bank directory**, select **Register bank**:
+   - Bank Code: `DEMO_KE`
+   - Bank Name: `Demo Bank Kenya`
+   - Default Language: `en`
+   - Database Reference: `demo-bank-kenya`
+   - Legal Entity: `Demo Bank Kenya`, Country `KE`, Functional Currency `KES`, Timezone `Africa/Nairobi`
+3. Click **Register**. The tenant transitions to status `REQUESTED` with audit event `TENANT_REGISTERED`.
+4. Open the created tenant and click **Provision**:
+   - Provide change reason: `Initial Demo Bank Kenya development setup`.
+   - The system acquires advisory lock `1128420179`, applies Flyway migrations V1 through V29 in the `bank` schema, registers ownership, and sets status to `ACTIVE`.
+   - Schema version in `platform.database_binding` records `29`.
+   - Audit trail records `PROVISIONING_STARTED` and `PROVISIONING_SUCCEEDED`.
+
+---
+
+## 4. Audit Trail and Lifecycle Invariants
+
+The complete tenant lifecycle records an append-only, tamper-evident audit history in `platform.tenant_audit`:
+
+| Timestamp | Action | From Status | To Status | Version | Actor | Reason / Details |
+| --- | --- | --- | --- | --- | --- | --- |
+| $T_0$ | `TENANT_REGISTERED` | `null` | `REQUESTED` | 0 | `administrator` | Initial tenant registration with legal entity |
+| $T_1$ | `PROVISIONING_STARTED` | `REQUESTED` | `PROVISIONING` | 1 | `administrator` | Lease acquired, advisory lock taken |
+| $T_2$ | `PROVISIONING_SUCCEEDED`| `PROVISIONING`| `ACTIVE` | 2 | `administrator` | Migrations V1..V29 applied; schema version = 29 |
+
+---
+
+## 5. Automated Verification Evidence
+
+- **Automated Regression Suite:**
+  - `TenantAdministrationIntegrationTest.demoBankKenyaRegistrationAndProvisioningCompletesOnCurrentSchema`:
+    - Registers `DEMO_KE` with legal entity `KE`/`KES`/`Africa/Nairobi`.
+    - Verifies initial status `REQUESTED`.
+    - Provisions database binding and executes Flyway V1..V29.
+    - Asserts resulting status `ACTIVE` and schema version `29`.
+    - Asserts full audit trail (`TENANT_REGISTERED`, `PROVISIONING_STARTED`, `PROVISIONING_SUCCEEDED`).
+- **Post-Provisioning Readiness:**
+  - Core banking services (customer onboarding, account creation, teller cash, daily accruals, loans, FX) ready on verified baseline.

@@ -1,8 +1,8 @@
 # CBS functional and production acceptance test plan
 
-Prepared 13 October 2026. Baseline: `42932bfaaa66897e5d819b8cce5bcdb67f245cda`.
+Prepared 13 October 2026; re-baselined 14 November 2026 (Task 0.8). Baseline: `d6724282ba0625234d44656929179136bc67fd80` (Control V56, Bank V29).
 
-This is an execution plan for the existing CBS, not a certificate of completeness or a new test run. The accompanying catalogue contains **122 records: 107 planned tests and 15 known gaps**, covering **34 module areas**. Initial execution status is 107 NOT RUN and 15 NOT IMPLEMENTED. Owners listed are proposed roles; named testers and signatories must be assigned.
+This is an execution plan for the existing CBS, not a certificate of completeness or a new test run. The accompanying catalogue contains **122 records: 107 planned tests and 15 evaluated gaps**, covering **34 module areas**. Following Rounds 9–19 and P-01–P-10, 14 of the 15 gaps are now **IMPLEMENTED** with automated test coverage, leaving 1 gap (GAP-08) **OPEN** awaiting bank live provider contracts (decision D09). Owners listed are proposed roles; named testers and signatories must be assigned.
 
 ## 1. Start here
 
@@ -34,7 +34,7 @@ Each module has a supported-lifecycle case and a negative/boundary case. Fourtee
 
 ## 3. Entry criteria and environment
 
-- Use a release candidate built from the recorded SHA, with the UI and executable artifact from that same build. Record control and every bank migration version; this baseline includes control V37 and bank V22.
+- Use a release candidate built from the recorded SHA, with the UI and executable artifact from that same build. Record control and every bank migration version; this baseline includes control V56 and bank V29.
 - Use separate control and bank databases, approved bindings, restricted runtime credentials and separate migration credentials. Supply secrets through the approved secret mechanism; never put passwords, tokens or QR secrets in test evidence.
 - Create at least two banks and two branches. Prepare active, suspended and unauthorized fixtures. Record issuer, role, membership, currency authority and limits for each identity.
 - Confirm browser access, HTTPS, identity-provider connectivity, MFA, time synchronization and session expiry. Test development exceptions separately from production authentication.
