@@ -18,7 +18,8 @@ class BankDutiesTest {
         var unclassified = EnumSet.noneOf(Action.class);
         for (Action action : Action.values()) if (BankDuties.duty(action) == null) unclassified.add(action);
         assertThat(unclassified).containsExactlyInAnyOrder(Action.BANK_SUSPEND, Action.BANK_RESUME, Action.STAFF_UPDATE,
-                Action.CREDIT_REVIEW, Action.CREDIT_RELEASE, Action.LOAN_SERVICING, Action.LOAN_FEE);
+                Action.CREDIT_REVIEW, Action.CREDIT_RELEASE, Action.LOAN_SERVICING, Action.LOAN_FEE,
+                Action.LOAN_MORATORIUM); // P-10: governed by lending grants, like a restructure
     }
 
     @Test void accessChangesAreAccessAdministrationAndMoneyMovesAreTransactional() {
