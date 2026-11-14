@@ -3396,6 +3396,30 @@ class TenantAdministrationIntegrationTest {
         // An unknown canary reference is refused before anything runs.
         assertThatThrownBy(()->com.cbs.operations.MigrationMain.run(plan,new com.cbs.operations.MigrationMain.Options(true,java.util.Set.of("drill-c"),false,null))).isInstanceOf(IllegalArgumentException.class);
     }
+    @Autowired com.cbs.migration.MigrationService cutover;
+    /**
+     * P-10 (S-09, S-10): the cutover reconciliation compares the legacy total with balances actually posted in the
+     * bank's ledger, one currency at a time; and the unsafe customer batch commit is refused.
+     */
+    @Test void cutoverReconciliationComparesPostedBankBalancesAndBatchCommitIsRefused()throws Exception{
+        var f=fundingFixture("cutover-recon");UUID b=f.f().bank().id();String cur=f.liability().currency();fund(f,"1000");
+        var matched=cutover.reconcileTrialBalance(ADMIN,b,Map.of(cur,new java.math.BigDecimal("1000.00")));
+        assertThat(matched.status()).isEqualTo("MATCHED");assertThat(new java.math.BigDecimal(matched.platformTotal())).isEqualByComparingTo("1000");
+        var short_=cutover.reconcileTrialBalance(ADMIN,b,Map.of(cur,new java.math.BigDecimal("999.99")));
+        assertThat(short_.status()).isEqualTo("DISCREPANCY");assertThat(new java.math.BigDecimal(short_.difference())).isEqualByComparingTo("0.01");
+        // A staged import file alone can never produce a match: staging does not touch the bank's ledger.
+        cutover.stageAccounts(ADMIN,b,List.of(new com.cbs.migration.MigrationModels.AccountRecord("ACC-9","LEG-9","MIG-0009","SAV",cur,"5000","0")));
+        assertThat(cutover.reconcileTrialBalance(ADMIN,b,Map.of(cur,new java.math.BigDecimal("6000"))).status()).isEqualTo("DISCREPANCY");
+        assertCode(()->cutover.reconcileTrialBalance(ADMIN,b,Map.of("AAA",java.math.BigDecimal.ONE,"BBB",java.math.BigDecimal.ONE)),"RECONCILIATION_ONE_CURRENCY");
+        assertThatThrownBy(()->jdbc.update("UPDATE platform.migration_reconciliation SET status='MATCHED' WHERE id=?",short_.id())).hasMessageContaining("append-only");
+        // Customers are not written directly from a staged file.
+        var staged=cutover.stageCustomers(ADMIN,b,List.of(new com.cbs.migration.MigrationModels.CustomerRecord("LEG-1","12345678","Fictional Migrant","+254712345678","m@example.com",java.time.LocalDate.of(1980,1,1),"KE","KYC/1")));
+        assertThat(jdbc.queryForObject("SELECT payload->>'nationalId' FROM platform.migration_staged_item WHERE batch_id=?",String.class,staged.batchId())).startsWith("pd1:");
+        long customers=jdbc.queryForObject("SELECT count(*) FROM platform.customer_registry WHERE tenant_id=?",Long.class,b);
+        mvc.perform(admin(post("/api/v1/admin/tenants/"+b+"/migration/customers/commit/"+staged.batchId()))).andExpect(status().isConflict())
+            .andExpect(jsonPath("$.code").value("MIGRATION_COMMIT_UNAVAILABLE"));
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM platform.customer_registry WHERE tenant_id=?",Long.class,b)).isEqualTo(customers);
+    }
     @Autowired com.cbs.customers.CustomerDocumentService kycDocuments;
     /**
      * P-10: KYC documents are encrypted under a key derived from the configured field key and bound to their customer;
