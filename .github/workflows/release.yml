@@ -117,7 +117,7 @@ jobs:
       - name: Sign the image (keyless, recorded in the public transparency log)
         run: cosign sign --yes "$IMAGE@${{ steps.push.outputs.digest }}"
       - name: Build provenance attestation
-        uses: actions/attest-build-provenance@v2
+        uses: actions/attest-build-provenance@v4
         with:
           subject-name: ${{ env.IMAGE }}
           subject-digest: ${{ steps.push.outputs.digest }}
