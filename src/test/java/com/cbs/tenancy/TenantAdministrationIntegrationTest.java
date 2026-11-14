@@ -306,6 +306,35 @@ class TenantAdministrationIntegrationTest {
         assertThat(events.getFirst().changeDetails()).containsKey("registration");
     }
 
+    @Test void demoBankKenyaRegistrationAndProvisioningCompletesOnCurrentSchema() throws Exception {
+        RegisterRequest request = new RegisterRequest(
+                "DEMO_KE",
+                "Demo Bank Kenya",
+                "en",
+                "demo-bank-kenya",
+                new LegalEntityInput("Demo Bank Kenya", "KE", "KES", "Africa/Nairobi"));
+        UUID key = UUID.randomUUID();
+        String body = mvc.perform(admin(post("/api/v1/admin/tenants"))
+                        .header("Idempotency-Key", key)
+                        .contentType("application/json").content(json.writeValueAsString(request)))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.status").value("REQUESTED"))
+                .andExpect(jsonPath("$.bankCode").value("DEMO_KE"))
+                .andExpect(jsonPath("$.defaultLanguage").value("en"))
+                .andReturn().getResponse().getContentAsString();
+        Tenant registered = json.readValue(body, Tenant.class);
+        assertThat(registered.status()).isEqualTo(Status.REQUESTED);
+
+        Tenant provisioned = service.provision(ADMIN, registered.id(), new ChangeRequest(registered.version(), "Initial Demo Bank Kenya development setup"));
+        assertThat(provisioned.status()).isEqualTo(Status.ACTIVE);
+        assertThat(provisioned.databaseBinding().schemaVersion()).isEqualTo(BankDatabaseProvisioner.expectedBankVersion());
+        assertThat(provisioned.databaseBinding().schemaVersion()).isEqualTo("29");
+
+        List<AuditEvent> auditTrail = service.auditEvents(ADMIN, provisioned.id(), 100, 0).items();
+        List<String> actions = auditTrail.stream().map(AuditEvent::action).toList();
+        assertThat(actions).contains("TENANT_REGISTERED", "PROVISIONING_STARTED", "PROVISIONING_SUCCEEDED");
+    }
+
     @Test void duplicateCodesAndBindingsRollBackTheWholeRegistration() {
         RegisterRequest first = request("code-first");
         service.register(ADMIN, UUID.randomUUID(), first);

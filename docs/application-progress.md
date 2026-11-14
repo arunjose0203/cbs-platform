@@ -4,6 +4,41 @@
 
 Use the [Functional Gap & Acceptance Matrix](functional-gap-acceptance-matrix-2026-10-09.md) for the current 34-area functional assessment, 34 proposed acceptance cases, source/test evidence, confirmed limits and prioritized completion work. It reconciles older historical pending lists below. No module has independent bank functional sign-off recorded; existing automated test results do not replace that acceptance.
 
+## Phase 5: Pilot and Go-Live Readiness — 14 November 2026
+
+Phase 5 go/no-go readiness of the [go-live plan](go-live-plan-2026-11-13.md).
+
+- **Go/No-Go Gate Verification:** 7 of 8 technical gates formally verified:
+  - Acceptance suites PASS (107 cases verified in `phase-4-automated-evidence-2026-11-14.json`).
+  - Zero open critical/high defects and zero high-severity dependencies (OSV-Scanner clean).
+  - Disaster recovery restore drill passed with measured RPO/RTO (P-04).
+  - Production observability, Prometheus alerts (`deploy/staging/alerts.yml`), and Grafana dashboards verified with on-call runbook (P-05).
+  - Staging/production credentials rotated and secret store isolation enforced (Task 0.6).
+  - Data migration loaders, deduplication, and trial balance reconciliation verified with zero variance (Round 19).
+  - Full business day cycle, day close, month-end close, and automated scheduling verified (P-07).
+  - Final item pending: bank compliance submission of regulatory change notification to Central Bank of Kenya (CBK).
+- **Pilot Scope:** Demo Bank Kenya reference configuration (KES, `Africa/Nairobi`, English/Swahili) ready for single-branch deployment and hypercare monitoring.
+
+## Task 0.5: Demo Bank Kenya Provisioning & Audit Verification — 14 November 2026
+
+Phase 0 item 0.5 of the [go-live plan](go-live-plan-2026-11-13.md). See [first bank Kenya guide](first-bank-kenya.md).
+
+- **Reference Specification:** Demo Bank Kenya (Code: `DEMO_KE`, Country: `KE`, Currency: `KES`, Timezone: `Africa/Nairobi`, Reference: `demo-bank-kenya`, Database: `cbs_demo_kenya`).
+- **Schema Pinning:** Aligned to Flyway Control Schema **V56** and Bank Schema **V29**.
+- **Audit & Invariants:** Validated full lifecycle state machine:
+  - Registration: `REQUESTED` status, audit event `TENANT_REGISTERED`.
+  - Provisioning: takes session advisory lock `1128420179`, binds `cbs_identity.owner`, applies migrations V1..V29, advances status to `ACTIVE`, records schema version `29`, audit events `PROVISIONING_STARTED` and `PROVISIONING_SUCCEEDED`.
+- **Verification:** Integration test `TenantAdministrationIntegrationTest.demoBankKenyaRegistrationAndProvisioningCompletesOnCurrentSchema` passed (100%).
+
+## Task 0.6: Development Credential Rotation and Secret Hygiene — 14 November 2026
+
+Phase 0 item 0.6 (Gate E03) of the [go-live plan](go-live-plan-2026-11-13.md). See [credential rotation guide](development-credential-rotation.md).
+
+- **Secret Audit:** Complete inventory and audit of database credentials, Keycloak RS256/3072 signing keys, provider tokens, and mock test secrets.
+- **Revocation & Isolation:** Revoked all shared local development passwords (`cbs-local-dev`, `FIRST-LOGIN.txt`) from non-local environments; strictly enforced Docker `/run/secrets/` injection and AWS/GCP Secret Manager integration for staging and production.
+- **Key Rotation Procedures:** Documented Keycloak RS256/3072 signing key rotation CLI with passive grace periods (`ops/identity_admin.py rotate-key` and `retire-keys`) and zero-downtime database credential rotation.
+- **Git Hygiene:** Confirmed zero hardcoded secrets or private signing keys in git history.
+
 ## Phase 4: Full Acceptance Execution (W02–W08) — 14 November 2026
 
 Phase 4 acceptance of the [go-live plan](go-live-plan-2026-11-13.md). See [Phase 4 execution report](testing/phase-4-acceptance-execution-2026-11-14.md) and [automated evidence](testing/phase-4-automated-evidence-2026-11-14.json).

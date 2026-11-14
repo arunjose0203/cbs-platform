@@ -17,7 +17,7 @@ final class TestDatabases {
         if (DATABASES.isEmpty()) {
             String prefix = "cbs_m01_" + UUID.randomUUID().toString().replace("-", "");
             try (Connection admin = adminConnection()) {
-                for (String suffix : new String[] {"control", "kyc", "a", "b", "failure", "recovery", "ledger", "ledgerother", "ledgerupgrade", "dayclose", "dayfailure", "dayguards", "customer", "customerother", "customerfail", "account", "accountguards", "accountrecovery", "funding", "fundguards", "closure", "settle", "chunks", "volume", "alerts", "mandates", "periods", "reporting", "screening", "fundrecovery", "fundfailure", "operations", "optransfer", "branchops", "cash", "servicing", "compliance", "payments", "lifecycle", "fx", "fxtrade", "contracts", "corrections", "termservicing", "credit", "arrears", "lendingaccess", "duties", "dutyroutes", "privacy", "notices", "invariants", "batch", "upgradea", "upgradeb", "perf"}) {
+                for (String suffix : new String[] {"control", "kyc", "a", "b", "failure", "recovery", "ledger", "ledgerother", "ledgerupgrade", "dayclose", "dayfailure", "dayguards", "customer", "customerother", "customerfail", "account", "accountguards", "accountrecovery", "funding", "fundguards", "closure", "settle", "chunks", "volume", "alerts", "mandates", "periods", "reporting", "screening", "fundrecovery", "fundfailure", "operations", "optransfer", "branchops", "cash", "servicing", "compliance", "payments", "lifecycle", "fx", "fxtrade", "contracts", "corrections", "termservicing", "credit", "arrears", "lendingaccess", "duties", "dutyroutes", "privacy", "notices", "invariants", "batch", "upgradea", "upgradeb", "perf", "demokenya"}) {
                     String name = prefix + "_" + suffix;
                     String password = UUID.randomUUID().toString().replace("-", "");
                     try (var statement = admin.createStatement()) {
@@ -52,6 +52,7 @@ final class TestDatabases {
         bind(registry,"customer-main","customer");bind(registry,"customer-guards","customerother");bind(registry,"customer-recovery","customerfail");
         bind(registry,"kyc-evidence","kyc");
         bind(registry,"day-main","dayclose");bind(registry,"day-failure","dayfailure");bind(registry,"day-guards","dayguards");
+        bind(registry,"demo-bank-kenya","demokenya");
         for (String reference : new String[] {"lending-other","compliance-other","funding-isolation","account-isolation","registration-one", "race-one", "code-first", "code-second",
                 "binding-one", "invalid-first", "race-state", "audit-only", "entity-one","branch-bank-a","branch-bank-b",
                 "reference-main","reference-guards","reference-isolation","reference-other","reference-stale","reference-calendar",
@@ -84,7 +85,7 @@ final class TestDatabases {
     static void close() throws SQLException {
         try (Connection admin = adminConnection(); var statement = admin.createStatement()) {
             for (Database target : DATABASES.values()) {
-                if (!target.name().matches("cbs_m01_[0-9a-f]{32}_(control|kyc|a|b|failure|recovery|ledger|ledgerother|ledgerupgrade|dayclose|dayfailure|dayguards|customer|customerother|customerfail|account|accountguards|accountrecovery|funding|fundguards|closure|settle|chunks|volume|alerts|mandates|periods|reporting|screening|fundrecovery|fundfailure|operations|optransfer|branchops|cash|servicing|compliance|payments|lifecycle|fx|fxtrade|contracts|corrections|termservicing|credit|arrears|lendingaccess|duties|dutyroutes|privacy|notices|invariants|batch|upgradea|upgradeb|perf)")) { throw new IllegalStateException("Unsafe fixture name"); }
+                if (!target.name().matches("cbs_m01_[0-9a-f]{32}_(control|kyc|a|b|failure|recovery|ledger|ledgerother|ledgerupgrade|dayclose|dayfailure|dayguards|customer|customerother|customerfail|account|accountguards|accountrecovery|funding|fundguards|closure|settle|chunks|volume|alerts|mandates|periods|reporting|screening|fundrecovery|fundfailure|operations|optransfer|branchops|cash|servicing|compliance|payments|lifecycle|fx|fxtrade|contracts|corrections|termservicing|credit|arrears|lendingaccess|duties|dutyroutes|privacy|notices|invariants|batch|upgradea|upgradeb|perf|demokenya)")) { throw new IllegalStateException("Unsafe fixture name"); }
                 statement.execute("DROP DATABASE IF EXISTS " + target.name() + " WITH (FORCE)");
                 statement.execute("DROP ROLE IF EXISTS " + target.name());
             }
