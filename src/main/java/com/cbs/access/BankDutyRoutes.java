@@ -69,6 +69,8 @@ public final class BankDutyRoutes {
             duty("/fx", TREASURY, TREASURY, FINANCE), duty("/compliance", COMPLIANCE),
             // Privacy (Round 18): the data protection officer works under the compliance duty.
             duty("/privacy", COMPLIANCE),
+            // Complaints (Round 20): handled by customer operations; compliance and finance read the register.
+            duty("/complaints", CUSTOMER, CUSTOMER, COMPLIANCE, FINANCE),
             // Migration (Round 19): cutover tooling operates under configuration and finance duties.
             duty("/migration", CONFIG, CONFIG, FINANCE));
 

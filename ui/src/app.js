@@ -27,13 +27,14 @@ import {createReportUi} from './report-ui.js';
 import {createJournalUi} from './journal-ui.js';
 import {createLedgerUi} from './ledger-ui.js';
 import {createPrivacyUi} from './privacy-ui.js';
+import {createComplaintsUi} from './complaints-ui.js';
 
 const content=document.querySelector('#content'), dialog=document.querySelector('#dialog');
 let manager, user, me, configuration, view='banks', selectedBank, submitForm, lastFocus;
 let rows=[], offset=0, busy=false, noticeTimer, renderVersion=0;
 let approvalScope='INBOX', approvalAction='', approvalBank='', selectedApproval;
 const pageSize=25;
-const labels={opsconsole:'Operations console',privacy:'Privacy & data protection',bankduties:"Bank duties & access review",lendingaccess:"Lending permissions",lendingapprovals:"Lending approval inbox",collections:"Loan arrears & collections",credit:'Loan applications & credit review',term:'Term deposits',loan:'Lending',fx:'FX & exchange rates',paymentcases:'Payment exceptions',statements:'M-Pesa statements',payments:'Payments & reconciliation',compliance:'Compliance cases',servicing:'Deposit servicing',notifications:'Customer alerts',reporting:'Management reports',screening:'Screening & monitoring',branchwork:'Branch workspace',banks:'Bank directory',staff:'Staff & access',approvals:'Approval Inbox',settings:'Bank settings',chart:'Chart of Accounts',ledgers:'Ledger Accounts',journals:'Journals & balances',reports:'Accounting reports',dayclose:'Business Day Close',products:'Product Factory',accounts:'Deposit accounts',customers:'Customers',sessions:'My sessions',audit:'Audit trail'};
+const labels={complaints:'Complaints & disputes',opsconsole:'Operations console',privacy:'Privacy & data protection',bankduties:"Bank duties & access review",lendingaccess:"Lending permissions",lendingapprovals:"Lending approval inbox",collections:"Loan arrears & collections",credit:'Loan applications & credit review',term:'Term deposits',loan:'Lending',fx:'FX & exchange rates',paymentcases:'Payment exceptions',statements:'M-Pesa statements',payments:'Payments & reconciliation',compliance:'Compliance cases',servicing:'Deposit servicing',notifications:'Customer alerts',reporting:'Management reports',screening:'Screening & monitoring',branchwork:'Branch workspace',banks:'Bank directory',staff:'Staff & access',approvals:'Approval Inbox',settings:'Bank settings',chart:'Chart of Accounts',ledgers:'Ledger Accounts',journals:'Journals & balances',reports:'Accounting reports',dayclose:'Business Day Close',products:'Product Factory',accounts:'Deposit accounts',customers:'Customers',sessions:'My sessions',audit:'Audit trail'};
 const lendingAccessUi=createLendingAccessUi({api,form,field,refresh:render,subject:()=>me?.staff.subject});
 const bankDutiesUi=createBankDutiesUi({api,form,field,refresh:render});
 const lendingApi=(path,options)=>{if(path==='/admin/tenants?limit=100')return api('/banks/lending-operations/banks',options);return api(path.replace(/^\/admin\/tenants\/([^/?]+)/,'/banks/$1/lending-operations'),options);};
@@ -62,6 +63,7 @@ const reportUi=createReportUi({api,refresh:render});
 const journalUi=createJournalUi({api,form,field,refresh:render});
 const ledgerUi=createLedgerUi({api,form,field,refresh:render});
 const privacyUi=createPrivacyUi({api,form,field,refresh:render});
+const complaintsUi=createComplaintsUi({api,form,field,refresh:render,download:(blob,name)=>{const url=URL.createObjectURL(blob);const link=document.createElement('a');link.href=url;link.download=name;link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}});
 function localizeChrome(){
   document.documentElement.lang=getLanguage();
   document.querySelector('#ui-language').value=getLanguage();
@@ -107,7 +109,7 @@ async function render(){
   document.querySelector('#breadcrumb').textContent=t(labels[view]);
   document.querySelectorAll('[data-view]').forEach(b=>{b.classList.toggle('active',b.dataset.view===view);b.setAttribute('aria-current',b.dataset.view===view?'page':'false');});
   if(!me){signedOut();return;}
-  if(!me.platformAdmin&&['bankduties','lendingaccess','term','fx','banks','staff','audit','approvals','settings','chart','ledgers','journals','reports','dayclose','opsconsole','products','customers','accounts','servicing','notifications','reporting','compliance','screening'].includes(view)){content.innerHTML=heading(labels[view],'Platform administrator access is required for this section.')+`<div class="card empty"><h3>You are signed in as ${e(me.staff.displayName)}</h3><p>Your current identity can manage its own sessions.</p>${button('View my sessions','my-sessions')}</div>`;return;}
+  if(!me.platformAdmin&&['bankduties','lendingaccess','term','fx','banks','staff','audit','approvals','settings','chart','ledgers','journals','reports','dayclose','opsconsole','products','customers','accounts','servicing','notifications','reporting','compliance','screening','complaints'].includes(view)){content.innerHTML=heading(labels[view],'Platform administrator access is required for this section.')+`<div class="card empty"><h3>You are signed in as ${e(me.staff.displayName)}</h3><p>Your current identity can manage its own sessions.</p>${button('View my sessions','my-sessions')}</div>`;return;}
   content.innerHTML='<div class="loading">Loading workspace…</div>';
   try{
     if(view==='bankduties'){await bankDutiesUi.render(content,()=>revision===renderVersion);return;}
@@ -121,6 +123,7 @@ async function render(){
     if(view==='statements'){await statementImportUi.render(content,()=>revision===renderVersion);return;}
     if(view==='payments'){await paymentsUi.render(content,()=>revision===renderVersion);return;}
     if(view==='compliance'){await complianceUi.render(content,()=>revision===renderVersion);return;}
+    if(view==='complaints'){await complaintsUi.render(content,()=>revision===renderVersion);return;}
     if(view==='screening'){await screeningUi.render(content,()=>revision===renderVersion);return;}
     if(view==='privacy'){await privacyUi.render(content,configuration,selectedBank,renderVersion,()=>revision===renderVersion);return;}
     if(view==='servicing'){await servicingUi.render(content,()=>revision===renderVersion);return;}
@@ -223,6 +226,7 @@ async function action(name,id){
   if(name.startsWith('payment-case-')){await paymentCasesUi.action(name.slice(13),id);return;}
   if(name.startsWith('payments-')){await paymentsUi.action(name.slice(9),id);return;}
   if(name.startsWith('compliance-')){await complianceUi.action(name.slice(11),id);return;}
+  if(name.startsWith('complaints-')){await complaintsUi.action(name.slice(11),id);return;}
   if(name.startsWith('screening-')){await screeningUi.action(name.slice(10),id);return;}
   if(name.startsWith('servicing-')){await servicingUi.action(name.slice(10),id);return;}
   if(name.startsWith('ops-')){await opsConsoleUi.action(name.slice(4),id);return;}

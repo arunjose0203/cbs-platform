@@ -36,6 +36,7 @@ test('complete key parity exists between French and Kiswahili translations witho
 test('all application navigation labels have non-empty translations in English, French and Kiswahili', () => {
   const navigationLabels = [
     'Privacy & data protection',
+    'Complaints & disputes',
     'Bank duties & access review',
     'Lending permissions',
     'Lending approval inbox',

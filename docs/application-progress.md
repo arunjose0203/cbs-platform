@@ -4,6 +4,22 @@
 
 Use the [Functional Gap & Acceptance Matrix](functional-gap-acceptance-matrix-2026-10-09.md) for the current 34-area functional assessment, 34 proposed acceptance cases, source/test evidence, confirmed limits and prioritized completion work. It reconciles older historical pending lists below. No module has independent bank functional sign-off recorded; existing automated test results do not replace that acceptance.
 
+## Round 20: complaints and disputes — 15 November 2026
+
+First item from the go-live plan's post-pilot list. Details: [complaints and disputes](complaints-and-disputes.md).
+
+- **Register and handling.** Each bank has a numbered complaints register (`CMP-<year>-<number>`). Staff acknowledge, assign, add notes and escalate (three levels); every step is an append-only event and names the complaint version the operator saw.
+- **Closure needs a second person.** A complaint is closed only by an approved `COMPLAINT_RESOLUTION` request. Outcome and redress must agree, and only one proposal can be pending per complaint.
+- **Redress is paid elsewhere and linked.** Refunds and compensation go through the existing money requests. The complaint records the approved request that paid it and is listed as redress pending until then. One request settles one complaint.
+- **Reopening** keeps the earlier resolution in the history, moves the complaint one level up and restarts the resolution deadline.
+- **Data protection.** The customer's account and the handling notes are sealed with the bank's field key; opening a complaint is audited; the register export leaves the narrative out.
+- **Reporting.** A period summary (received, open, late acknowledgements, resolved in time or late, redress pending, by category, channel and outcome) and a CSV register that is refused, not cut, above 10,000 rows.
+- **Portal.** New **Complaints & disputes** screen in English, French and Kiswahili.
+- **Schema.** Control migration V57 (`complaint`, `complaint_event`, `complaint_counter`, guard triggers). Bank schema unchanged at V29.
+- **Open points for the bank.** The deadlines (2 days to acknowledge, 14 to resolve) are placeholders for the compliance team to confirm. Not included: complaints from non-customers, automatic customer messages, the regulator's own return layout, attachments, and overdue complaints on the operations console.
+- **Verification (15 November, local).** Full `clean verify` with the database integration tests: 305 tests, 0 failures, 2 skipped. After a last change (a complaint is frozen while its resolution awaits approval) the complaints, duty and schema tests were re-run: 19 tests, 0 failures. UI: 148 tests, 0 failures. No hosted CI run yet.
+- **Branch.** `round-20-complaints`, built on `p10-security`. That branch holds the P-10 fixes S-09, S-10, S-12 and S-13, which are not on `master` or in the `v0.1.0-rc1` JAR; merging this branch brings them in.
+
 ## Phase 5: Pilot and Go-Live Readiness — 14 November 2026
 
 Phase 5 go/no-go readiness of the [go-live plan](go-live-plan-2026-11-13.md).

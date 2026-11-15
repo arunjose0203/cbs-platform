@@ -267,7 +267,7 @@ Rounds continue the existing numbering (rounds 1–8 are on `cbs-rounds-1-8`). S
 - Interbank rails: PesaLink, RTGS/KEPSS (D19).
 - Overdrafts.
 - Mandate amount bands (D15).
-- Complaints and disputes case management (F20).
+- Complaints and disputes case management (F20). **Delivered 15 November (Round 20, branch `round-20-complaints`):** see [complaints and disputes](complaints-and-disputes.md); deadlines to be confirmed by the bank.
 - Uganda and Rwanda configurations.
 - Universal-banking products (F21).
 

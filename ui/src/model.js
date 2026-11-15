@@ -112,7 +112,29 @@ export function errorMessage(code) {
     NOTIFICATION_TEMPLATE_PLACEHOLDER_INVALID:'The wording uses a placeholder this message cannot have, or leaves out {bank} (and {code} for verification).',
     NOTIFICATION_TEMPLATE_TOO_LONG:'SMS wording must fit two messages (306 characters) with the longest values filled in.',
     NOTIFICATION_TEMPLATE_SUBJECT_INVALID:'Email wording needs a subject; SMS wording must not have one.',
-    NOTIFICATION_TEMPLATE_CHANNEL_INVALID:'Choose SMS or email.'})[code]
+    NOTIFICATION_TEMPLATE_CHANNEL_INVALID:'Choose SMS or email.',
+    COMPLAINT_BANK_NOT_ACTIVE:"The bank must be active to register, resolve or reopen complaints.",
+    COMPLAINT_ACCOUNT_MISMATCH:"This account does not belong to the selected customer.",
+    COMPLAINT_DATE_INVALID:"Use a received date from the last 365 days, not in the future.",
+    COMPLAINT_AMOUNT_INVALID:"Enter both a positive disputed amount and its currency, or leave both empty.",
+    COMPLAINT_TEXT_INVALID:"This text cannot be stored. Rewrite it without a \"pd1:\" prefix.",
+    COMPLAINT_NOT_FOUND:"This complaint does not belong to the selected bank.",
+    COMPLAINT_STALE:"This complaint changed. Open it again before continuing.",
+    COMPLAINT_NOT_OPEN:"This complaint is already resolved. Reopen it to continue handling.",
+    COMPLAINT_NOT_RESOLVED:"Only a resolved complaint can be reopened.",
+    COMPLAINT_ALREADY_ACKNOWLEDGED:"This complaint was already acknowledged.",
+    COMPLAINT_ASSIGNEE_NOT_AUTHORIZED:"The assignee does not hold the customer operations duty for this bank.",
+    COMPLAINT_ESCALATION_LIMIT:"This complaint is already at the highest escalation level.",
+    COMPLAINT_RESOLUTION_INVALID:"Outcome and redress do not agree: an upheld complaint needs redress, a withdrawn one has none, and one not upheld can only carry an explanation.",
+    COMPLAINT_REDRESS_INVALID:"Refunds and compensation need a positive amount and currency; other redress has no amount.",
+    COMPLAINT_RESOLUTION_PENDING:"A resolution for this complaint is already waiting for approval.",
+    COMPLAINT_REDRESS_NOT_DUE:"Only a resolved complaint with a refund or compensation can be linked to a payment.",
+    COMPLAINT_REDRESS_ALREADY_POSTED:"A payment is already linked to this complaint.",
+    COMPLAINT_REDRESS_REQUEST_NOT_FOUND:"No request with this ID exists in the selected bank.",
+    COMPLAINT_REDRESS_REQUEST_INVALID:"Use an approved money request made after the complaint was registered.",
+    COMPLAINT_REDRESS_REQUEST_USED:"This request already settles another complaint.",
+    COMPLAINT_PERIOD_INVALID:"Choose a period of at most 366 days, ending on or after its start.",
+    COMPLAINT_REGISTER_TOO_LARGE:"This period has more than 10,000 complaints. Export a shorter period."})[code]
     || `The request could not be completed${code ? ` (${code})` : ''}.`;
 }
 export function signInErrorMessage(error) {

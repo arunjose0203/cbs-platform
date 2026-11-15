@@ -4025,4 +4025,119 @@ class TenantAdministrationIntegrationTest {
     private com.cbs.cash.CashModels.Change customerCashChange(Tenant bank,UUID branch,UUID till,com.cbs.cash.CashModels.Kind kind,UUID account,UUID liability,String amount){
         return new com.cbs.cash.CashModels.Change(service.get(ADMIN,bank.id()).version(),kind,branch,till,null,null,null,null,null,null,amount,reference.get(ADMIN,bank.id()).businessDate(),"CUSTOMER-CASH-"+UUID.randomUUID(),null,"Fictional customer cash receipt",account,liability);
     }
+
+    // ---- Round 20: complaints and disputes ----
+    @SuppressWarnings("unchecked") private Map<String,Object> complaintPost(String url,Object body,int expected)throws Exception{
+        var response=mvc.perform(admin(post(url)).header("Idempotency-Key",UUID.randomUUID()).contentType("application/json").content(json.writeValueAsString(body))).andExpect(status().is(expected)).andReturn().getResponse().getContentAsString();
+        return json.readValue(response,Map.class);
+    }
+    private void complaintRefused(String url,Object body,int expected,String code)throws Exception{
+        mvc.perform(admin(post(url)).header("Idempotency-Key",UUID.randomUUID()).contentType("application/json").content(json.writeValueAsString(body))).andExpect(status().is(expected)).andExpect(jsonPath("$.code").value(code));
+    }
+    private static Map<String,Object> complaintStep(long version,String note){return Map.of("caseVersion",version,"note",note);}
+    @Test void complaintsAreRegisteredHandledAndClosedOnlyByAnApprovedResolution() throws Exception {
+        var f=fundingFixture("complaints-main");var bank=f.f().bank();UUID b=bank.id();String base="/api/v1/admin/tenants/"+b+"/complaints";String currency=f.f().product().currency();
+        UUID c=onboard(bank,person("Wanjiku Kamau","CMP-55501",java.time.LocalDate.of(1988,3,9)));
+        // Dates are the bank's own calendar dates, so the test reads "today" from the service instead of assuming UTC.
+        var day=java.time.LocalDate.parse((String)json.readValue(mvc.perform(admin(get(base))).andExpect(status().isOk()).andExpect(jsonPath("$.total").value(0)).andReturn().getResponse().getContentAsString(),Map.class).get("today"));
+        var received=new java.util.LinkedHashMap<String,Object>(Map.of("customerId",c,"channel","BRANCH","category","FEES_AND_CHARGES","receivedOn",day.minusDays(3).toString(),
+                "summary","Statement fee charged twice","details","Customer says the statement fee was taken twice on the same day","disputedAmount","150.50","disputedCurrency",currency));
+        // Registration: numbered reference, deadlines from the received date, retry-safe.
+        UUID key=UUID.randomUUID();
+        var first=json.readValue(mvc.perform(admin(post(base)).header("Idempotency-Key",key).contentType("application/json").content(json.writeValueAsString(received))).andExpect(status().isCreated())
+                .andExpect(jsonPath("$.reference").value("CMP-"+day.getYear()+"-000001")).andExpect(jsonPath("$.status").value("OPEN")).andExpect(jsonPath("$.version").value(0))
+                .andExpect(jsonPath("$.acknowledgeDue").value(day.minusDays(1).toString())).andExpect(jsonPath("$.resolveDue").value(day.plusDays(11).toString()))
+                .andExpect(jsonPath("$.acknowledgementOverdue").value(true)).andExpect(jsonPath("$.resolutionOverdue").value(false))
+                .andExpect(jsonPath("$.disputedAmount").value("150.5")).andReturn().getResponse().getContentAsString(),Map.class);
+        String id=(String)first.get("id");String one=base+"/"+id;
+        mvc.perform(admin(post(base)).header("Idempotency-Key",key).contentType("application/json").content(json.writeValueAsString(received))).andExpect(status().isCreated()).andExpect(jsonPath("$.id").value(id));
+        var other=new java.util.LinkedHashMap<>(received);other.put("summary","Another matter");
+        mvc.perform(admin(post(base)).header("Idempotency-Key",key).contentType("application/json").content(json.writeValueAsString(other))).andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("IDEMPOTENCY_CONFLICT"));
+        var future=new java.util.LinkedHashMap<>(received);future.put("receivedOn",day.plusDays(1).toString());complaintRefused(base,future,400,"COMPLAINT_DATE_INVALID");
+        var noCurrency=new java.util.LinkedHashMap<>(received);noCurrency.remove("disputedCurrency");complaintRefused(base,noCurrency,400,"COMPLAINT_AMOUNT_INVALID");
+        var foreignAccount=new java.util.LinkedHashMap<>(received);foreignAccount.put("accountId",f.account());complaintRefused(base,foreignAccount,409,"COMPLAINT_ACCOUNT_MISMATCH");
+        var stranger=new java.util.LinkedHashMap<>(received);stranger.put("customerId",UUID.randomUUID());complaintRefused(base,stranger,404,"CUSTOMER_NOT_FOUND");
+        mvc.perform(get(base).header("Authorization","Bearer "+TestIdentity.token("operator",false))).andExpect(status().isForbidden());
+        // The customer's words are sealed at rest, and what was received cannot be rewritten or deleted.
+        assertThat(jdbc.queryForObject("SELECT details FROM platform.complaint WHERE id=?::uuid",String.class,id)).startsWith("pd1:").doesNotContain("statement");
+        assertThat(jdbc.queryForObject("SELECT note FROM platform.complaint_event WHERE complaint_id=?::uuid",String.class,id)).startsWith("pd1:");
+        assertThatThrownBy(()->jdbc.update("UPDATE platform.complaint SET summary='Rewritten',version=version+1 WHERE id=?::uuid",id)).hasMessageContaining("cannot be rewritten");
+        assertThatThrownBy(()->jdbc.update("UPDATE platform.complaint SET assignee='x' WHERE id=?::uuid",id)).hasMessageContaining("advance the version");
+        assertThatThrownBy(()->jdbc.update("DELETE FROM platform.complaint WHERE id=?::uuid",id)).hasMessageContaining("cannot be deleted");
+        assertThatThrownBy(()->jdbc.update("DELETE FROM platform.complaint_event WHERE complaint_id=?::uuid",id)).isInstanceOf(org.springframework.dao.DataAccessException.class);
+        mvc.perform(admin(get(base+"?status=OVERDUE"))).andExpect(jsonPath("$.total").value(1)).andExpect(jsonPath("$.items[0].id").value(id));
+        mvc.perform(admin(get(base+"?status=UNASSIGNED&category=FEES_AND_CHARGES&customerId="+c))).andExpect(jsonPath("$.total").value(1));
+        mvc.perform(admin(get(base+"?status=ESCALATED"))).andExpect(jsonPath("$.total").value(0));
+        // Handling steps act on the version the operator saw; a replay or a second operator gets a conflict, not a duplicate.
+        complaintRefused(one+"/acknowledgement",complaintStep(5,"Called the customer"),409,"COMPLAINT_STALE");
+        assertThat(complaintPost(one+"/acknowledgement",complaintStep(0,"Called the customer and confirmed receipt"),200)).containsEntry("acknowledgedOn",day.toString()).containsEntry("acknowledgementOverdue",false).containsEntry("version",1);
+        complaintRefused(one+"/acknowledgement",complaintStep(0,"Called the customer and confirmed receipt"),409,"COMPLAINT_STALE");
+        complaintRefused(one+"/acknowledgement",complaintStep(1,"Again"),409,"COMPLAINT_ALREADY_ACKNOWLEDGED");
+        mvc.perform(admin(post(one+"/assignment")).contentType("application/json").content(json.writeValueAsString(Map.of("caseVersion",1,"assignee","nobody-registered","note","Assign")))).andExpect(status().is4xxClientError());
+        assertThat(complaintPost(one+"/assignment",Map.of("caseVersion",1,"assignee","checker","note","Branch operations to review the fee postings"),200)).containsEntry("assignee","checker").containsEntry("version",2);
+        complaintPost(one+"/notes",complaintStep(2,"Statement shows two fee lines on the same date"),200);
+        assertThat(complaintPost(one+"/escalation",complaintStep(3,"Customer asked for the branch manager"),200)).containsEntry("escalationLevel",2);
+        assertThat(complaintPost(one+"/escalation",complaintStep(4,"Referred to head office"),200)).containsEntry("escalationLevel",3).containsEntry("version",5);
+        complaintRefused(one+"/escalation",complaintStep(5,"Higher still"),409,"COMPLAINT_ESCALATION_LIMIT");
+        complaintRefused(one+"/reopening",complaintStep(5,"Not resolved yet"),409,"COMPLAINT_NOT_RESOLVED");
+        complaintRefused(one+"/redress-posting",Map.of("caseVersion",5,"requestId",UUID.randomUUID(),"note","Refund"),409,"COMPLAINT_REDRESS_NOT_DUE");
+        complaintRefused(one+"/notes",complaintStep(5,"pd1:forged"),400,"COMPLAINT_TEXT_INVALID");
+        mvc.perform(admin(get(one))).andExpect(status().isOk()).andExpect(header().string("Cache-Control","no-store")).andExpect(jsonPath("$.details").value("Customer says the statement fee was taken twice on the same day"))
+                .andExpect(jsonPath("$.events.length()").value(6)).andExpect(jsonPath("$.events[0].action").value("ESCALATED")).andExpect(jsonPath("$.events[0].note").value("Referred to head office"))
+                .andExpect(jsonPath("$.events[5].action").value("RECEIVED")).andExpect(jsonPath("$.complaint.escalationLevel").value(3));
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM platform.tenant_audit WHERE tenant_id=? AND action='COMPLAINT_VIEWED' AND change_details->>'customerId'=?",Integer.class,b,c.toString())).isEqualTo(1);
+        // Resolution: consistent outcome and redress, one proposal at a time, never approved by its maker.
+        java.util.function.BiFunction<com.cbs.complaints.ComplaintModels.Outcome,com.cbs.complaints.ComplaintModels.Redress,com.cbs.complaints.ComplaintModels.Resolution> proposal=(outcome,redress)->
+                new com.cbs.complaints.ComplaintModels.Resolution(service.get(ADMIN,b).version(),UUID.fromString(id),5,outcome,redress,redress.monetary()?"150.50":null,redress.monetary()?currency:null,"DUPLICATE_FEE","We charged the statement fee twice and will refund one charge","Fee posted twice; refund agreed with the branch manager");
+        assertCode(()->approvals.complaintResolution(ADMIN,UUID.randomUUID(),b,proposal.apply(com.cbs.complaints.ComplaintModels.Outcome.UPHELD,com.cbs.complaints.ComplaintModels.Redress.NONE)),"COMPLAINT_RESOLUTION_INVALID");
+        assertCode(()->approvals.complaintResolution(ADMIN,UUID.randomUUID(),b,proposal.apply(com.cbs.complaints.ComplaintModels.Outcome.NOT_UPHELD,com.cbs.complaints.ComplaintModels.Redress.REFUND)),"COMPLAINT_RESOLUTION_INVALID");
+        var upheld=proposal.apply(com.cbs.complaints.ComplaintModels.Outcome.UPHELD,com.cbs.complaints.ComplaintModels.Redress.REFUND);
+        assertCode(()->approvals.complaintResolution(ADMIN,UUID.randomUUID(),b,new com.cbs.complaints.ComplaintModels.Resolution(upheld.expectedVersion(),upheld.complaintId(),5,upheld.outcome(),upheld.redress(),null,null,upheld.rootCause(),upheld.response(),upheld.reason())),"COMPLAINT_REDRESS_INVALID");
+        assertCode(()->approvals.complaintResolution(ADMIN,UUID.randomUUID(),b,new com.cbs.complaints.ComplaintModels.Resolution(upheld.expectedVersion(),upheld.complaintId(),4,upheld.outcome(),upheld.redress(),"150.50",currency,upheld.rootCause(),upheld.response(),upheld.reason())),"COMPLAINT_STALE");
+        UUID resolutionKey=UUID.randomUUID();var request=approvals.complaintResolution(ADMIN,resolutionKey,b,upheld);
+        assertThat(request.proposedValues()).containsEntry("outcome","UPHELD").containsEntry("redress","REFUND").containsEntry("redressAmount","150.50");
+        assertThat(request.targetLabel()).isEqualTo("Resolve complaint CMP-"+day.getYear()+"-000001");assertThat(request.beforeValues()).containsEntry("status","OPEN");
+        assertThat(approvals.complaintResolution(ADMIN,resolutionKey,b,upheld).id()).isEqualTo(request.id());
+        assertCode(()->approvals.complaintResolution(ADMIN,UUID.randomUUID(),b,upheld),"COMPLAINT_RESOLUTION_PENDING");
+        assertCode(()->approvals.decide(ADMIN,request.id(),com.cbs.approvals.ApprovalModels.Decision.APPROVE,"Own"),"SELF_APPROVAL_FORBIDDEN");
+        mvc.perform(admin(get(base))).andExpect(jsonPath("$.items[0].resolutionPending").value(true)).andExpect(jsonPath("$.items[0].status").value("OPEN"));
+        // The complaint is frozen under the proposal, so the approval cannot fail on a version that moved.
+        complaintRefused(one+"/notes",complaintStep(5,"Added while awaiting approval"),409,"COMPLAINT_RESOLUTION_PENDING");
+        approveHttp(request.id());
+        mvc.perform(admin(get(one))).andExpect(jsonPath("$.complaint.status").value("RESOLVED")).andExpect(jsonPath("$.complaint.outcome").value("UPHELD")).andExpect(jsonPath("$.complaint.redressAmount").value("150.5"))
+                .andExpect(jsonPath("$.complaint.resolvedOn").value(day.toString())).andExpect(jsonPath("$.complaint.redressPending").value(true)).andExpect(jsonPath("$.complaint.resolutionPending").value(false))
+                .andExpect(jsonPath("$.complaint.version").value(6)).andExpect(jsonPath("$.events[0].action").value("RESOLVED")).andExpect(jsonPath("$.events[0].actorSubject").value("checker"))
+                .andExpect(jsonPath("$.events[0].details.proposedBy").value("administrator")).andExpect(jsonPath("$.events[0].note").value("We charged the statement fee twice and will refund one charge"));
+        assertCode(()->approvals.complaintResolution(ADMIN,UUID.randomUUID(),b,new com.cbs.complaints.ComplaintModels.Resolution(service.get(ADMIN,b).version(),UUID.fromString(id),6,upheld.outcome(),upheld.redress(),"150.50",currency,upheld.rootCause(),upheld.response(),upheld.reason())),"COMPLAINT_NOT_OPEN");
+        complaintRefused(one+"/escalation",complaintStep(6,"After closure"),409,"COMPLAINT_NOT_OPEN");
+        mvc.perform(admin(get(base+"?status=REDRESS_PENDING"))).andExpect(jsonPath("$.total").value(1));
+        // A monetary redress is paid through the normal money paths and linked to the approved request that paid it.
+        complaintRefused(one+"/redress-posting",Map.of("caseVersion",6,"requestId",UUID.randomUUID(),"note","Refund posted"),404,"COMPLAINT_REDRESS_REQUEST_NOT_FOUND");
+        complaintRefused(one+"/redress-posting",Map.of("caseVersion",6,"requestId",request.id(),"note","Refund posted"),409,"COMPLAINT_REDRESS_REQUEST_INVALID");
+        UUID account=accountFor(f,c,"CMP_ACC","150.50");
+        UUID money=jdbc.queryForObject("SELECT id FROM platform.approval_request WHERE bank_id=? AND action='ACCOUNT_FUNDING' AND status='APPROVED' ORDER BY created_at DESC LIMIT 1",UUID.class,b);
+        assertThat(complaintPost(one+"/redress-posting",Map.of("caseVersion",6,"requestId",money,"note","Refund credited to the new account"),200)).containsEntry("redressPending",false).containsEntry("redressRequestId",money.toString()).containsEntry("version",7);
+        complaintRefused(one+"/redress-posting",Map.of("caseVersion",7,"requestId",money,"note","Again"),409,"COMPLAINT_REDRESS_ALREADY_POSTED");
+        // The same payment cannot settle a second complaint.
+        var second=new java.util.LinkedHashMap<>(received);second.put("summary","=HYPERLINK(\"http://example.test\")");second.put("accountId",account);second.put("receivedOn",day.toString());second.put("category","TRANSACTION_DISPUTE");second.put("transactionReference","TXN/2026/77");
+        var two=complaintPost(base,second,201);String secondId=(String)two.get("id");assertThat(two).containsEntry("reference","CMP-"+day.getYear()+"-000002").containsEntry("accountNumber",jdbc.queryForObject("SELECT account_number FROM platform.account_registry WHERE id=?",String.class,account));
+        var secondRequest=approvals.complaintResolution(ADMIN,UUID.randomUUID(),b,new com.cbs.complaints.ComplaintModels.Resolution(service.get(ADMIN,b).version(),UUID.fromString(secondId),0,com.cbs.complaints.ComplaintModels.Outcome.PARTLY_UPHELD,com.cbs.complaints.ComplaintModels.Redress.COMPENSATION,"20",currency,"PROCESS_DELAY","We will pay a goodwill amount","Delay accepted"));approveHttp(secondRequest.id());
+        complaintRefused(base+"/"+secondId+"/redress-posting",Map.of("caseVersion",1,"requestId",money,"note","Reuse"),409,"COMPLAINT_REDRESS_REQUEST_USED");
+        // Reopening keeps the earlier resolution in the history, moves one level up and restarts the resolution deadline.
+        assertThat(complaintPost(one+"/reopening",complaintStep(7,"Customer does not accept the refund amount"),200)).containsEntry("status","OPEN").containsEntry("reopenedCount",1).containsEntry("escalationLevel",3)
+                .containsEntry("resolveDue",day.plusDays(14).toString()).containsEntry("version",8);
+        mvc.perform(admin(get(one))).andExpect(jsonPath("$.complaint.outcome").doesNotExist()).andExpect(jsonPath("$.events[0].action").value("REOPENED")).andExpect(jsonPath("$.events[0].details.previousOutcome").value("UPHELD"))
+                .andExpect(jsonPath("$.events[2].action").value("RESOLVED"));
+        // Period summary and the register export (no narrative, formulas neutralised, never cut short).
+        String period="?from="+day.minusDays(30)+"&to="+day;
+        mvc.perform(admin(get(base+"/summary"+period))).andExpect(status().isOk()).andExpect(jsonPath("$.received").value(2)).andExpect(jsonPath("$.open").value(1)).andExpect(jsonPath("$.resolved").value(1))
+                .andExpect(jsonPath("$.reopened").value(1)).andExpect(jsonPath("$.acknowledgedLate").value(1)).andExpect(jsonPath("$.resolvedWithinDue").value(1)).andExpect(jsonPath("$.redressPending").value(1))
+                .andExpect(jsonPath("$.byCategory.FEES_AND_CHARGES").value(1)).andExpect(jsonPath("$.byCategory.TRANSACTION_DISPUTE").value(1)).andExpect(jsonPath("$.byOutcome.PARTLY_UPHELD").value(1))
+                .andExpect(jsonPath("$.redressByCurrency."+currency).value("20"));
+        mvc.perform(admin(get(base+"/summary?from="+day.minusDays(400)+"&to="+day))).andExpect(status().isBadRequest()).andExpect(jsonPath("$.code").value("COMPLAINT_PERIOD_INVALID"));
+        String csv=mvc.perform(admin(get(base+"/register"+period))).andExpect(status().isOk()).andExpect(header().string("Cache-Control","no-store")).andExpect(header().string("Content-Type",org.hamcrest.Matchers.startsWith("text/csv")))
+                .andReturn().getResponse().getContentAsString(java.nio.charset.StandardCharsets.UTF_8);
+        assertThat(csv).contains("CMP-"+day.getYear()+"-000001").contains("CMP-"+day.getYear()+"-000002").contains("\"'=HYPERLINK(").contains("TXN/2026/77").doesNotContain("taken twice").doesNotContain("pd1:");
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM platform.tenant_audit WHERE tenant_id=? AND action='COMPLAINT_REGISTER_EXPORTED'",Integer.class,b)).isEqualTo(1);
+    }
 }

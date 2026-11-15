@@ -133,6 +133,10 @@ public class ApprovalService {
     private com.cbs.customers.CustomerDocumentService documents;
     @org.springframework.beans.factory.annotation.Autowired void documents(com.cbs.customers.CustomerDocumentService documents){this.documents=documents;}
     public Request kycReview(Actor actor,UUID key,UUID bankId,com.cbs.customers.CustomerModels.KycReviewChange input){return submit(actor,key,bankId,Action.KYC_REVIEW,input.expectedVersion(),"KYC review "+input.reviewReference(),input);}
+    // Round 20: a complaint is closed only by an approved resolution.
+    private com.cbs.complaints.ComplaintService complaints;
+    @org.springframework.beans.factory.annotation.Autowired void complaints(com.cbs.complaints.ComplaintService complaints){this.complaints=complaints;}
+    public Request complaintResolution(Actor actor,UUID key,UUID bankId,com.cbs.complaints.ComplaintModels.Resolution input){return submit(actor,key,bankId,Action.COMPLAINT_RESOLUTION,input.expectedVersion(),input.reason(),input);}
     private com.cbs.contracts.LoanMoratoriumService moratoria;
     @org.springframework.beans.factory.annotation.Autowired void moratoria(com.cbs.contracts.LoanMoratoriumService moratoria){this.moratoria=moratoria;}
     public Request moratorium(Actor actor,UUID key,UUID bankId,com.cbs.contracts.LoanMoratoriumModels.MoratoriumGrant input){return submit(actor,key,bankId,Action.LOAN_MORATORIUM,input.expectedVersion(),input.reason(),input);}
@@ -328,6 +332,9 @@ public class ApprovalService {
             } else if(action==Action.CUSTOMER_DOCUMENT_ARCHIVE) {
                 var bank=tenantRepository.get(id,true);var change=(com.cbs.customers.CustomerModels.DocumentArchive)input;documents.validateArchive(bank,change);
                 before=documents.archiveBefore(id,change);after=documents.archiveValues(change);label="Archive KYC document";bankId=id;
+            } else if(action==Action.COMPLAINT_RESOLUTION) {
+                var bank=tenantRepository.get(id,true);var change=(com.cbs.complaints.ComplaintModels.Resolution)input;complaints.validateNew(bank,change);
+                before=complaints.before(id,change);after=complaints.values(id,change);label="Resolve complaint "+complaints.reference(id,change.complaintId());bankId=id;
             } else if(action==Action.LEGAL_HOLD) {
                 var bank=tenantRepository.get(id,true);var change=(com.cbs.privacy.PrivacyModels.Hold)input;privacy.validate(bank,change);
                 before=privacy.before(id,change);after=privacy.values(id,change);label=change.active()?"Place legal hold":"Release legal hold";bankId=id;
@@ -555,6 +562,7 @@ public class ApprovalService {
                         case LOAN_MORATORIUM -> moratoria.apply(actor,request.targetId(),JSON.readValue(jdbc.queryForObject("SELECT payload::text FROM platform.approval_request WHERE id=?",String.class,id),com.cbs.contracts.LoanMoratoriumModels.MoratoriumGrant.class),request.makerSubject(),id);
                         case KYC_REVIEW -> customers.applyReview(actor,request.targetId(),JSON.readValue(jdbc.queryForObject("SELECT payload::text FROM platform.approval_request WHERE id=?",String.class,id),com.cbs.customers.CustomerModels.KycReviewChange.class),request.makerSubject(),id);
                         case CUSTOMER_DOCUMENT_ARCHIVE -> documents.applyArchive(actor,request.targetId(),JSON.readValue(jdbc.queryForObject("SELECT payload::text FROM platform.approval_request WHERE id=?",String.class,id),com.cbs.customers.CustomerModels.DocumentArchive.class),id);
+                        case COMPLAINT_RESOLUTION -> complaints.apply(actor,request.targetId(),JSON.readValue(jdbc.queryForObject("SELECT payload::text FROM platform.approval_request WHERE id=?",String.class,id),com.cbs.complaints.ComplaintModels.Resolution.class),request.makerSubject(),id);
                         case LEGAL_HOLD -> privacy.apply(actor,request.targetId(),JSON.readValue(jdbc.queryForObject("SELECT payload::text FROM platform.approval_request WHERE id=?",String.class,id),com.cbs.privacy.PrivacyModels.Hold.class),id);
                         case NOTIFICATION_TEMPLATE -> notifications.apply(actor,request.targetId(),JSON.readValue(jdbc.queryForObject("SELECT payload::text FROM platform.approval_request WHERE id=?",String.class,id),com.cbs.notifications.NotificationModels.Template.class),id);
                         case REPORT_DEFINITION -> reportDefinitions.apply(actor,request.targetId(),JSON.readValue(jdbc.queryForObject("SELECT payload::text FROM platform.approval_request WHERE id=?",String.class,id),com.cbs.reporting.ReportModels.Definition.class),id);
