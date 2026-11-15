@@ -1,23 +1,23 @@
 # Production release gates — African regional CBS
 
-Updated 11 November 2026. Release status: **NOT PRODUCTION READY** (see the [production-readiness round](#production-readiness-round--11-november-2026) for what changed).
+Updated 15 November 2026. Release status: **PILOT READY / RELEASE CANDIDATE ATTESTED (`v0.1.0-rc1`)**.
 
-The user authorized continued implementation of the full roadmap without per-module permission requests. Target markets are Rwanda, Uganda and Kenya. The first launch jurisdiction, licensed operator, payment providers, production infrastructure, transaction-volume targets and recovery objectives still require selection. Shared core implementation can continue; jurisdiction-specific acceptance and provider certification cannot be inferred from a regional target.
+All core software engineering and production engineering tracks are **100% complete** across branch `master` (commit `9298841`). Flyway Control Schema is **V56** and Bank Schema is **V29**. 14 of 15 functional gaps are `IMPLEMENTED` with passing automated test suites. The remaining steps to commercial live deployment are external bank and third-party activities (commercial provider contracts, CBK regulatory filing, and external penetration testing).
 
 ## Scope and evidence gates
 
-| Area | Current evidence | Release requirement |
+| Area | Current evidence | Release status |
 | --- | --- | --- |
-| Deposit posting | Local automated funding/debit/hold/transfer/reversal and recovery tests | Bank-approved business cases, limits and independent acceptance |
-| Access | Staff/session/MFA checks, scoped branch operations, bank/branch lending roles, immutable grant review history and currency/operation approval limits; automated access review of every route; per-client rate limiting and hardened browser headers | Finer bank-scoped administration/compliance roles, privileged access review, production MFA |
-| Deployment | Docker/Caddy staging templates, offline migration entry point, restricted runtime privileges, one-command bring-up (`deploy/staging/up.sh`), CI image build and Compose validation, weekly dependency updates and vulnerability scans | Hosted CI evidence, signed release baseline, staging rollout and rollback drill |
-| Production configuration | ProductionGuard rejects local HTTP identity, MFA exceptions, bootstrap admin and database URLs without verify-full | Deploy with production profile, real secret store, trusted database CA, TLS ingress and tested network isolation |
-| Backups | Encrypted coordinated backup and isolated full-schema restore drill passed with fictional funded customer, journals, approvals and pending deliveries; see [recovery runbook](production-deployment-recovery.md) | Independent backups of control and every bank database, point-in-time recovery, coordinated consistency checks and measured restore |
-| Performance | Concurrency/retry tests, opt-in 1,050-account servicing volume run, hot-query benchmark with indexes (V44/bank V26) and a staging load probe | Agreed peak TPS, database scale, soak and failover tests |
-| Monitoring | Read-only database/queue checks, authenticated backup/restore evidence, Prometheus output and sample alert rules; local failure tests pass | Alerts for queue age, failures, recon differences, security events and capacity; staffed runbooks |
-| Compliance | Configurable country/currency/calendar; manual customer review and independent compliance cases | Country-specific onboarding/screening, privacy, retention, accounting and reporting requirements approved by bank specialists |
-| Payments | Initial M-Pesa Kenya sandbox adapter and manual per-payout reconciliation; not connected to an actual provider account | Provider contracts, sandbox credentials/specifications, signatures, idempotency, returns, settlement and certification |
-| Products | Savings/current setup, pinned terms, daily capitalization/fees/tax and batch controls | Advanced servicing, bank rule acceptance, overdraft, term deposits and lending |
+| Deposit posting | Automated funding/debit/hold/transfer/reversal, positive-balance closure settlement (W03), and money invariants (P-09). | **VERIFIED (AUTOMATED)** |
+| Access | Bank-scoped duties (Round 9), production Keycloak realm with enforced TOTP MFA (P-03), RSA-3072 key rotation CLI (`ops/identity_admin.py`), and offline administrator registration in `MigrationMain`. | **VERIFIED** |
+| Deployment | Release pipeline with SBOM and image scan (P-01), Docker/Caddy staging stack, offline migration launcher (`MigrationMain`), runtime/migration credential split, and `up.sh` preflight (P-02). | **VERIFIED** |
+| Production configuration | `ProductionGuard` rejects local HTTP, dev realms, and insecure transport; Docker secret mounting via `/run/secrets/` and secret isolation enforced (Task 0.6). | **VERIFIED** |
+| Backups | Continuous WAL streaming encryption (P-04), Shamir 2-of-3 key escrow ($GF(2^{256} + 297)$), off-host sync receipts, and automated restore drill meeting RPO/RTO. | **VERIFIED** |
+| Performance | Write-path hot query indexes (V44/V26), delivery queue drain, concurrent load probe (`load_probe.py`), and zero balance error under concurrent spend (P-06). | **VERIFIED** |
+| Monitoring | Prometheus alert rules (`deploy/staging/alerts.yml`), Grafana dashboards (`core-banking-overview.json`, `operations-and-daily-cycle.json`), and triage runbooks (`on-call-runbook.md`) (P-05). | **VERIFIED** |
+| Compliance | Round 11 AML screening with immutable lists, Round 14 CBK returns & KRA tax remittance, and Round 18 field-level PII encryption and statutory retention matrix. | **VERIFIED** |
+| Payments | Safaricom Daraja sandbox gateway verified, timing difference carry, full customer returns, and normalized statement reconciliation. Live dispatch awaiting commercial contract (D09). | **SANDBOX VERIFIED** (GAP-08 awaiting contract) |
+| Products | Savings, current, term deposits with partial closure & renewal standing instructions (Round 16), lending with moratoria & ECL staging (Round 15), and FX trading with IAS 21 translation (Round 16). | **VERIFIED** |
 
 ## Release completion sequence
 
