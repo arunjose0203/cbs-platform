@@ -42,8 +42,19 @@ This runbook defines the operational protocol for migrating legacy banking data 
 
 ### Phase A: Pre-Cutover (T-7 Days to T-1 Day)
 1. **T-7 Days: Rehearsal Drill**
-   - Execute dry-run migration using sanitized historical extracts on staging.
-   - Verify all scripts, memory limits, and schema migrations.
+   - Execute dry-run migration and full cutover dress rehearsal on staging using `ops/dress_rehearsal.py`:
+     ```bash
+     CBS_MAKER_TOKEN=... CBS_CHECKER_TOKEN=... python ops/dress_rehearsal.py \
+       https://cbs-staging.internal --bank <tenant-uuid> --report dress-rehearsal-report.json
+     ```
+   - Automated runner executes the end-to-end rehearsal sequence:
+     - Pre-rehearsal health and schema version assertion (**Control V56**, **Bank V29**).
+     - Staged migration batch reconciliation asserting exact **0.00** trial balance variance.
+     - Mid-day dual-control transaction posting and continuous WAL backup checkpointing.
+     - Automated Day Close (`DayCloseService`) and business date advancement.
+     - Month-end Period Close (`PeriodCloseService`) and financial statement verification.
+     - Post-close trial balance reconciliation asserting balance sheet conservation ($Assets = Liabilities + Equity$).
+     - Generates structured JSON report with formal `GO` / `NO-GO` recommendation.
 2. **T-1 Day: Pre-Cutover Verification**
    - Notify branches and customers of the scheduled maintenance window.
    - Extract legacy trial balance as of close of business.
@@ -61,7 +72,7 @@ This runbook defines the operational protocol for migrating legacy banking data 
      ```bash
      java -cp cbs-platform.jar com.cbs.operations.MigrationMain migration-plan.json
      ```
-   - Verify all migrations (V1 through V54) apply cleanly.
+   - Verify all migrations (Control V56 and Bank V29) apply cleanly.
 4. **Step 4: Customer Ingestion & Validation (T-2:00)**
    - Upload customer extracts via `POST /api/v1/admin/tenants/{bank}/migration/customers/stage`.
    - Verify validation report: zero unresolvable errors or identity collisions.

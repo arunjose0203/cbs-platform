@@ -4,10 +4,11 @@
 
 Use the [Functional Gap & Acceptance Matrix](functional-gap-acceptance-matrix-2026-10-09.md) for the current 34-area functional assessment, 34 proposed acceptance cases, source/test evidence, confirmed limits and prioritized completion work. It reconciles older historical pending lists below. No module has independent bank functional sign-off recorded; existing automated test results do not replace that acceptance.
 
-## Phase 5: Pilot and Go-Live Readiness — 14 November 2026
+## Phase 5: Pilot and Go-Live Readiness — 15 November 2026
 
 Phase 5 go/no-go readiness of the [go-live plan](go-live-plan-2026-11-13.md).
 
+- **Cutover Dress Rehearsal Automation:** Implemented `ops/dress_rehearsal.py` and unit test suite `ops/tests/test_dress_rehearsal.py` (5 tests pass, 100%). Automated rehearsal covers pre-cutover health check, schema verification (Control V56 / Bank V29), trial balance zero-variance reconciliation, mid-day transaction simulation under dual control, backup checkpointing, automated Day Close (`DayCloseService`), Period Close (`PeriodCloseService`), and post-close accounting conservation.
 - **Go/No-Go Gate Verification:** 7 of 8 technical gates formally verified:
   - Acceptance suites PASS (107 cases verified in `phase-4-automated-evidence-2026-11-14.json`).
   - Zero open critical/high defects and zero high-severity dependencies (OSV-Scanner clean).
