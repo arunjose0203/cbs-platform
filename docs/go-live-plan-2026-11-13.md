@@ -299,8 +299,9 @@ Rounds continue the existing numbering (rounds 1–8 are on `cbs-rounds-1-8`). S
    - **W08 (Deployment, Recovery & Security):** 49 ops tests + money invariant suites pass.
 3. **Artifact digest:** Final verified release candidate JAR built and attested:
    - File: `target/cbs-platform-0.1.0-SNAPSHOT.jar`
-   - SHA-256: `288dcb9fd1de580a44c78829412eed258c4d4729edbcc8fcd0c817c0bd9737fb`
-   - Release baseline commit: `6a821ad`
+   - SHA-256: `ee94e5774dc1788c558556807221ab5d89e53e81fb238dea270e19ed3355d962`
+   - Release baseline commit: `3dc8885`
+   - Release tag: `v0.1.0-rc1`
 
 ## 9. Phase 5: pilot and go-live
 
@@ -401,7 +402,7 @@ These are estimates for one developer working with Claude, assuming decisions D0
   - **Task 0.8 Test Catalogue Re-baselining:** Catalogue updated to Flyway Control V56 / Bank V29 (`cbs-test-cases-2026-10-10.json`). 14 of 15 gaps marked `IMPLEMENTED`; GAP-08 recorded as `OPEN (WAITING CONTRACT)`.
   - **Task 0.5 Demo Bank Kenya Registration & Provisioning:** Configuration guide updated (`docs/first-bank-kenya.md`) for V56/V29; automated integration test `demoBankKenyaRegistrationAndProvisioningCompletesOnCurrentSchema` passed (100%).
   - **Task 0.6 Development Credential Rotation:** Audit log and rotation runbooks delivered in `docs/development-credential-rotation.md`.
-  - **Phase 4 Full Acceptance Execution (W02–W08):** 107 cases evaluated; 284 backend tests passed (0 failures, 0 errors), 141 UI portal tests passed (100%), 49 operations suite tests passed (100%). Release candidate JAR packaged (`target/cbs-platform-0.1.0-SNAPSHOT.jar`, SHA-256: `288dcb9fd1de580a44c78829412eed258c4d4729edbcc8fcd0c817c0bd9737fb`, baseline commit `6a821ad`).
+  - **Phase 4 Full Acceptance Execution (W02–W08):** 107 cases evaluated; 284 backend tests passed (0 failures, 0 errors), 141 UI portal tests passed (100%), 49 operations suite tests passed (100%). Release candidate JAR packaged (`target/cbs-platform-0.1.0-SNAPSHOT.jar`, SHA-256: `ee94e5774dc1788c558556807221ab5d89e53e81fb238dea270e19ed3355d962`, release tag `v0.1.0-rc1`, baseline commit `3dc8885`).
 - **Phase 5 Go/No-Go Readiness:**
   - 7 of 8 go/no-go gates verified. Platform ready for pilot branch deployment and bank-led operational rehearsal.
 

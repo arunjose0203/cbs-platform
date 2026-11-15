@@ -51,7 +51,7 @@ Phase 4 acceptance of the [go-live plan](go-live-plan-2026-11-13.md). See [Phase
   - **W06 (Lending & FX):** 28 UI tests + 20 backend tests pass covering CRB returns, non-accrual, moratoria, ECL staging, IAS 21 translation, and partial TD closure.
   - **W07 (Reporting & Localization):** 141 UI tests across English, French, and Kiswahili + tax remittance and DPD/NPL register reports pass.
   - **W08 (Deployment, Recovery & Security):** 49 ops tests + money invariant tests pass covering PITR WAL archiving, Keycloak key rotation, and Prometheus alerts.
-- **Verification results:** 284 backend tests (0 failures, 0 errors), 141 UI portal tests (100% pass), and 49 operations suite tests (100% pass) across the unified V56/V29 codebase.
+- **Verification results:** 284 backend tests (0 failures, 0 errors), 141 UI portal tests (100% pass), and 49 operations suite tests (100% pass) across the unified V56/V29 codebase. Release candidate JAR packaged (`target/cbs-platform-0.1.0-SNAPSHOT.jar`, SHA-256: `ee94e5774dc1788c558556807221ab5d89e53e81fb238dea270e19ed3355d962`, release tag `v0.1.0-rc1`, baseline commit `3dc8885`).
 
 ## Task 0.8: Acceptance Test Catalogue Refresh & Re-Baselining — 14 November 2026
 
